@@ -297,6 +297,15 @@ function totalTrendLabel(changePercent: number | null) {
   return changePercent < 0 ? "STÄRKS" : "TAPPAR";
 }
 
+function trendStrengthLabel(changePercent: number | null) {
+  if (changePercent === null || Math.abs(changePercent) < 0.05) return "STABIL";
+  const strength = Math.abs(changePercent);
+  const direction = changePercent < 0 ? "STÄRKS" : "TAPPAR";
+  if (strength >= 30) return `${direction} MYCKET`;
+  if (strength >= 15) return `${direction} TYDLIGT`;
+  return direction;
+}
+
 function momentumDisplay(momentum: string) {
   if (momentum === "Starkt ned") return "Stärks starkt kortsiktigt";
   if (momentum === "Ned") return "Stärks kortsiktigt";
@@ -457,9 +466,13 @@ function rankCandidates(runners: TrendRunner[]) {
   return runners
     .filter((runner) => !runner.scratched && runner.odds !== null && runner.changePercent !== null && runner.samples >= 3)
     .sort((a, b) => {
-      const aScore = (a.changePercent ?? 0) - (a.direction === "down" ? 1.5 : 0) - (a.momentum === "Starkt ned" ? 2 : a.momentum === "Ned" ? 1 : 0);
-      const bScore = (b.changePercent ?? 0) - (b.direction === "down" ? 1.5 : 0) - (b.momentum === "Starkt ned" ? 2 : b.momentum === "Ned" ? 1 : 0);
-      return aScore - bScore;
+      // Huvudrankningen utgår från hela rörelsen sedan den första sparade mätningen.
+      // Senaste tick används bara som skiljekriterium när totalförändringen är nästan lika.
+      const totalDifference = (a.changePercent ?? 0) - (b.changePercent ?? 0);
+      if (Math.abs(totalDifference) >= 0.25) return totalDifference;
+      if (a.direction === "down" && b.direction !== "down") return -1;
+      if (b.direction === "down" && a.direction !== "down") return 1;
+      return (a.odds ?? Number.POSITIVE_INFINITY) - (b.odds ?? Number.POSITIVE_INFINITY);
     })
     .slice(0, 2);
 }
@@ -1429,28 +1442,38 @@ export default function App() {
 
             <div style={s.runnerList}>
               {selectedRace.runners.length ? (
-                trendRunners.map((runner) => (
+                trendRunners.map((runner) => {
+                  const isA1 = candidates[0]?.number === runner.number;
+                  const isA2 = candidates[1]?.number === runner.number;
+                  const isFavorite = favoriteRunner?.number === runner.number;
+
+                  return (
                   <div
                     key={`${selectedRace.id}-${runner.number}`}
                     style={{
                       ...s.runnerRow,
+                      ...(isA1 ? s.a1RunnerRow : isA2 ? s.a2RunnerRow : {}),
                       opacity: runner.scratched ? 0.45 : 1,
                     }}
                   >
                     <span style={s.numberBox}>{runner.number}</span>
                     <div>
-                      <strong style={s.runnerName}>{runner.name}</strong>
+                      <div style={s.runnerHeading}>
+                        <strong style={s.runnerName}>{runner.name}</strong>
+                        <div style={s.runnerBadges}>
+                          {isA1 && <span style={s.a1Badge}>A1</span>}
+                          {isA2 && <span style={s.a2Badge}>A2</span>}
+                          {isFavorite && <span style={s.favoriteBadge}>★ FAVORIT</span>}
+                        </div>
+                      </div>
                       <span style={s.driver}>{runner.driver}</span>
-                      <span style={s.radarLine}>
-                        Senaste 5:{" "}
-                        {runner.recentOdds.length
-                          ? runner.recentOdds
-                              .map((odds) => formatOdds(odds))
-                              .join(" → ")
-                          : "–"}
+                      <span style={s.firstToNow}>
+                        Första odds <strong>{formatOdds(runner.firstOdds)}</strong>
+                        <span style={s.oddsArrow}>→</span>
+                        Nu <strong>{formatOdds(runner.odds)}</strong>
                       </span>
                       <span style={s.radarLine}>
-                        Kort trend: {momentumDisplay(runner.momentum)} · {runner.samples} mätningar
+                        Kortsiktigt: {momentumDisplay(runner.momentum)} · {runner.samples} mätningar
                       </span>
                       <div style={s.checkpointRow}>
                         <span>
@@ -1527,7 +1550,7 @@ export default function App() {
                             color: totalTrendColor(runner.changePercent),
                           }}
                         >
-                          {totalTrendLabel(runner.changePercent)} {totalTrendArrow(runner.changePercent)}
+                          {trendStrengthLabel(runner.changePercent)} {totalTrendArrow(runner.changePercent)}
                         </span>
                       )}
                       {!runner.scratched && (
@@ -1547,7 +1570,8 @@ export default function App() {
                       )}
                     </div>
                   </div>
-                ))
+                  );
+                })
               ) : (
                 <p style={s.muted}>
                   Loppet hittades, men hästlistan kunde inte läsas ännu.
@@ -2142,6 +2166,14 @@ const s: Record<string, CSSProperties> = {
     padding: "8px 16px",
     borderBottom: "1px solid #1e293b",
   },
+  a1RunnerRow: {
+    background: "linear-gradient(90deg, rgba(34,197,94,0.13), transparent 65%)",
+    boxShadow: "inset 4px 0 0 #4ade80",
+  },
+  a2RunnerRow: {
+    background: "linear-gradient(90deg, rgba(56,189,248,0.11), transparent 65%)",
+    boxShadow: "inset 4px 0 0 #38bdf8",
+  },
   numberBox: {
     color: "#f8fafc",
     display: "grid",
@@ -2153,16 +2185,66 @@ const s: Record<string, CSSProperties> = {
     fontSize: 18,
     fontWeight: 900,
   },
+  runnerHeading: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
   runnerName: {
     color: "#f8fafc",
     display: "block",
-    fontSize: 16,
+    fontSize: 18,
+    lineHeight: 1.15,
+  },
+  runnerBadges: {
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: 4,
+  },
+  a1Badge: {
+    padding: "3px 7px",
+    borderRadius: 999,
+    background: "#22c55e",
+    color: "#052e16",
+    fontSize: 10,
+    fontWeight: 950,
+  },
+  a2Badge: {
+    padding: "3px 7px",
+    borderRadius: 999,
+    background: "#38bdf8",
+    color: "#082f49",
+    fontSize: 10,
+    fontWeight: 950,
+  },
+  favoriteBadge: {
+    padding: "3px 7px",
+    borderRadius: 999,
+    background: "#facc15",
+    color: "#422006",
+    fontSize: 9,
+    fontWeight: 950,
   },
   driver: {
     display: "block",
     marginTop: 3,
     color: "#d1d5db",
     fontSize: 13,
+  },
+  firstToNow: {
+    display: "flex",
+    alignItems: "baseline",
+    flexWrap: "wrap",
+    gap: 5,
+    marginTop: 7,
+    color: "#cbd5e1",
+    fontSize: 12,
+  },
+  oddsArrow: {
+    color: "#94a3b8",
+    fontWeight: 900,
   },
   radarLine: {
     display: "block",
