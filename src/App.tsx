@@ -1,14 +1,17 @@
+
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
+import { supabase } from "./lib/supabase";
 
 type Track = {
   id: number;
   name: string;
   startTime?: string;
+  products: string[];
 };
 
 type CalendarResponse = {
-  tracks?: Track[];
+  tracks?: unknown[];
 };
 
 type Runner = {
@@ -25,6 +28,9 @@ type Race = {
   startTime?: string;
   status?: string;
   runners: Runner[];
+  isMonte: boolean;
+  isP21: boolean;
+  finishOrder: number[];
 };
 
 type OddsPoint = {
@@ -54,12 +60,23 @@ type SavedBet = {
   net: number;
   lockedAt: string;
   savedAt: string;
+  automatic?: boolean;
+  needsComboOdds?: boolean;
 };
 
 const BETS_STORAGE_KEY = "komben-live-bets-v1";
 const ODDS_STORAGE_KEY = "komben-live-odds-history-v1";
+const AUTO_SELECTIONS_STORAGE_KEY = "komben-live-auto-selections-v1";
 const ALL_RACES_REFRESH_SECONDS = 30;
 const MAX_HISTORY_POINTS = 720;
+
+type AutoSelection = {
+  raceId: string;
+  raceNumber: number;
+  a1: TrendRunner;
+  a2: TrendRunner;
+  lockedAt: string;
+};
 
 type TrendRunner = Runner & {
   firstOdds: number | null;
@@ -77,6 +94,44 @@ type UnknownRecord = Record<string, unknown>;
 const API = "https://www.atg.se/services/racinginfo/v1/api";
 const MAX_RACES_TO_CHECK = 15;
 const REFRESH_SECONDS = 10;
+const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
+
+const SWEDISH_TRACK_NAMES = new Set(
+  [
+    "arvika",
+    "axevalla",
+    "bergsaker",
+    "boden",
+    "bollnas",
+    "dannero",
+    "eskilstuna",
+    "farjestad",
+    "gavle",
+    "hagmyren",
+    "halmstad",
+    "hoting",
+    "jagersro",
+    "kalmar",
+    "karlshamn",
+    "lindesberg",
+    "lycksele",
+    "mantorp",
+    "rattvik",
+    "romme",
+    "skelleftea",
+    "solanget",
+    "solvalla",
+    "tingsryd",
+    "umaker",
+    "vaggeryd",
+    "visby",
+    "aby",
+    "amal",
+    "arjang",
+    "orebro",
+    "ostersund",
+  ].map((name) => name.toLowerCase()),
+);
 
 function today() {
   const d = new Date();
@@ -109,6 +164,86 @@ function asString(value: unknown) {
 
 function asNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function collectStrings(value: unknown, depth = 0): string[] {
+  if (depth > 5 || value === null || value === undefined) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectStrings(item, depth + 1));
+  }
+  if (!isRecord(value)) return [];
+  return Object.values(value).flatMap((item) => collectStrings(item, depth + 1));
+}
+
+function extractTargetProducts(value: unknown) {
+  const text = collectStrings(value).join(" ").toUpperCase();
+  return TARGET_PRODUCTS.filter((product) =>
+    new RegExp(`(^|[^A-Z0-9])${product}([^A-Z0-9]|$)`).test(text),
+  );
+}
+
+function isSwedishTrackName(name: string) {
+  return SWEDISH_TRACK_NAMES.has(normalizeText(name));
+}
+
+function isLunchStart(startTime?: string) {
+  if (!startTime) return false;
+  const start = new Date(startTime);
+  if (Number.isNaN(start.getTime())) return false;
+  const hour = Number(
+    start.toLocaleTimeString("sv-SE", {
+      hour: "2-digit",
+      hour12: false,
+      timeZone: "Europe/Stockholm",
+    }),
+  );
+  return hour >= 10 && hour < 16;
+}
+
+function parseTrack(value: unknown): Track | null {
+  if (!isRecord(value)) return null;
+
+  const id =
+    asNumber(value.id) ??
+    asNumber(value.trackId) ??
+    asNumber(value.number);
+  const name =
+    asString(value.name) ||
+    asString(value.trackName) ||
+    asString(value.displayName);
+  if (id === null || !name) return null;
+
+  const startTime =
+    asString(value.startTime) ||
+    asString(value.firstStartTime) ||
+    asString(value.firstRaceStartTime);
+  const products = extractTargetProducts(value);
+  const countryCode = normalizeText(
+    asString(value.countryCode) ||
+      asString(value.country) ||
+      asString(value.nation),
+  );
+  const isSwedish =
+    countryCode === "se" ||
+    countryCode === "swe" ||
+    countryCode === "sweden" ||
+    countryCode === "sverige" ||
+    isSwedishTrackName(name);
+  const hasMainProduct = products.some((product) => product !== "V4");
+  const hasLunchV4 = products.includes("V4") && isLunchStart(startTime);
+
+  if (!isSwedish || (!hasMainProduct && !hasLunchV4)) return null;
+
+  return { id, name, startTime, products };
 }
 
 function getRecord(value: unknown, key: string): UnknownRecord | undefined {
@@ -252,6 +387,61 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
   };
 }
 
+function parseFinishPosition(value: unknown) {
+  if (!isRecord(value)) return null;
+  const result = getRecord(value, "result");
+  const position =
+    asNumber(value.finishPosition) ??
+    asNumber(value.position) ??
+    asNumber(value.place) ??
+    asNumber(value.rank) ??
+    (result ?
+      asNumber(result.finishPosition) ??
+      asNumber(result.position) ??
+      asNumber(result.place) ??
+      asNumber(result.rank)
+      : null);
+  return position && position > 0 ? position : null;
+}
+
+function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRunner[] {
+  return race.runners.map((runner) => {
+    const history = oddsHistory[runnerKey(race.id, runner.number)] ?? [];
+    const firstOdds = history.length ? history[0].odds : runner.odds;
+    const previousOdds = history.length >= 2 ? history[history.length - 2].odds : runner.odds;
+    const currentOdds = runner.odds;
+    const changePercent = percentChange(firstOdds, currentOdds);
+    const latestAbsoluteChange = absoluteOddsChange(previousOdds, currentOdds);
+    let direction: TrendRunner["direction"] = "same";
+    if (previousOdds && currentOdds) {
+      if (currentOdds < previousOdds) direction = "down";
+      if (currentOdds > previousOdds) direction = "up";
+    }
+    return {
+      ...runner,
+      firstOdds,
+      previousOdds,
+      changePercent,
+      latestAbsoluteChange,
+      direction,
+      recentOdds: history.slice(-5).map((point) => point.odds),
+      samples: history.length,
+      momentum: momentumLabel(history),
+    };
+  });
+}
+
+function rankCandidates(runners: TrendRunner[]) {
+  return runners
+    .filter((runner) => !runner.scratched && runner.odds !== null && runner.changePercent !== null && runner.samples >= 3)
+    .sort((a, b) => {
+      const aScore = (a.changePercent ?? 0) - (a.direction === "down" ? 1.5 : 0) - (a.momentum === "Starkt ned" ? 2 : a.momentum === "Ned" ? 1 : 0);
+      const bScore = (b.changePercent ?? 0) - (b.direction === "down" ? 1.5 : 0) - (b.momentum === "Starkt ned" ? 2 : b.momentum === "Ned" ? 1 : 0);
+      return aScore - bScore;
+    })
+    .slice(0, 2);
+}
+
 function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
   if (!isRecord(data)) return null;
 
@@ -275,6 +465,18 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
     .filter((runner): runner is Runner => runner !== null)
     .sort((a, b) => a.number - b.number);
 
+  const finishOrder = rawStarts
+    .map((start, index) => {
+      const runner = parseRunner(start, index + 1);
+      const position = parseFinishPosition(start);
+      return runner && position ? { number: runner.number, position } : null;
+    })
+    .filter((item): item is { number: number; position: number } => item !== null)
+    .sort((a, b) => a.position - b.position)
+    .map((item) => item.number);
+
+  const raceText = collectStrings(rawRace).join(" ").toLowerCase();
+
   return {
     raceNumber,
     id: asString(data.id) || `race-${requestedRaceNumber}`,
@@ -284,10 +486,30 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
       asString(data.startTime),
     status: asString(data.status) || asString(rawRace.status),
     runners,
+    isMonte: /mont[eé]/i.test(raceText),
+    isP21: /(^|[^a-z0-9])p21([^a-z0-9]|$)/i.test(raceText),
+    finishOrder,
   };
 }
 
 export default function App() {
+  const [dbStatus, setDbStatus] = useState("Testar...");
+  useEffect(() => {
+  async function testConnection() {
+    const { error } = await supabase
+      .from("komben_races")
+      .select("*")
+      .limit(1);
+
+    if (error) {
+      setDbStatus("❌ " + error.message);
+    } else {
+      setDbStatus("✅ Databasen fungerar!");
+    }
+  }
+
+  testConnection();
+}, []);
   const [date, setDate] = useState(today());
   const [tracks, setTracks] = useState<Track[]>([]);
   const [trackId, setTrackId] = useState("");
@@ -312,6 +534,9 @@ export default function App() {
   const [allRacesUpdated, setAllRacesUpdated] = useState("");
   const [backgroundCollecting, setBackgroundCollecting] = useState(false);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [autoSelections, setAutoSelections] = useState<AutoSelection[]>([]);
+  const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
+  const [pendingOddsInputs, setPendingOddsInputs] = useState<Record<string, string>>({});
 
   const selectedTrack = useMemo(
     () => tracks.find((track) => String(track.id) === trackId),
@@ -380,34 +605,7 @@ export default function App() {
 
   const trendRunners = useMemo<TrendRunner[]>(() => {
     if (!selectedRace) return [];
-
-    return selectedRace.runners.map((runner) => {
-      const history = oddsHistory[runnerKey(selectedRace.id, runner.number)] ?? [];
-      const firstOdds = history.length ? history[0].odds : runner.odds;
-      const previousOdds =
-        history.length >= 2 ? history[history.length - 2].odds : runner.odds;
-      const currentOdds = runner.odds;
-      const changePercent = percentChange(firstOdds, currentOdds);
-      const latestAbsoluteChange = absoluteOddsChange(previousOdds, currentOdds);
-
-      let direction: TrendRunner["direction"] = "same";
-      if (previousOdds && currentOdds) {
-        if (currentOdds < previousOdds) direction = "down";
-        if (currentOdds > previousOdds) direction = "up";
-      }
-
-      return {
-        ...runner,
-        firstOdds,
-        previousOdds,
-        changePercent,
-        latestAbsoluteChange,
-        direction,
-        recentOdds: history.slice(-5).map((point) => point.odds),
-        samples: history.length,
-        momentum: momentumLabel(history),
-      };
-    });
+    return buildTrendRunnersForRace(selectedRace, oddsHistory);
   }, [selectedRace, oddsHistory]);
 
   useEffect(() => {
@@ -456,36 +654,33 @@ export default function App() {
   }, [savedBets]);
 
   useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(AUTO_SELECTIONS_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as AutoSelection[];
+        if (Array.isArray(parsed)) setAutoSelections(parsed);
+      }
+    } catch (error) {
+      console.error("Kunde inte läsa automatiska låsningar", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AUTO_SELECTIONS_STORAGE_KEY, JSON.stringify(autoSelections));
+    } catch (error) {
+      console.error("Kunde inte spara automatiska låsningar", error);
+    }
+  }, [autoSelections]);
+
+  useEffect(() => {
     setLockedSelection(null);
     setFirstNumber("");
     setSecondNumber("");
     setComboOddsInput("");
   }, [trackId, raceNumber]);
 
-  const candidates = useMemo(() => {
-    return trendRunners
-      .filter(
-        (runner) =>
-          !runner.scratched &&
-          runner.odds !== null &&
-          runner.changePercent !== null &&
-          runner.samples >= 3,
-      )
-      .sort((a, b) => {
-        const aScore =
-          (a.changePercent ?? 0) -
-          (a.direction === "down" ? 1.5 : 0) -
-          (a.momentum === "Starkt ned" ? 2 : a.momentum === "Ned" ? 1 : 0);
-
-        const bScore =
-          (b.changePercent ?? 0) -
-          (b.direction === "down" ? 1.5 : 0) -
-          (b.momentum === "Starkt ned" ? 2 : b.momentum === "Ned" ? 1 : 0);
-
-        return aScore - bScore;
-      })
-      .slice(0, 2);
-  }, [trendRunners]);
+  const candidates = useMemo(() => rankCandidates(trendRunners), [trendRunners]);
 
   const favoriteRunner = useMemo(() => {
     return [...trendRunners]
@@ -614,6 +809,26 @@ export default function App() {
     setSavedBets((current) => current.filter((bet) => bet.id !== id));
   }
 
+  function finalizeComboOdds(id: string) {
+    const raw = pendingOddsInputs[id] ?? "";
+    const odds = Number(raw.replace(",", "."));
+    if (!Number.isFinite(odds) || odds <= 0) {
+      setError("Ange ett giltigt kombodds.");
+      return;
+    }
+    setSavedBets((current) => current.map((bet) => {
+      if (bet.id !== id) return bet;
+      const returnAmount = 50 * odds;
+      return { ...bet, comboOdds: odds, returnAmount, net: returnAmount - bet.stake, needsComboOdds: false };
+    }));
+    setPendingOddsInputs((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setError("");
+  }
+
 
   async function loadTracks() {
     setLoadingTracks(true);
@@ -632,15 +847,18 @@ export default function App() {
       }
 
       const data = (await response.json()) as CalendarResponse;
-      const list = [...(data.tracks ?? [])].sort((a, b) =>
-        a.name.localeCompare(b.name, "sv"),
-      );
+      const list = (data.tracks ?? [])
+        .map(parseTrack)
+        .filter((track): track is Track => track !== null)
+        .sort((a, b) => a.name.localeCompare(b.name, "sv"));
 
       setTracks(list);
       setUpdated(new Date().toLocaleTimeString("sv-SE"));
 
       if (!list.length) {
-        setError("Inga banor hittades för valt datum.");
+        setError(
+          "Inga svenska lunch-V4-, V64-, V65-, V85- eller V86-omgångar hittades för valt datum.",
+        );
       }
     } catch (err) {
       console.error(err);
@@ -682,7 +900,10 @@ export default function App() {
       );
 
       const availableRaces = results
-        .filter((race): race is Race => race !== null)
+        .filter(
+          (race): race is Race =>
+            race !== null && !race.isMonte && !race.isP21,
+        )
         .sort((a, b) => a.raceNumber - b.raceNumber);
 
       setRaces(availableRaces);
@@ -714,7 +935,9 @@ export default function App() {
       if (availableRaces.length) {
         setRaceNumber(String(availableRaces[0].raceNumber));
       } else {
-        setError(`Inga vinnarlopp hittades för ${track.name}.`);
+        setError(
+          `Inga godkända lopp hittades för ${track.name}. Monté och P21 är bortfiltrerade.`,
+        );
       }
     } catch (err) {
       console.error(err);
@@ -884,6 +1107,99 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackId, races.length]);
 
+  useEffect(() => {
+    if (!selectedTrack || !races.length) {
+      setAutoStatus("Helkvällsautomaten väntar på en bana.");
+      return;
+    }
+
+    const now = Date.now();
+    const savedRaceNumbers = new Set(savedBets.filter((bet) => bet.date === date && bet.trackId === selectedTrack.id).map((bet) => bet.raceNumber));
+    const selectionsByRace = new Map(autoSelections.map((selection) => [selection.raceId, selection]));
+    const newSelections: AutoSelection[] = [];
+
+    for (const race of races) {
+      if (!race.startTime || savedRaceNumbers.has(race.raceNumber) || selectionsByRace.has(race.id)) continue;
+      const startMs = new Date(race.startTime).getTime();
+      if (Number.isNaN(startMs)) continue;
+      const secondsLeft = Math.floor((startMs - now) / 1000);
+      if (secondsLeft > 60 || secondsLeft < -120) continue;
+      const ranked = rankCandidates(buildTrendRunnersForRace(race, oddsHistory));
+      if (ranked[0] && ranked[1]) {
+        const selection: AutoSelection = {
+          raceId: race.id,
+          raceNumber: race.raceNumber,
+          a1: ranked[0],
+          a2: ranked[1],
+          lockedAt: new Date().toLocaleTimeString("sv-SE"),
+        };
+        newSelections.push(selection);
+        selectionsByRace.set(race.id, selection);
+        if (race.raceNumber === selectedRace?.raceNumber) {
+          setLockedSelection({ a1: ranked[0], a2: ranked[1], lockedAt: selection.lockedAt });
+        }
+      }
+    }
+
+    if (newSelections.length) {
+      setAutoSelections((current) => [...current, ...newSelections]);
+      setAutoStatus(`Låste automatiskt ${newSelections.map((selection) => `lopp ${selection.raceNumber}`).join(", ")}.`);
+    }
+
+    const betsToAdd: SavedBet[] = [];
+    for (const race of races) {
+      if (race.finishOrder.length < 2 || savedRaceNumbers.has(race.raceNumber)) continue;
+      const selection = selectionsByRace.get(race.id);
+      if (!selection) continue;
+      const first = race.finishOrder[0];
+      const second = race.finishOrder[1];
+      const isA1A2 = first === selection.a1.number && second === selection.a2.number;
+      const isA2A1 = first === selection.a2.number && second === selection.a1.number;
+      const hit = isA1A2 || isA2A1;
+      betsToAdd.push({
+        id: `${date}-${selectedTrack.id}-${race.raceNumber}-auto`,
+        date,
+        trackId: selectedTrack.id,
+        trackName: selectedTrack.name,
+        raceNumber: race.raceNumber,
+        a1Number: selection.a1.number,
+        a1Name: selection.a1.name,
+        a2Number: selection.a2.number,
+        a2Name: selection.a2.name,
+        firstNumber: first,
+        secondNumber: second,
+        comboOdds: null,
+        hit,
+        winningOrder: isA1A2 ? "A1-A2" : isA2A1 ? "A2-A1" : "MISS",
+        stake: 100,
+        returnAmount: 0,
+        net: -100,
+        lockedAt: selection.lockedAt,
+        savedAt: new Date().toISOString(),
+        automatic: true,
+        needsComboOdds: hit,
+      });
+      savedRaceNumbers.add(race.raceNumber);
+    }
+
+    if (betsToAdd.length) {
+      setSavedBets((current) => [...betsToAdd, ...current]);
+      setAutoStatus(`Rättade automatiskt ${betsToAdd.map((bet) => `lopp ${bet.raceNumber}`).join(", ")}.`);
+    }
+
+    const upcoming = races
+      .filter((race) => race.startTime && new Date(race.startTime).getTime() > now - 30_000 && !savedRaceNumbers.has(race.raceNumber))
+      .sort((a, b) => new Date(a.startTime ?? 0).getTime() - new Date(b.startTime ?? 0).getTime())[0];
+    if (upcoming && String(upcoming.raceNumber) !== raceNumber) {
+      setRaceNumber(String(upcoming.raceNumber));
+    }
+
+    if (!newSelections.length && !betsToAdd.length) {
+      const next = upcoming?.startTime ? formatTime(upcoming.startTime) : "–";
+      setAutoStatus(`Helkvällsautomaten är aktiv. Nästa lopp ${upcoming?.raceNumber ?? "–"} kl. ${next}.`);
+    }
+  }, [nowMs, races, oddsHistory, selectedTrack, selectedRace?.raceNumber, savedBets, autoSelections, date, raceNumber]);
+
   function countdownStyle() {
     if (countdown.phase === "critical" || countdown.phase === "started") {
       return {
@@ -934,6 +1250,17 @@ export default function App() {
           <span style={s.live}>LIVE</span>
         </header>
 
+        <div style={s.filterBanner}>
+          <strong>SVERIGE-FILTER AKTIVT</strong>
+          <span>Lunch-V4 samt dagens V64, V65, V85 och V86. Monté och P21 tas bort.</span>
+        </div>
+
+        <div style={s.autoBanner}>
+          <strong>🤖 HELKVÄLLSAUTOMATIK</strong>
+          <span>{autoStatus}</span>
+          <small>A1/A2 låses vid 1:00. Resultat rättas när ATG visar placeringarna. Vid träff fyller du i komboddset i journalen.</small>
+        </div>
+
         <div style={s.controls}>
           <label style={s.label}>
             Datum
@@ -972,7 +1299,7 @@ export default function App() {
               </option>
               {tracks.map((track) => (
                 <option key={track.id} value={track.id}>
-                  {track.name}
+                  {track.name} · {track.products.join("/")}
                 </option>
               ))}
             </select>
@@ -1011,7 +1338,9 @@ export default function App() {
             <div>
               <span style={s.small}>BAKGRUNDSINSAMLING</span>
               <strong>
-                {backgroundCollecting ? "Hämtar alla lopp…" : "Alla lopp bevakas"}
+                {backgroundCollecting
+                  ? "Hämtar godkända lopp…"
+                  : "Endast svenska mållopp bevakas"}
               </strong>
             </div>
             <span style={s.collectionText}>
@@ -1025,7 +1354,9 @@ export default function App() {
           <div style={s.trackBar}>
             <div>
               <span style={s.small}>VALD BANA</span>
-              <strong>{selectedTrack.name}</strong>
+              <strong>
+                {selectedTrack.name} · {selectedTrack.products.join("/")}
+              </strong>
             </div>
             <div>
               <span style={s.small}>BAN-ID</span>
@@ -1477,6 +1808,7 @@ export default function App() {
             <div style={s.statCard}><span style={s.small}>TRÄFFAR</span><strong>{journalTotals.hits}</strong></div>
             <div style={s.statCard}><span style={s.small}>INSATS</span><strong>{journalTotals.stake.toFixed(0)} kr</strong></div>
             <div style={s.statCard}><span style={s.small}>ÅTERBETALNING</span><strong>{journalTotals.returnAmount.toFixed(0)} kr</strong></div>
+            <div style={s.statCard}><span style={s.small}>VÄNTAR ODDS</span><strong>{savedBets.filter((bet) => bet.needsComboOdds).length}</strong></div>
             <div style={s.statCard}>
               <span style={s.small}>NETTO</span>
               <strong style={{ color: journalTotals.net >= 0 ? "#4ade80" : "#fb7185" }}>
@@ -1501,6 +1833,18 @@ export default function App() {
                   <span style={s.historyLine}>
                     Kombodds {bet.comboOdds?.toFixed(2).replace(".", ",") ?? "–"} · Åter {bet.returnAmount.toFixed(0)} kr · Netto {bet.net >= 0 ? "+" : ""}{bet.net.toFixed(0)} kr
                   </span>
+                  {bet.needsComboOdds && (
+                    <div style={s.pendingOddsRow}>
+                      <input
+                        value={pendingOddsInputs[bet.id] ?? ""}
+                        onChange={(event) => setPendingOddsInputs((current) => ({ ...current, [bet.id]: event.target.value }))}
+                        placeholder="Ange kombodds"
+                        inputMode="decimal"
+                        style={s.pendingOddsInput}
+                      />
+                      <button type="button" onClick={() => finalizeComboOdds(bet.id)} style={s.pendingOddsButton}>Räkna klart</button>
+                    </div>
+                  )}
                 </div>
                 <button type="button" onClick={() => deleteSavedBet(bet.id)} style={s.deleteButton}>Ta bort</button>
               </article>
@@ -1517,6 +1861,9 @@ export default function App() {
           </span>
           <span>
             Uppdaterad: <strong>{updated || "–"}</strong>
+          </span>
+          <span>
+            Databas: <strong>{dbStatus.startsWith("✅") ? "ansluten" : dbStatus}</strong>
           </span>
         </footer>
       </section>
@@ -1535,6 +1882,7 @@ const s: Record<string, CSSProperties> = {
   },
   card: {
     maxWidth: 680,
+    color: "#f8fafc",
     margin: "0 auto",
     padding: 22,
     border: "1px solid #293548",
@@ -1557,15 +1905,65 @@ const s: Record<string, CSSProperties> = {
   },
   title: {
     margin: 0,
+    color: "#f8fafc",
     fontSize: "clamp(30px, 8vw, 42px)",
   },
   live: {
     height: "fit-content",
+    color: "#ffffff",
     padding: "7px 10px",
     borderRadius: 999,
     background: "#ef4444",
     fontSize: 11,
     fontWeight: 900,
+  },
+  filterBanner: {
+    display: "grid",
+    gap: 4,
+    marginBottom: 18,
+    padding: "11px 13px",
+    border: "1px solid #166534",
+    borderRadius: 12,
+    background: "rgba(22,101,52,.16)",
+    color: "#f8fafc",
+    fontSize: 12,
+    lineHeight: 1.4,
+  },
+  autoBanner: {
+    display: "grid",
+    gap: 5,
+    marginBottom: 18,
+    padding: 14,
+    border: "1px solid #3b82f6",
+    borderRadius: 14,
+    background: "rgba(30,64,175,.18)",
+    color: "#f8fafc",
+    textAlign: "center",
+  },
+  pendingOddsRow: {
+    display: "flex",
+    gap: 8,
+    marginTop: 10,
+  },
+  pendingOddsInput: {
+    minWidth: 0,
+    flex: 1,
+    height: 38,
+    padding: "0 10px",
+    border: "1px solid #475569",
+    borderRadius: 9,
+    background: "#0f172a",
+    color: "#f8fafc",
+  },
+  pendingOddsButton: {
+    height: 38,
+    padding: "0 12px",
+    border: 0,
+    borderRadius: 9,
+    background: "#22c55e",
+    color: "#052e16",
+    fontWeight: 900,
+    cursor: "pointer",
   },
   controls: {
     display: "grid",
@@ -1580,6 +1978,7 @@ const s: Record<string, CSSProperties> = {
   },
   input: {
     width: "100%",
+    colorScheme: "dark",
     minHeight: 48,
     boxSizing: "border-box",
     padding: "0 12px",
@@ -1595,8 +1994,8 @@ const s: Record<string, CSSProperties> = {
     marginBottom: 16,
     border: 0,
     borderRadius: 12,
-    background: "#22c55e",
-    color: "#052e16",
+    background: "#15803d",
+    color: "#ffffff",
     fontWeight: 900,
     fontSize: 15,
     cursor: "pointer",
@@ -1610,6 +2009,7 @@ const s: Record<string, CSSProperties> = {
     color: "#fecaca",
   },
   collectionBanner: {
+    color: "#f8fafc",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
@@ -1621,11 +2021,12 @@ const s: Record<string, CSSProperties> = {
     background: "rgba(22,101,52,.16)",
   },
   collectionText: {
-    color: "#94a3b8",
+    color: "#d1d5db",
     fontSize: 12,
     textAlign: "right",
   },
   trackBar: {
+    color: "#f8fafc",
     display: "grid",
     gridTemplateColumns: "2fr 1fr 1fr",
     gap: 12,
@@ -1638,18 +2039,20 @@ const s: Record<string, CSSProperties> = {
   small: {
     display: "block",
     marginBottom: 4,
-    color: "#64748b",
+    color: "#cbd5e1",
     fontSize: 10,
     fontWeight: 900,
     letterSpacing: ".09em",
   },
   racePanel: {
+    color: "#f8fafc",
     border: "1px solid #263244",
     borderRadius: 16,
     overflow: "hidden",
     background: "#0b1220",
   },
   raceHeader: {
+    color: "#f8fafc",
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
@@ -1657,12 +2060,13 @@ const s: Record<string, CSSProperties> = {
     padding: 18,
   },
   raceTitle: {
+    color: "#f8fafc",
     margin: "0 0 4px",
     fontSize: 25,
   },
   muted: {
     margin: 0,
-    color: "#94a3b8",
+    color: "#d1d5db",
     lineHeight: 1.5,
   },
   refreshButton: {
@@ -1683,7 +2087,7 @@ const s: Record<string, CSSProperties> = {
     padding: "10px 16px",
     borderTop: "1px solid #263244",
     borderBottom: "1px solid #263244",
-    color: "#64748b",
+    color: "#cbd5e1",
     fontSize: 11,
     fontWeight: 900,
     letterSpacing: ".08em",
@@ -1696,6 +2100,7 @@ const s: Record<string, CSSProperties> = {
     display: "grid",
   },
   runnerRow: {
+    color: "#f8fafc",
     display: "grid",
     gridTemplateColumns: "48px 1fr 80px",
     alignItems: "center",
@@ -1705,6 +2110,7 @@ const s: Record<string, CSSProperties> = {
     borderBottom: "1px solid #1e293b",
   },
   numberBox: {
+    color: "#f8fafc",
     display: "grid",
     placeItems: "center",
     width: 38,
@@ -1715,19 +2121,20 @@ const s: Record<string, CSSProperties> = {
     fontWeight: 900,
   },
   runnerName: {
+    color: "#f8fafc",
     display: "block",
     fontSize: 16,
   },
   driver: {
     display: "block",
     marginTop: 3,
-    color: "#94a3b8",
+    color: "#d1d5db",
     fontSize: 13,
   },
   radarLine: {
     display: "block",
     marginTop: 4,
-    color: "#64748b",
+    color: "#cbd5e1",
     fontSize: 11,
     lineHeight: 1.35,
   },
@@ -1736,7 +2143,7 @@ const s: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     gap: "6px 12px",
     marginTop: 7,
-    color: "#94a3b8",
+    color: "#d1d5db",
     fontSize: 11,
   },
   odds: {
@@ -1754,11 +2161,12 @@ const s: Record<string, CSSProperties> = {
     fontWeight: 800,
   },
   latestMove: {
-    color: "#94a3b8",
+    color: "#d1d5db",
     fontSize: 10,
     fontWeight: 700,
   },
   comboPanel: {
+    color: "#f8fafc",
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 10,
@@ -1766,6 +2174,7 @@ const s: Record<string, CSSProperties> = {
     background: "#111827",
   },
   comboCard: {
+    color: "#f8fafc",
     display: "grid",
     gap: 4,
     padding: 13,
@@ -1774,6 +2183,7 @@ const s: Record<string, CSSProperties> = {
     background: "#0f172a",
   },
   comboName: {
+    color: "#f8fafc",
     fontSize: 15,
   },
   comboTrend: {
@@ -1785,7 +2195,7 @@ const s: Record<string, CSSProperties> = {
     margin: 0,
     padding: "0 14px 14px",
     background: "#111827",
-    color: "#94a3b8",
+    color: "#d1d5db",
     fontSize: 11,
     lineHeight: 1.45,
   },
@@ -1794,20 +2204,23 @@ const s: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: 12,
     padding: "12px 16px",
-    color: "#94a3b8",
+    color: "#d1d5db",
     fontSize: 12,
   },
   emptyPanel: {
+    color: "#f8fafc",
     padding: 22,
     border: "1px solid #263244",
     borderRadius: 16,
     background: "#0b1220",
   },
   lockBar: {
+    color: "#f8fafc",
     padding: "14px 14px 0",
     background: "#111827",
   },
   racePicturePanel: {
+    color: "#f8fafc",
     padding: 16,
     borderTop: "1px solid #263244",
     background: "#0b1220",
@@ -1820,6 +2233,7 @@ const s: Record<string, CSSProperties> = {
     marginBottom: 14,
   },
   pictureTitle: {
+    color: "#f8fafc",
     margin: 0,
     fontSize: 22,
   },
@@ -1845,6 +2259,7 @@ const s: Record<string, CSSProperties> = {
     opacity: 0.8,
   },
   countdownTime: {
+    color: "#f8fafc",
     marginTop: 2,
     fontSize: 22,
     lineHeight: 1,
@@ -1865,6 +2280,7 @@ const s: Record<string, CSSProperties> = {
     gap: 10,
   },
   pictureCard: {
+    color: "#f8fafc",
     display: "grid",
     gap: 6,
     padding: 14,
@@ -1873,6 +2289,7 @@ const s: Record<string, CSSProperties> = {
     background: "#111827",
   },
   favoriteCard: {
+    color: "#f8fafc",
     display: "grid",
     gap: 6,
     padding: 14,
@@ -1881,6 +2298,7 @@ const s: Record<string, CSSProperties> = {
     background: "rgba(161,98,7,.12)",
   },
   pictureName: {
+    color: "#f8fafc",
     marginBottom: 3,
     fontSize: 16,
   },
@@ -1890,6 +2308,7 @@ const s: Record<string, CSSProperties> = {
     lineHeight: 1.35,
   },
   racePictureConclusion: {
+    color: "#f8fafc",
     display: "grid",
     gap: 6,
     marginTop: 12,
@@ -1900,11 +2319,13 @@ const s: Record<string, CSSProperties> = {
     lineHeight: 1.45,
   },
   resultPanel: {
+    color: "#f8fafc",
     padding: 16,
     borderTop: "1px solid #263244",
     background: "#0f172a",
   },
   lockedInfo: {
+    color: "#f8fafc",
     display: "grid",
     gap: 5,
     marginBottom: 14,
@@ -1919,6 +2340,7 @@ const s: Record<string, CSSProperties> = {
     gap: 12,
   },
   journalPanel: {
+    color: "#f8fafc",
     marginTop: 18,
     padding: 16,
     border: "1px solid #263244",
@@ -1926,6 +2348,7 @@ const s: Record<string, CSSProperties> = {
     background: "#0b1220",
   },
   journalHeader: {
+    color: "#f8fafc",
     display: "flex",
     justifyContent: "space-between",
     gap: 12,
@@ -1939,6 +2362,7 @@ const s: Record<string, CSSProperties> = {
     marginBottom: 16,
   },
   statCard: {
+    color: "#f8fafc",
     display: "grid",
     gap: 5,
     padding: 12,
@@ -1951,6 +2375,7 @@ const s: Record<string, CSSProperties> = {
     gap: 10,
   },
   historyCard: {
+    color: "#f8fafc",
     display: "flex",
     justifyContent: "space-between",
     gap: 12,
@@ -1962,7 +2387,7 @@ const s: Record<string, CSSProperties> = {
   historyLine: {
     display: "block",
     marginTop: 4,
-    color: "#94a3b8",
+    color: "#d1d5db",
     fontSize: 12,
     lineHeight: 1.4,
   },
@@ -1982,7 +2407,7 @@ const s: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: 12,
     marginTop: 16,
-    color: "#94a3b8",
+    color: "#d1d5db",
     fontSize: 12,
   },
 };
