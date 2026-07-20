@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "./lib/supabase";
@@ -281,6 +280,29 @@ function formatAbsoluteChange(value: number | null) {
   if (value === null || Math.abs(value) < 0.005) return "0,00";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(2).replace(".", ",")}`;
+}
+
+function totalTrendColor(changePercent: number | null) {
+  if (changePercent === null || Math.abs(changePercent) < 0.05) return "#f8fafc";
+  return changePercent < 0 ? "#4ade80" : "#fb7185";
+}
+
+function totalTrendArrow(changePercent: number | null) {
+  if (changePercent === null || Math.abs(changePercent) < 0.05) return "→";
+  return changePercent < 0 ? "↓" : "↑";
+}
+
+function totalTrendLabel(changePercent: number | null) {
+  if (changePercent === null || Math.abs(changePercent) < 0.05) return "STABIL";
+  return changePercent < 0 ? "STÄRKS" : "TAPPAR";
+}
+
+function momentumDisplay(momentum: string) {
+  if (momentum === "Starkt ned") return "Stärks starkt kortsiktigt";
+  if (momentum === "Ned") return "Stärks kortsiktigt";
+  if (momentum === "Starkt upp") return "Tappar starkt kortsiktigt";
+  if (momentum === "Upp") return "Tappar kortsiktigt";
+  return momentum;
 }
 
 function momentumLabel(history: OddsPoint[]) {
@@ -1399,6 +1421,12 @@ export default function App() {
               <span style={s.alignRight}>Odds</span>
             </div>
 
+            <div style={s.trendLegend}>
+              <span><strong style={{ color: "#4ade80" }}>GRÖNT ↓</strong> = totaloddset har sjunkit, hästen stärks</span>
+              <span><strong style={{ color: "#fb7185" }}>RÖTT ↑</strong> = totaloddset har stigit, hästen tappar</span>
+              <span><strong style={{ color: "#f8fafc" }}>VITT →</strong> = i princip oförändrat</span>
+            </div>
+
             <div style={s.runnerList}>
               {selectedRace.runners.length ? (
                 trendRunners.map((runner) => (
@@ -1422,7 +1450,7 @@ export default function App() {
                           : "–"}
                       </span>
                       <span style={s.radarLine}>
-                        Momentum: {runner.momentum} · {runner.samples} mätningar
+                        Kort trend: {momentumDisplay(runner.momentum)} · {runner.samples} mätningar
                       </span>
                       <div style={s.checkpointRow}>
                         <span>
@@ -1487,12 +1515,7 @@ export default function App() {
                       <strong
                         style={{
                           ...s.odds,
-                          color:
-                            runner.direction === "down"
-                              ? "#4ade80"
-                              : runner.direction === "up"
-                                ? "#fb7185"
-                                : "#f8fafc",
+                          color: totalTrendColor(runner.changePercent),
                         }}
                       >
                         {runner.scratched ? "STR" : formatOdds(runner.odds)}
@@ -1500,26 +1523,26 @@ export default function App() {
                       {!runner.scratched && (
                         <span
                           style={{
-                            ...s.change,
-                            color:
-                              (runner.changePercent ?? 0) < 0
-                                ? "#4ade80"
-                                : (runner.changePercent ?? 0) > 0
-                                  ? "#fb7185"
-                                  : "#94a3b8",
+                            ...s.trendStatus,
+                            color: totalTrendColor(runner.changePercent),
                           }}
                         >
-                          {runner.direction === "down"
-                            ? "↓ "
-                            : runner.direction === "up"
-                              ? "↑ "
-                              : ""}
-                          {formatPercent(runner.changePercent)}
+                          {totalTrendLabel(runner.changePercent)} {totalTrendArrow(runner.changePercent)}
+                        </span>
+                      )}
+                      {!runner.scratched && (
+                        <span
+                          style={{
+                            ...s.change,
+                            color: totalTrendColor(runner.changePercent),
+                          }}
+                        >
+                          Totalt {formatPercent(runner.changePercent)}
                         </span>
                       )}
                       {!runner.scratched && (
                         <span style={s.latestMove}>
-                          Senast: {formatAbsoluteChange(runner.latestAbsoluteChange)}
+                          Senaste tick: {formatAbsoluteChange(runner.latestAbsoluteChange)}
                         </span>
                       )}
                     </div>
@@ -2093,6 +2116,16 @@ const s: Record<string, CSSProperties> = {
     letterSpacing: ".08em",
     textTransform: "uppercase",
   },
+  trendLegend: {
+    display: "grid",
+    gap: 4,
+    padding: "10px 16px",
+    borderBottom: "1px solid #263244",
+    background: "#0f172a",
+    color: "#cbd5e1",
+    fontSize: 11,
+    lineHeight: 1.35,
+  },
   alignRight: {
     textAlign: "right",
   },
@@ -2148,13 +2181,18 @@ const s: Record<string, CSSProperties> = {
   },
   odds: {
     textAlign: "right",
-    color: "#4ade80",
+    color: "#f8fafc",
     fontSize: 20,
   },
   oddsCell: {
     display: "grid",
     justifyItems: "end",
     gap: 2,
+  },
+  trendStatus: {
+    fontSize: 10,
+    fontWeight: 950,
+    letterSpacing: ".08em",
   },
   change: {
     fontSize: 11,
