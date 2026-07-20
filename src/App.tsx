@@ -77,6 +77,16 @@ type AutoSelection = {
   lockedAt: string;
 };
 
+type ModelBreakdown = {
+  totalMovement: number;
+  persistence: number;
+  recentDevelopment: number;
+  marketPicture: number;
+  favoriteDevelopment: number;
+  currentOddsLevel: number;
+  dataQuality: number;
+};
+
 type TrendRunner = Runner & {
   firstOdds: number | null;
   previousOdds: number | null;
@@ -86,6 +96,10 @@ type TrendRunner = Runner & {
   recentOdds: number[];
   samples: number;
   momentum: string;
+  modelScore?: number;
+  modelQualified?: boolean;
+  modelBreakdown?: ModelBreakdown;
+  modelReasons?: string[];
 };
 
 type UnknownRecord = Record<string, unknown>;
@@ -292,8 +306,6 @@ function totalTrendArrow(changePercent: number | null) {
   return changePercent < 0 ? "↓" : "↑";
 }
 
-
-
 function trendStrengthLabel(changePercent: number | null) {
   if (changePercent === null || Math.abs(changePercent) < 0.05) return "STABIL";
   const strength = Math.abs(changePercent);
@@ -459,19 +471,180 @@ function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRu
   });
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function decimalOdds(value: number | null) {
+  return value === null ? null : value / 100;
+}
+
+function evaluateCandidates(runners: TrendRunner[]) {
+  const eligible = runners.filter(
+    (runner) =>
+      !runner.scratched &&
+      runner.odds !== null &&
+      runner.changePercent !== null &&
+      runner.samples >= 3,
+  );
+
+  const favorite = [...eligible].sort(
+    (a, b) => (a.odds ?? Number.POSITIVE_INFINITY) - (b.odds ?? Number.POSITIVE_INFINITY),
+  )[0] ?? null;
+  const marketMedian = median(
+    eligible.map((runner) => runner.changePercent ?? 0),
+  );
+
+  return eligible.map((runner) => {
+    const history = runner.recentOdds;
+    const allChanges: number[] = [];
+    for (let index = 1; index < history.length; index += 1) {
+      const previous = history[index - 1];
+      const current = history[index];
+      if (previous > 0) allChanges.push(((current - previous) / previous) * 100);
+    }
+
+    const downSteps = allChanges.filter((change) => change < -0.05).length;
+    const upSteps = allChanges.filter((change) => change > 0.05).length;
+    const stepCount = Math.max(1, allChanges.length);
+    const downRatio = downSteps / stepCount;
+    const upRatio = upSteps / stepCount;
+    const totalChange = runner.changePercent ?? 0;
+    const firstDecimal = decimalOdds(runner.firstOdds);
+    const currentDecimal = decimalOdds(runner.odds);
+    const absoluteDrop =
+      firstDecimal !== null && currentDecimal !== null
+        ? firstDecimal - currentDecimal
+        : 0;
+
+    // 1. Total oddsrörelse: procent och faktisk oddssänkning vägs ihop.
+    const totalPercentPoints = clamp((-totalChange / 35) * 22, -12, 22);
+    const absolutePoints = clamp((absoluteDrop / 4) * 8, -5, 8);
+    const totalMovement = totalPercentPoints + absolutePoints;
+
+    // 2. Uthållighet: flera nedsteg är starkare än ett sent engångshopp.
+    const persistence = clamp(
+      downRatio * 16 - upRatio * 8 + Math.min(runner.samples, 10) * 0.4,
+      0,
+      20,
+    );
+
+    // 3. Senaste utveckling: de sista stegen får extra vikt och rekyl ger avdrag.
+    const weightedRecent = allChanges.reduce((sum, change, index) => {
+      const weight = index + 1;
+      return sum + -change * weight;
+    }, 0);
+    const totalWeight = allChanges.reduce((sum, _change, index) => sum + index + 1, 0) || 1;
+    const recentAverage = weightedRecent / totalWeight;
+    const latestChange = allChanges.length ? allChanges[allChanges.length - 1] : 0;
+    const reboundPenalty = latestChange > 1 ? Math.min(latestChange * 2.5, 9) : 0;
+    const recentDevelopment = clamp(recentAverage * 3.4 - reboundPenalty + 7, 0, 20);
+
+    // 4. Hela marknadsbilden: bättre än medianen i loppet ger plus.
+    const relativeToMarket = marketMedian - totalChange;
+    const marketPicture = clamp(5 + relativeToMarket * 0.45, 0, 10);
+
+    // 5. Favoritens utveckling: favoriten väljs inte automatiskt.
+    let favoriteDevelopment = 5;
+    if (favorite) {
+      const favoriteChange = favorite.changePercent ?? 0;
+      if (runner.number === favorite.number) {
+        favoriteDevelopment = clamp(6 - favoriteChange * 0.35, 0, 10);
+      } else if (totalChange < -2 && favoriteChange > 3) {
+        favoriteDevelopment = clamp(7 + favoriteChange * 0.25, 0, 10);
+      } else if (favoriteChange < -5 && totalChange > -3) {
+        favoriteDevelopment = 2;
+      } else if (totalChange < favoriteChange - 3) {
+        favoriteDevelopment = 7;
+      }
+    }
+
+    // 6. Aktuell oddsnivå: rörelser runt 3–10 i odds är normalt mest trovärdiga.
+    const current = currentDecimal ?? 999;
+    let currentOddsLevel = 0;
+    if (current >= 3 && current <= 10) currentOddsLevel = 5;
+    else if (current >= 1.5 && current <= 15) currentOddsLevel = 3.5;
+    else if (current <= 25) currentOddsLevel = 2;
+    else if (current <= 50) currentOddsLevel = 0.5;
+
+    // 7. Datakvalitet. ATG-svaret innehåller inte alltid omsättning per lopp,
+    // så vi använder inte påhittad omsättningsdata. Fler mätningar ger högre tillit.
+    const dataQuality = clamp((runner.samples - 2) * 0.75, 0, 5);
+
+    const rawScore =
+      totalMovement +
+      persistence +
+      recentDevelopment +
+      marketPicture +
+      favoriteDevelopment +
+      currentOddsLevel +
+      dataQuality;
+    const modelScore = Math.round(clamp(rawScore, 0, 100));
+
+    const reasons: string[] = [];
+    if (totalChange <= -15) reasons.push("tydlig total oddssänkning");
+    if (downRatio >= 0.6 && downSteps >= 2) reasons.push("uthålligt stöd över flera mätningar");
+    if (latestChange < -0.5) reasons.push("fortsatt press nedåt nära start");
+    if (latestChange > 1) reasons.push("rekyl uppåt försvagar signalen");
+    if (relativeToMarket >= 5) reasons.push("starkare än övriga marknaden");
+    if (current > 25) reasons.push("högt odds gör rörelsen känsligare");
+    if (runner.samples < 5) reasons.push("begränsat dataunderlag");
+
+    // Kandidaten måste både ha tillräcklig score och faktisk nedgång.
+    const modelQualified =
+      modelScore >= 52 &&
+      totalChange <= -2 &&
+      runner.samples >= 4 &&
+      latestChange < 4;
+
+    return {
+      ...runner,
+      modelScore,
+      modelQualified,
+      modelBreakdown: {
+        totalMovement: Math.round(totalMovement),
+        persistence: Math.round(persistence),
+        recentDevelopment: Math.round(recentDevelopment),
+        marketPicture: Math.round(marketPicture),
+        favoriteDevelopment: Math.round(favoriteDevelopment),
+        currentOddsLevel: Math.round(currentOddsLevel),
+        dataQuality: Math.round(dataQuality),
+      },
+      modelReasons: reasons,
+    };
+  });
+}
+
 function rankCandidates(runners: TrendRunner[]) {
-  return runners
-    .filter((runner) => !runner.scratched && runner.odds !== null && runner.changePercent !== null && runner.samples >= 3)
+  const evaluated = evaluateCandidates(runners)
+    .filter((runner) => runner.modelQualified)
     .sort((a, b) => {
-      // Huvudrankningen utgår från hela rörelsen sedan den första sparade mätningen.
-      // Senaste tick används bara som skiljekriterium när totalförändringen är nästan lika.
-      const totalDifference = (a.changePercent ?? 0) - (b.changePercent ?? 0);
-      if (Math.abs(totalDifference) >= 0.25) return totalDifference;
-      if (a.direction === "down" && b.direction !== "down") return -1;
-      if (b.direction === "down" && a.direction !== "down") return 1;
-      return (a.odds ?? Number.POSITIVE_INFINITY) - (b.odds ?? Number.POSITIVE_INFINITY);
-    })
-    .slice(0, 2);
+      const scoreDifference = (b.modelScore ?? 0) - (a.modelScore ?? 0);
+      if (scoreDifference !== 0) return scoreDifference;
+      return (a.changePercent ?? 0) - (b.changePercent ?? 0);
+    });
+
+  const a1 = evaluated[0];
+  const a2 = evaluated[1];
+
+  if (!a1) return [];
+  if (!a2) return [a1];
+
+  // A2 tvingas inte fram. Den ska själv nå gränsen och får inte ligga för långt efter A1.
+  if ((a2.modelScore ?? 0) < 52 || (a1.modelScore ?? 0) - (a2.modelScore ?? 0) > 24) {
+    return [a1];
+  }
+
+  return [a1, a2];
 }
 
 function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
@@ -712,6 +885,7 @@ export default function App() {
     setComboOddsInput("");
   }, [trackId, raceNumber]);
 
+  const evaluatedRunners = useMemo(() => evaluateCandidates(trendRunners), [trendRunners]);
   const candidates = useMemo(() => rankCandidates(trendRunners), [trendRunners]);
 
   const favoriteRunner = useMemo(() => {
@@ -763,6 +937,10 @@ export default function App() {
   }, [savedBets]);
 
   function lockCurrentSelection() {
+    if (selectedRace?.isMonte) {
+      setError("Montélopp räknas inte och ska inte spelas enligt modellen.");
+      return;
+    }
     if (!candidates[0] || !candidates[1]) {
       setError("Det finns ännu inte två kandidater med tillräcklig trenddata.");
       return;
@@ -1151,6 +1329,7 @@ export default function App() {
     const newSelections: AutoSelection[] = [];
 
     for (const race of races) {
+      if (race.isMonte) continue;
       if (!race.startTime || savedRaceNumbers.has(race.raceNumber) || selectionsByRace.has(race.id)) continue;
       const startMs = new Date(race.startTime).getTime();
       if (Number.isNaN(startMs)) continue;
@@ -1439,7 +1618,7 @@ export default function App() {
 
             <div style={s.runnerList}>
               {selectedRace.runners.length ? (
-                trendRunners.map((runner) => {
+                evaluatedRunners.map((runner) => {
                   const isA1 = candidates[0]?.number === runner.number;
                   const isA2 = candidates[1]?.number === runner.number;
                   const isFavorite = favoriteRunner?.number === runner.number;
@@ -1472,6 +1651,19 @@ export default function App() {
                       <span style={s.radarLine}>
                         Kortsiktigt: {momentumDisplay(runner.momentum)} · {runner.samples} mätningar
                       </span>
+                      {!runner.scratched && runner.modelScore !== undefined && (
+                        <div style={s.modelBox}>
+                          <span style={s.modelScore}>
+                            KOMBEN-score <strong>{runner.modelScore}</strong>/100
+                          </span>
+                          <span style={s.modelDecision}>
+                            {runner.modelQualified ? "Tydlig kandidat" : "Inte tillräckligt tydlig"}
+                          </span>
+                          {runner.modelReasons?.length ? (
+                            <span style={s.modelReasons}>{runner.modelReasons.slice(0, 2).join(" · ")}</span>
+                          ) : null}
+                        </div>
+                      )}
                       <div style={s.checkpointRow}>
                         <span>
                           60m{" "}
@@ -1575,6 +1767,17 @@ export default function App() {
                 </p>
               )}
             </div>
+
+            {candidates[0] && !candidates[1] && (
+              <div style={s.noPlayNotice}>
+                <strong>Ingen A2 väljs.</strong> Modellen hittar bara en tillräckligt tydlig kandidat, därför blir det inget kombinationsspel.
+              </div>
+            )}
+            {!candidates[0] && (
+              <div style={s.noPlayNotice}>
+                <strong>Inget spel.</strong> Ingen häst uppfyller modellens krav ännu.
+              </div>
+            )}
 
             <div style={s.lockBar}>
               <button
@@ -2330,6 +2533,36 @@ const s: Record<string, CSSProperties> = {
     border: "1px solid #263244",
     borderRadius: 16,
     background: "#0b1220",
+  },
+  modelBox: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px 10px",
+    marginTop: 7,
+    fontSize: 12,
+    color: "#cbd5e1",
+  },
+  modelScore: {
+    fontWeight: 700,
+    color: "#f8fafc",
+  },
+  modelDecision: {
+    fontWeight: 700,
+    color: "#93c5fd",
+  },
+  modelReasons: {
+    flexBasis: "100%",
+    color: "#94a3b8",
+  },
+  noPlayNotice: {
+    marginTop: 14,
+    padding: "12px 14px",
+    borderRadius: 12,
+    border: "1px solid #92400e",
+    background: "rgba(120, 53, 15, 0.22)",
+    color: "#fde68a",
+    fontSize: 13,
+    lineHeight: 1.5,
   },
   lockBar: {
     color: "#f8fafc",
