@@ -292,10 +292,7 @@ function totalTrendArrow(changePercent: number | null) {
   return changePercent < 0 ? "↓" : "↑";
 }
 
-function totalTrendLabel(changePercent: number | null) {
-  if (changePercent === null || Math.abs(changePercent) < 0.05) return "STABIL";
-  return changePercent < 0 ? "STÄRKS" : "TAPPAR";
-}
+
 
 function trendStrengthLabel(changePercent: number | null) {
   if (changePercent === null || Math.abs(changePercent) < 0.05) return "STABIL";
