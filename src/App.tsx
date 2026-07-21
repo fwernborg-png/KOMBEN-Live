@@ -66,7 +66,7 @@ type SavedBet = {
 const BETS_STORAGE_KEY = "komben-live-bets-v1";
 const ODDS_STORAGE_KEY = "komben-live-odds-history-v1";
 const AUTO_SELECTIONS_STORAGE_KEY = "komben-live-auto-selections-v1";
-const ALL_RACES_REFRESH_SECONDS = 30;
+const ALL_RACES_REFRESH_SECONDS = 60;
 const MAX_HISTORY_POINTS = 720;
 
 type AutoSelection = {
@@ -94,6 +94,7 @@ type TrendRunner = Runner & {
   latestAbsoluteChange: number | null;
   direction: "down" | "up" | "same";
   recentOdds: number[];
+  historyOdds: number[];
   samples: number;
   momentum: string;
   modelScore?: number;
@@ -106,7 +107,7 @@ type UnknownRecord = Record<string, unknown>;
 
 const API = "https://www.atg.se/services/racinginfo/v1/api";
 const MAX_RACES_TO_CHECK = 15;
-const REFRESH_SECONDS = 10;
+const REFRESH_SECONDS = 60;
 const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
 
 const SWEDISH_TRACK_NAMES = new Set(
@@ -280,6 +281,40 @@ function runnerKey(raceId: string, runnerNumber: number) {
   return `${raceId}:${runnerNumber}`;
 }
 
+function appendMinuteSnapshot(
+  history: OddsPoint[],
+  odds: number,
+  timestamp: number,
+) {
+  const last = history[history.length - 1];
+  // En datapunkt per minut, även när oddset står still. Det gör jämnheten mätbar.
+  if (last && timestamp - last.timestamp < 55_000) return history;
+  return [...history, { odds, timestamp }].slice(-MAX_HISTORY_POINTS);
+}
+
+function raceCollectionWindow(startTime?: string) {
+  if (!startTime) return null;
+  const startMs = new Date(startTime).getTime();
+  if (Number.isNaN(startMs)) return null;
+  return { startMs, collectionStartMs: startMs - 60 * 60_000 };
+}
+
+function shouldCollectOdds(startTime: string | undefined, timestamp: number) {
+  const window = raceCollectionWindow(startTime);
+  if (!window) return false;
+  return timestamp >= window.collectionStartMs && timestamp < window.startMs;
+}
+
+function historyInsideLastHour(history: OddsPoint[], startTime?: string) {
+  const window = raceCollectionWindow(startTime);
+  if (!window) return [];
+  return history.filter(
+    (point) =>
+      point.timestamp >= window.collectionStartMs &&
+      point.timestamp < window.startMs,
+  );
+}
+
 function percentChange(first: number | null, current: number | null) {
   if (!first || !current || first <= 0) return null;
   return ((current - first) / first) * 100;
@@ -290,11 +325,6 @@ function absoluteOddsChange(previous: number | null, current: number | null) {
   return (current - previous) / 100;
 }
 
-function formatAbsoluteChange(value: number | null) {
-  if (value === null || Math.abs(value) < 0.005) return "0,00";
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(2).replace(".", ",")}`;
-}
 
 function totalTrendColor(changePercent: number | null) {
   if (changePercent === null || Math.abs(changePercent) < 0.05) return "#f8fafc";
@@ -347,27 +377,22 @@ function checkpointOdds(
   raceStartTime: string | undefined,
   minutesBefore: number,
 ) {
-  if (!raceStartTime || !history.length) return null;
+  const window = raceCollectionWindow(raceStartTime);
+  if (!window || !history.length) return null;
 
-  const startMs = new Date(raceStartTime).getTime();
-  if (Number.isNaN(startMs)) return null;
+  const targetMs = window.startMs - minutesBefore * 60_000;
+  if (Date.now() < targetMs) return null;
 
-  const target = startMs - minutesBefore * 60_000;
-  const tolerance =
-    minutesBefore <= 5 ? 4 * 60_000 : 8 * 60_000;
+  // För 60-minutersoddset används den första mätningen vid eller strax efter
+  // kontrollpunkten. Den punkten ändras aldrig när nya odds kommer in.
+  const toleranceMs = minutesBefore === 60 ? 2 * 60_000 : 4 * 60_000;
+  const point = history.find(
+    (item) =>
+      item.timestamp >= targetMs &&
+      item.timestamp <= targetMs + toleranceMs,
+  );
 
-  let closest: OddsPoint | null = null;
-  let smallestDistance = Number.POSITIVE_INFINITY;
-
-  for (const point of history) {
-    const distance = Math.abs(point.timestamp - target);
-    if (distance < smallestDistance) {
-      smallestDistance = distance;
-      closest = point;
-    }
-  }
-
-  return closest && smallestDistance <= tolerance ? closest.odds : null;
+  return point?.odds ?? null;
 }
 
 function formatPercent(value: number | null) {
@@ -446,8 +471,9 @@ function parseFinishPosition(value: unknown) {
 
 function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRunner[] {
   return race.runners.map((runner) => {
-    const history = oddsHistory[runnerKey(race.id, runner.number)] ?? [];
-    const firstOdds = history.length ? history[0].odds : runner.odds;
+    const storedHistory = oddsHistory[runnerKey(race.id, runner.number)] ?? [];
+    const history = historyInsideLastHour(storedHistory, race.startTime);
+    const firstOdds = checkpointOdds(history, race.startTime, 60);
     const previousOdds = history.length >= 2 ? history[history.length - 2].odds : runner.odds;
     const currentOdds = runner.odds;
     const changePercent = percentChange(firstOdds, currentOdds);
@@ -465,6 +491,7 @@ function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRu
       latestAbsoluteChange,
       direction,
       recentOdds: history.slice(-5).map((point) => point.odds),
+      historyOdds: history.map((point) => point.odds),
       samples: history.length,
       momentum: momentumLabel(history),
     };
@@ -505,7 +532,7 @@ function evaluateCandidates(runners: TrendRunner[]) {
   );
 
   return eligible.map((runner) => {
-    const history = runner.recentOdds;
+    const history = runner.historyOdds;
     const allChanges: number[] = [];
     for (let index = 1; index < history.length; index += 1) {
       const previous = history[index - 1];
@@ -885,7 +912,7 @@ export default function App() {
     setComboOddsInput("");
   }, [trackId, raceNumber]);
 
-  const evaluatedRunners = useMemo(() => evaluateCandidates(trendRunners), [trendRunners]);
+  
   const candidates = useMemo(() => rankCandidates(trendRunners), [trendRunners]);
 
   const favoriteRunner = useMemo(() => {
@@ -1122,19 +1149,13 @@ export default function App() {
         const timestamp = Date.now();
 
         for (const race of availableRaces) {
+          if (!shouldCollectOdds(race.startTime, timestamp)) continue;
           for (const runner of race.runners) {
             if (runner.odds === null || runner.odds <= 0) continue;
 
             const key = runnerKey(race.id, runner.number);
             const history = next[key] ?? [];
-            const last = history[history.length - 1];
-
-            if (last?.odds !== runner.odds) {
-              next[key] = [
-                ...history,
-                { odds: runner.odds, timestamp },
-              ].slice(-MAX_HISTORY_POINTS);
-            }
+            next[key] = appendMinuteSnapshot(history, runner.odds, timestamp);
           }
         }
 
@@ -1179,19 +1200,13 @@ export default function App() {
         const next = { ...current };
 
         for (const race of refreshedRaces) {
+          if (!shouldCollectOdds(race.startTime, timestamp)) continue;
           for (const runner of race.runners) {
             if (runner.odds === null || runner.odds <= 0) continue;
 
             const key = runnerKey(race.id, runner.number);
             const history = next[key] ?? [];
-            const last = history[history.length - 1];
-
-            if (last?.odds !== runner.odds) {
-              next[key] = [
-                ...history,
-                { odds: runner.odds, timestamp },
-              ].slice(-MAX_HISTORY_POINTS);
-            }
+            next[key] = appendMinuteSnapshot(history, runner.odds, timestamp);
           }
         }
 
@@ -1228,24 +1243,22 @@ export default function App() {
         throw new Error("Loppet kunde inte hämtas.");
       }
 
-      setOddsHistory((current) => {
-        const next = { ...current };
+      const snapshotTime = Date.now();
+      if (shouldCollectOdds(refreshed.startTime, snapshotTime)) {
+        setOddsHistory((current) => {
+          const next = { ...current };
 
-        for (const runner of refreshed.runners) {
-          if (runner.odds === null || runner.odds <= 0) continue;
+          for (const runner of refreshed.runners) {
+            if (runner.odds === null || runner.odds <= 0) continue;
 
-          const key = runnerKey(refreshed.id, runner.number);
-          const history = next[key] ?? [];
-          const last = history[history.length - 1];
+            const key = runnerKey(refreshed.id, runner.number);
+            const history = next[key] ?? [];
+            next[key] = appendMinuteSnapshot(history, runner.odds, snapshotTime);
+          }
 
-          next[key] =
-            last?.odds === runner.odds
-              ? history
-              : [...history, { odds: runner.odds, timestamp: Date.now() }].slice(-MAX_HISTORY_POINTS);
-        }
-
-        return next;
-      });
+          return next;
+        });
+      }
 
       setRaces((current) =>
         current.map((race) =>
@@ -1401,10 +1414,6 @@ export default function App() {
     const upcoming = races
       .filter((race) => race.startTime && new Date(race.startTime).getTime() > now - 30_000 && !savedRaceNumbers.has(race.raceNumber))
       .sort((a, b) => new Date(a.startTime ?? 0).getTime() - new Date(b.startTime ?? 0).getTime())[0];
-    if (upcoming && String(upcoming.raceNumber) !== raceNumber) {
-      setRaceNumber(String(upcoming.raceNumber));
-    }
-
     if (!newSelections.length && !betsToAdd.length) {
       const next = upcoming?.startTime ? formatTime(upcoming.startTime) : "–";
       setAutoStatus(`Helkvällsautomaten är aktiv. Nästa lopp ${upcoming?.raceNumber ?? "–"} kl. ${next}.`);
@@ -1538,6 +1547,7 @@ export default function App() {
                   </option>
                 ))}
               </select>
+              <span style={s.manualHint}>Valt lopp ligger kvar tills du själv byter.</span>
             </label>
           )}
         </div>
@@ -1555,7 +1565,7 @@ export default function App() {
               </strong>
             </div>
             <span style={s.collectionText}>
-              Var {ALL_RACES_REFRESH_SECONDS}:e sekund · Senast{" "}
+              Varje minut · Senast{" "}
               {allRacesUpdated || "väntar"}
             </span>
           </div>
@@ -1607,7 +1617,7 @@ export default function App() {
             <div style={s.tableHeader}>
               <span>Nr</span>
               <span>Häst / kusk</span>
-              <span style={s.alignRight}>Odds</span>
+              <span style={s.alignRight}>Förändring</span>
             </div>
 
             <div style={s.trendLegend}>
@@ -1618,7 +1628,7 @@ export default function App() {
 
             <div style={s.runnerList}>
               {selectedRace.runners.length ? (
-                evaluatedRunners.map((runner) => {
+                trendRunners.map((runner) => {
                   const isA1 = candidates[0]?.number === runner.number;
                   const isA2 = candidates[1]?.number === runner.number;
                   const isFavorite = favoriteRunner?.number === runner.number;
@@ -1644,12 +1654,12 @@ export default function App() {
                       </div>
                       <span style={s.driver}>{runner.driver}</span>
                       <span style={s.firstToNow}>
-                        Första odds <strong>{formatOdds(runner.firstOdds)}</strong>
+                        Odds 60 min före <strong>{formatOdds(runner.firstOdds)}</strong>
                         <span style={s.oddsArrow}>→</span>
                         Nu <strong>{formatOdds(runner.odds)}</strong>
                       </span>
                       <span style={s.radarLine}>
-                        Kortsiktigt: {momentumDisplay(runner.momentum)} · {runner.samples} mätningar
+                        Trend: {momentumDisplay(runner.momentum)} · {runner.samples} minutpunkter
                       </span>
                       {!runner.scratched && runner.modelScore !== undefined && (
                         <div style={s.modelBox}>
@@ -1657,7 +1667,7 @@ export default function App() {
                             KOMBEN-score <strong>{runner.modelScore}</strong>/100
                           </span>
                           <span style={s.modelDecision}>
-                            {runner.modelQualified ? "Tydlig kandidat" : "Inte tillräckligt tydlig"}
+                            {runner.modelQualified ? "Kandidat" : "Avvakta"}
                           </span>
                           {runner.modelReasons?.length ? (
                             <span style={s.modelReasons}>{runner.modelReasons.slice(0, 2).join(" · ")}</span>
@@ -1726,11 +1736,11 @@ export default function App() {
                     <div style={s.oddsCell}>
                       <strong
                         style={{
-                          ...s.odds,
+                          ...s.primaryChange,
                           color: totalTrendColor(runner.changePercent),
                         }}
                       >
-                        {runner.scratched ? "STR" : formatOdds(runner.odds)}
+                        {runner.scratched ? "STR" : formatPercent(runner.changePercent)}
                       </strong>
                       {!runner.scratched && (
                         <span
@@ -1739,22 +1749,12 @@ export default function App() {
                             color: totalTrendColor(runner.changePercent),
                           }}
                         >
-                          {trendStrengthLabel(runner.changePercent)} {totalTrendArrow(runner.changePercent)}
+                          {totalTrendArrow(runner.changePercent)} {trendStrengthLabel(runner.changePercent)}
                         </span>
                       )}
                       {!runner.scratched && (
-                        <span
-                          style={{
-                            ...s.change,
-                            color: totalTrendColor(runner.changePercent),
-                          }}
-                        >
-                          Totalt {formatPercent(runner.changePercent)}
-                        </span>
-                      )}
-                      {!runner.scratched && (
-                        <span style={s.latestMove}>
-                          Senaste tick: {formatAbsoluteChange(runner.latestAbsoluteChange)}
+                        <span style={s.currentOddsSmall}>
+                          Nu {formatOdds(runner.odds)}
                         </span>
                       )}
                     </div>
@@ -2022,7 +2022,7 @@ export default function App() {
             </section>
 
             <div style={s.refreshInfo}>
-              <span>Valt lopp uppdateras var {REFRESH_SECONDS}:e sekund</span>
+              <span>Alla lopp uppdateras varje minut</span>
               <strong>Nästa om {secondsToRefresh} s</strong>
             </div>
           </section>
@@ -2255,6 +2255,12 @@ const s: Record<string, CSSProperties> = {
     background: "rgba(127,29,29,.3)",
     color: "#fecaca",
   },
+  manualHint: {
+    marginTop: 5,
+    color: "#94a3b8",
+    fontSize: 11,
+    fontWeight: 700,
+  },
   collectionBanner: {
     color: "#f8fafc",
     display: "flex",
@@ -2329,7 +2335,7 @@ const s: Record<string, CSSProperties> = {
   },
   tableHeader: {
     display: "grid",
-    gridTemplateColumns: "48px 1fr 80px",
+    gridTemplateColumns: "48px 1fr 118px",
     gap: 12,
     padding: "10px 16px",
     borderTop: "1px solid #263244",
@@ -2359,7 +2365,7 @@ const s: Record<string, CSSProperties> = {
   runnerRow: {
     color: "#f8fafc",
     display: "grid",
-    gridTemplateColumns: "48px 1fr 80px",
+    gridTemplateColumns: "48px 1fr 118px",
     alignItems: "center",
     gap: 12,
     minHeight: 62,
@@ -2465,6 +2471,18 @@ const s: Record<string, CSSProperties> = {
     textAlign: "right",
     color: "#f8fafc",
     fontSize: 20,
+  },
+  primaryChange: {
+    textAlign: "right",
+    fontSize: 27,
+    lineHeight: 1,
+    fontWeight: 950,
+    fontVariantNumeric: "tabular-nums",
+  },
+  currentOddsSmall: {
+    color: "#cbd5e1",
+    fontSize: 11,
+    fontWeight: 800,
   },
   oddsCell: {
     display: "grid",
