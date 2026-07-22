@@ -103,12 +103,51 @@ type TrendRunner = Runner & {
   modelReasons?: string[];
 };
 
+type StablePressureAnalysis = {
+  qualifies: boolean;
+  score: number;
+  firstOdds: number | null;
+  currentOdds: number | null;
+  totalDropPercent: number;
+  measurementCount: number;
+  observedMinutes: number;
+  totalSteps: number;
+  downwardSteps: number;
+  unchangedSteps: number;
+  upwardSteps: number;
+  downwardStepRatio: number;
+  controlledStepRatio: number;
+  upwardMovementRatio: number;
+  largestSingleRisePercent: number;
+  last15ChangePercent: number | null;
+  last5ChangePercent: number | null;
+};
+
+type StablePressureCandidate = {
+  runner: TrendRunner;
+  analysis: StablePressureAnalysis;
+};
+
 type UnknownRecord = Record<string, unknown>;
 
 const API = "https://www.atg.se/services/racinginfo/v1/api";
 const MAX_RACES_TO_CHECK = 15;
 const REFRESH_SECONDS = 60;
 const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
+
+
+const STABLE_PRESSURE_SETTINGS = {
+  minimumMeasurements: 25,
+  minimumObservedMinutes: 30,
+  minimumTotalDropPercent: 8,
+  minimumControlledStepRatio: 0.8,
+  minimumDownwardStepRatio: 0.3,
+  toleratedSmallRisePercent: 0.75,
+  maximumSingleRisePercent: 4,
+  maximumUpwardMovementRatio: 0.35,
+  maximumLast15RisePercent: 1.5,
+  maximumLast5RisePercent: 1.5,
+} as const;
 
 const SWEDISH_TRACK_NAMES = new Set(
   [
@@ -393,6 +432,190 @@ function checkpointOdds(
   );
 
   return point?.odds ?? null;
+}
+
+
+function oddsStepChangePercent(previousOdds: number, currentOdds: number) {
+  if (previousOdds <= 0) return 0;
+  return ((currentOdds - previousOdds) / previousOdds) * 100;
+}
+
+function periodOddsChangePercent(
+  history: OddsPoint[],
+  raceStartTime: string | undefined,
+  maximumMinutesBefore: number,
+) {
+  const window = raceCollectionWindow(raceStartTime);
+  if (!window) return null;
+
+  const periodStartMs = window.startMs - maximumMinutesBefore * 60_000;
+  const points = history.filter(
+    (point) => point.timestamp >= periodStartMs && point.timestamp < window.startMs,
+  );
+
+  if (points.length < 2) return null;
+  return oddsStepChangePercent(points[0].odds, points[points.length - 1].odds);
+}
+
+function analyzeStablePressure(
+  history: OddsPoint[],
+  raceStartTime: string | undefined,
+): StablePressureAnalysis {
+  const settings = STABLE_PRESSURE_SETTINGS;
+  const sortedHistory = [...history]
+    .filter(
+      (point) =>
+        Number.isFinite(point.odds) &&
+        point.odds > 0 &&
+        Number.isFinite(point.timestamp),
+    )
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  const empty: StablePressureAnalysis = {
+    qualifies: false,
+    score: 0,
+    firstOdds: sortedHistory[0]?.odds ?? null,
+    currentOdds: sortedHistory[sortedHistory.length - 1]?.odds ?? null,
+    totalDropPercent: 0,
+    measurementCount: sortedHistory.length,
+    observedMinutes: 0,
+    totalSteps: Math.max(0, sortedHistory.length - 1),
+    downwardSteps: 0,
+    unchangedSteps: 0,
+    upwardSteps: 0,
+    downwardStepRatio: 0,
+    controlledStepRatio: 0,
+    upwardMovementRatio: 1,
+    largestSingleRisePercent: 0,
+    last15ChangePercent: null,
+    last5ChangePercent: null,
+  };
+
+  if (sortedHistory.length < 2) return empty;
+
+  const firstOdds = sortedHistory[0].odds;
+  const currentOdds = sortedHistory[sortedHistory.length - 1].odds;
+  const observedMinutes =
+    (sortedHistory[sortedHistory.length - 1].timestamp - sortedHistory[0].timestamp) /
+    60_000;
+  const totalDropPercent = ((firstOdds - currentOdds) / firstOdds) * 100;
+
+  let downwardSteps = 0;
+  let unchangedSteps = 0;
+  let upwardSteps = 0;
+  let controlledSteps = 0;
+  let totalDownwardMovement = 0;
+  let totalUpwardMovement = 0;
+  let largestSingleRisePercent = 0;
+
+  for (let index = 1; index < sortedHistory.length; index += 1) {
+    const change = oddsStepChangePercent(
+      sortedHistory[index - 1].odds,
+      sortedHistory[index].odds,
+    );
+
+    if (change < -0.001) {
+      downwardSteps += 1;
+      totalDownwardMovement += Math.abs(change);
+    } else if (change > 0.001) {
+      upwardSteps += 1;
+      totalUpwardMovement += change;
+      largestSingleRisePercent = Math.max(largestSingleRisePercent, change);
+    } else {
+      unchangedSteps += 1;
+    }
+
+    if (change <= settings.toleratedSmallRisePercent) controlledSteps += 1;
+  }
+
+  const totalSteps = sortedHistory.length - 1;
+  const downwardStepRatio = downwardSteps / totalSteps;
+  const controlledStepRatio = controlledSteps / totalSteps;
+  const totalMovement = totalDownwardMovement + totalUpwardMovement;
+  const upwardMovementRatio =
+    totalMovement > 0 ? totalUpwardMovement / totalMovement : 1;
+  const last15ChangePercent = periodOddsChangePercent(
+    sortedHistory,
+    raceStartTime,
+    15,
+  );
+  const last5ChangePercent = periodOddsChangePercent(
+    sortedHistory,
+    raceStartTime,
+    5,
+  );
+
+  const last15IsControlled =
+    last15ChangePercent === null ||
+    last15ChangePercent <= settings.maximumLast15RisePercent;
+  const last5IsControlled =
+    last5ChangePercent === null ||
+    last5ChangePercent <= settings.maximumLast5RisePercent;
+
+  const qualifies =
+    sortedHistory.length >= settings.minimumMeasurements &&
+    observedMinutes >= settings.minimumObservedMinutes &&
+    totalDropPercent >= settings.minimumTotalDropPercent &&
+    controlledStepRatio >= settings.minimumControlledStepRatio &&
+    downwardStepRatio >= settings.minimumDownwardStepRatio &&
+    largestSingleRisePercent <= settings.maximumSingleRisePercent &&
+    upwardMovementRatio <= settings.maximumUpwardMovementRatio &&
+    last15IsControlled &&
+    last5IsControlled;
+
+  const score =
+    totalDropPercent * 2.5 +
+    controlledStepRatio * 40 +
+    downwardStepRatio * 20 -
+    largestSingleRisePercent * 5 -
+    upwardMovementRatio * 30 -
+    Math.max(0, last15ChangePercent ?? 0) * 4 -
+    Math.max(0, last5ChangePercent ?? 0) * 5;
+
+  return {
+    qualifies,
+    score,
+    firstOdds,
+    currentOdds,
+    totalDropPercent,
+    measurementCount: sortedHistory.length,
+    observedMinutes,
+    totalSteps,
+    downwardSteps,
+    unchangedSteps,
+    upwardSteps,
+    downwardStepRatio,
+    controlledStepRatio,
+    upwardMovementRatio,
+    largestSingleRisePercent,
+    last15ChangePercent,
+    last5ChangePercent,
+  };
+}
+
+function findBestStablePressureHorse(
+  race: Race,
+  runners: TrendRunner[],
+  oddsHistory: OddsHistory,
+): StablePressureCandidate | null {
+  const candidates = runners
+    .filter((runner) => !runner.scratched && runner.odds !== null && runner.odds > 0)
+    .map((runner) => {
+      const storedHistory = oddsHistory[runnerKey(race.id, runner.number)] ?? [];
+      const history = historyInsideLastHour(storedHistory, race.startTime);
+      return {
+        runner,
+        analysis: analyzeStablePressure(history, race.startTime),
+      };
+    })
+    .filter((candidate) => candidate.analysis.qualifies)
+    .sort((a, b) => {
+      const scoreDifference = b.analysis.score - a.analysis.score;
+      if (scoreDifference !== 0) return scoreDifference;
+      return b.analysis.totalDropPercent - a.analysis.totalDropPercent;
+    });
+
+  return candidates[0] ?? null;
 }
 
 function formatPercent(value: number | null) {
@@ -914,6 +1137,30 @@ export default function App() {
 
   
   const candidates = useMemo(() => rankCandidates(trendRunners), [trendRunners]);
+
+  const stablePressureCandidate = useMemo<StablePressureCandidate | null>(() => {
+    if (!selectedRace) return null;
+    return findBestStablePressureHorse(selectedRace, trendRunners, oddsHistory);
+  }, [selectedRace, trendRunners, oddsHistory]);
+
+  const marketAnalysisProgress = useMemo(() => {
+    if (!selectedRace) {
+      return { analyzedMinutes: 0, progressPercent: 0, complete: false };
+    }
+
+    const largestMeasurementCount = trendRunners.reduce((largest, runner) => {
+      const storedHistory = oddsHistory[runnerKey(selectedRace.id, runner.number)] ?? [];
+      const history = historyInsideLastHour(storedHistory, selectedRace.startTime);
+      return Math.max(largest, history.length);
+    }, 0);
+
+    const analyzedMinutes = Math.min(60, largestMeasurementCount);
+    return {
+      analyzedMinutes,
+      progressPercent: Math.round((analyzedMinutes / 60) * 100),
+      complete: analyzedMinutes >= 60,
+    };
+  }, [selectedRace, trendRunners, oddsHistory]);
 
   const favoriteRunner = useMemo(() => {
     return [...trendRunners]
@@ -1626,12 +1873,90 @@ export default function App() {
               <span><strong style={{ color: "#f8fafc" }}>VITT →</strong> = i princip oförändrat</span>
             </div>
 
+            <section
+              style={{
+                ...s.stablePressureCard,
+                ...(stablePressureCandidate
+                  ? s.marketAnalysisActive
+                  : marketAnalysisProgress.complete
+                    ? s.marketAnalysisComplete
+                    : s.marketAnalysisCollecting),
+              }}
+            >
+              <div style={s.stablePressureIcon}>🛡</div>
+              <div style={s.stablePressureContent}>
+                <span style={s.stablePressureKicker}>MARKNADSANALYS</span>
+
+                {stablePressureCandidate ? (
+                  <>
+                    <span style={s.marketAnalysisStatus}>🟢 Aktiv · Jämn oddssänkning</span>
+                    <strong style={s.stablePressureName}>
+                      {stablePressureCandidate.runner.number}. {stablePressureCandidate.runner.name}
+                    </strong>
+                    <span style={s.stablePressureOdds}>
+                      {formatOdds(stablePressureCandidate.analysis.firstOdds)}
+                      <span style={s.oddsArrow}>→</span>
+                      {formatOdds(stablePressureCandidate.analysis.currentOdds)}
+                      <strong style={s.stablePressureDrop}>
+                        −{stablePressureCandidate.analysis.totalDropPercent.toFixed(1).replace(".", ",")} %
+                      </strong>
+                    </span>
+                    <span style={s.stablePressureStats}>
+                      Stabilitet: {clamp(Math.round(stablePressureCandidate.analysis.score), 0, 100)}/100 · {stablePressureCandidate.analysis.measurementCount} minuter analyserade
+                    </span>
+                    <span style={s.stablePressureNotice}>
+                      Jämnast tydliga sänkning i loppet · informationssignal, inte automatiskt platsspel
+                    </span>
+                  </>
+                ) : marketAnalysisProgress.complete ? (
+                  <>
+                    <span style={s.marketAnalysisStatus}>✅ Analys klar</span>
+                    <strong style={s.stablePressureName}>Ingen tydlig signal</strong>
+                    <span style={s.stablePressureStats}>
+                      Ingen häst uppfyller kriterierna för jämn och långvarig oddssänkning.
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span style={s.marketAnalysisStatus}>⏳ Samlar data…</span>
+                    <strong style={s.stablePressureName}>
+                      Analys: {marketAnalysisProgress.progressPercent} % klar
+                    </strong>
+                    <div style={s.marketAnalysisProgressTrack}>
+                      <div
+                        style={{
+                          ...s.marketAnalysisProgressFill,
+                          width: `${marketAnalysisProgress.progressPercent}%`,
+                        }}
+                      />
+                    </div>
+                    <span style={s.stablePressureStats}>
+                      {marketAnalysisProgress.analyzedMinutes} av 60 minuter analyserade
+                    </span>
+                    <span style={s.stablePressureNotice}>
+                      Söker efter hästar med jämn och långvarig oddssänkning.
+                    </span>
+                  </>
+                )}
+
+                <span style={s.marketAnalysisFooter}>
+                  Analyserar 1 minut i taget under sista timmen före start.
+                </span>
+              </div>
+
+              {stablePressureCandidate && (
+                <span style={s.stablePressureSignal}>JÄMN<br />SÄNKNING</span>
+              )}
+            </section>
+
             <div style={s.runnerList}>
               {selectedRace.runners.length ? (
                 trendRunners.map((runner) => {
                   const isA1 = candidates[0]?.number === runner.number;
                   const isA2 = candidates[1]?.number === runner.number;
                   const isFavorite = favoriteRunner?.number === runner.number;
+                  const hasStablePressure =
+                    stablePressureCandidate?.runner.number === runner.number;
 
                   return (
                   <div
@@ -1639,6 +1964,7 @@ export default function App() {
                     style={{
                       ...s.runnerRow,
                       ...(isA1 ? s.a1RunnerRow : isA2 ? s.a2RunnerRow : {}),
+                      ...(hasStablePressure ? s.stablePressureRunnerRow : {}),
                       opacity: runner.scratched ? 0.45 : 1,
                     }}
                   >
@@ -1650,6 +1976,9 @@ export default function App() {
                           {isA1 && <span style={s.a1Badge}>A1</span>}
                           {isA2 && <span style={s.a2Badge}>A2</span>}
                           {isFavorite && <span style={s.favoriteBadge}>★ FAVORIT</span>}
+                          {hasStablePressure && (
+                            <span style={s.stablePressureBadge}>🛡 JÄMN SÄNKNING</span>
+                          )}
                         </div>
                       </div>
                       <span style={s.driver}>{runner.driver}</span>
@@ -2356,6 +2685,116 @@ const s: Record<string, CSSProperties> = {
     fontSize: 11,
     lineHeight: 1.35,
   },
+  stablePressureCard: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 12,
+    margin: 12,
+    padding: 14,
+    border: "1px solid rgba(163,230,53,.55)",
+    borderLeft: "5px solid #a3e635",
+    borderRadius: 14,
+    background: "linear-gradient(135deg, rgba(20,83,45,.72), rgba(15,23,42,.98))",
+    boxShadow: "0 12px 28px rgba(0,0,0,.24)",
+  },
+  marketAnalysisCollecting: {
+    borderColor: "rgba(250,204,21,.42)",
+    borderLeftColor: "#facc15",
+    background: "linear-gradient(135deg, rgba(113,63,18,.34), rgba(15,23,42,.98))",
+  },
+  marketAnalysisActive: {
+    borderColor: "rgba(163,230,53,.55)",
+    borderLeftColor: "#a3e635",
+    background: "linear-gradient(135deg, rgba(20,83,45,.72), rgba(15,23,42,.98))",
+  },
+  marketAnalysisComplete: {
+    borderColor: "rgba(148,163,184,.4)",
+    borderLeftColor: "#94a3b8",
+    background: "linear-gradient(135deg, rgba(51,65,85,.45), rgba(15,23,42,.98))",
+  },
+  marketAnalysisStatus: {
+    color: "#e2e8f0",
+    fontSize: 12,
+    fontWeight: 850,
+  },
+  marketAnalysisProgressTrack: {
+    width: "100%",
+    height: 8,
+    overflow: "hidden",
+    borderRadius: 999,
+    background: "rgba(148,163,184,.2)",
+  },
+  marketAnalysisProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+    background: "linear-gradient(90deg, #facc15, #a3e635)",
+    transition: "width .35s ease",
+  },
+  marketAnalysisFooter: {
+    marginTop: 3,
+    paddingTop: 6,
+    borderTop: "1px solid rgba(148,163,184,.18)",
+    color: "#94a3b8",
+    fontSize: 10,
+    lineHeight: 1.4,
+  },
+  stablePressureIcon: {
+    flex: "0 0 auto",
+    fontSize: 29,
+  },
+  stablePressureContent: {
+    display: "grid",
+    flex: "1 1 250px",
+    minWidth: 0,
+    gap: 4,
+  },
+  stablePressureKicker: {
+    color: "#bef264",
+    fontSize: 10,
+    fontWeight: 950,
+    letterSpacing: ".12em",
+  },
+  stablePressureName: {
+    color: "#f8fafc",
+    fontSize: 19,
+    lineHeight: 1.15,
+  },
+  stablePressureOdds: {
+    display: "flex",
+    alignItems: "baseline",
+    flexWrap: "wrap",
+    gap: 6,
+    color: "#e2e8f0",
+    fontSize: 13,
+    fontWeight: 800,
+  },
+  stablePressureDrop: {
+    color: "#bef264",
+    fontSize: 15,
+  },
+  stablePressureStats: {
+    color: "#cbd5e1",
+    fontSize: 11,
+    lineHeight: 1.4,
+  },
+  stablePressureNotice: {
+    color: "#94a3b8",
+    fontSize: 10,
+    lineHeight: 1.4,
+  },
+  stablePressureSignal: {
+    flex: "0 0 auto",
+    padding: "8px 10px",
+    borderRadius: 10,
+    background: "#a3e635",
+    color: "#1a2e05",
+    fontSize: 9,
+    fontWeight: 950,
+    lineHeight: 1.2,
+    textAlign: "center",
+    letterSpacing: ".06em",
+  },
   alignRight: {
     textAlign: "right",
   },
@@ -2379,6 +2818,9 @@ const s: Record<string, CSSProperties> = {
   a2RunnerRow: {
     background: "linear-gradient(90deg, rgba(56,189,248,0.11), transparent 65%)",
     boxShadow: "inset 4px 0 0 #38bdf8",
+  },
+  stablePressureRunnerRow: {
+    borderLeft: "4px solid #a3e635",
   },
   numberBox: {
     color: "#f8fafc",
@@ -2432,6 +2874,15 @@ const s: Record<string, CSSProperties> = {
     color: "#422006",
     fontSize: 9,
     fontWeight: 950,
+  },
+  stablePressureBadge: {
+    padding: "3px 7px",
+    borderRadius: 999,
+    background: "#a3e635",
+    color: "#1a2e05",
+    fontSize: 9,
+    fontWeight: 950,
+    whiteSpace: "nowrap",
   },
   driver: {
     display: "block",
