@@ -553,8 +553,6 @@ function analyzeStablePressure(
     last5ChangePercent <= settings.maximumLast5RisePercent;
 
   const qualifies =
-    sortedHistory.length >= settings.minimumMeasurements &&
-    observedMinutes >= settings.minimumObservedMinutes &&
     totalDropPercent >= settings.minimumTotalDropPercent &&
     controlledStepRatio >= settings.minimumControlledStepRatio &&
     downwardStepRatio >= settings.minimumDownwardStepRatio &&
@@ -1158,7 +1156,7 @@ export default function App() {
     return {
       analyzedMinutes,
       progressPercent: Math.round((analyzedMinutes / 60) * 100),
-      complete: analyzedMinutes >= 60,
+      complete: largestMeasurementCount >= 2,
     };
   }, [selectedRace, trendRunners, oddsHistory]);
 
