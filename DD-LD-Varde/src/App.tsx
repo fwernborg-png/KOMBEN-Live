@@ -8,6 +8,7 @@ type Track = {
   startTime?: string;
   products: string[];
   countryCode: "SE" | "FR";
+  countryLabel: "Sverige" | "Frankrike";
 };
 
 type CalendarResponse = {
@@ -19,6 +20,7 @@ type Runner = {
   name: string;
   driver: string;
   odds: number | null;
+  placeOdds: number | null;
   scratched: boolean;
 };
 
@@ -40,11 +42,12 @@ type OddsPoint = {
 
 type OddsHistory = Record<string, OddsPoint[]>;
 
-type SavedBet = {
+type TvillingBet = {
   id: string;
   date: string;
   trackId: number;
   trackName: string;
+  countryCode: "SE" | "FR";
   raceNumber: number;
   a1Number: number;
   a1Name: string;
@@ -52,7 +55,7 @@ type SavedBet = {
   a2Name: string;
   firstNumber: number;
   secondNumber: number;
-  comboOdds: number | null;
+  tvillingOdds: number | null;
   hit: boolean;
   winningOrder: "A1-A2" | "A2-A1" | "MISS";
   stake: number;
@@ -61,14 +64,60 @@ type SavedBet = {
   lockedAt: string;
   savedAt: string;
   automatic?: boolean;
-  needsComboOdds?: boolean;
+  needsTvillingOdds?: boolean;
 };
 
-const BETS_STORAGE_KEY = "komben-live-bets-v1";
+type TvillingRaceMarket = {
+  status: "available" | "closed" | "missing" | "error";
+  comboOdds: number[][];
+  fetchedAt: number;
+};
+
+type PairMarket = {
+  status: "available" | "closed" | "missing" | "error";
+  comboOdds: number[][];
+  fetchedAt: number;
+};
+
+
+type SignalRecordStatus =
+  | "locked"
+  | "no-signal"
+  | "winner"
+  | "place"
+  | "loss"
+  | "payout-pending";
+
+type SignalRecord = {
+  id: string;
+  date: string;
+  trackId: number;
+  trackName: string;
+  raceId: string;
+  raceNumber: number;
+  startTime?: string;
+  runnerNumber: number | null;
+  runnerName: string | null;
+  lockedWinOdds: number | null;
+  lockedPlaceOdds: number | null;
+  lockedAt: string;
+  status: SignalRecordStatus;
+  finishPosition: number | null;
+  stake: number;
+  returnAmount: number;
+  net: number;
+  payoutPending: boolean;
+};
+
+const LEGACY_KOMB_BETS_STORAGE_KEY = "komben-live-bets-v1";
+const LEGACY_KOMB_BETS_ARCHIVE_STORAGE_KEY = "komben-live-bets-legacy-archive-v1";
+const TVILLING_BETS_STORAGE_KEY = "komben-live-tvilling-bets-v1";
+const SIGNALS_STORAGE_KEY = "komben-live-signals-v1";
 const ODDS_STORAGE_KEY = "komben-live-odds-history-v1";
 const AUTO_SELECTIONS_STORAGE_KEY = "komben-live-auto-selections-v1";
 const ALL_RACES_REFRESH_SECONDS = 60;
 const MAX_HISTORY_POINTS = 720;
+const TVILLING_STAKE = 100;
 
 type AutoSelection = {
   raceId: string;
@@ -129,6 +178,16 @@ type StablePressureCandidate = {
   analysis: StablePressureAnalysis;
 };
 
+type RaceMarketOverview = {
+  candidate: TrendRunner | null;
+  collectedMinutes: number;
+  sampleCount: number;
+  winChangePercent: number | null;
+  placeChangePercent: number | null;
+  status: "waiting" | "collecting" | "preliminary" | "strong" | "locked" | "finished";
+  confidence: "låg" | "medel" | "hög";
+};
+
 type UnknownRecord = Record<string, unknown>;
 type RacesByTrack = Record<number, Race[]>;
 type MeetingRaceRef = {
@@ -144,8 +203,8 @@ const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
 
 
 const STABLE_PRESSURE_SETTINGS = {
-  minimumMeasurements: 4,
-  minimumObservedMinutes: 3,
+  minimumMeasurements: 25,
+  minimumObservedMinutes: 30,
   minimumTotalDropPercent: 8,
   minimumControlledStepRatio: 0.8,
   minimumDownwardStepRatio: 0.3,
@@ -293,9 +352,14 @@ function parseTrack(value: unknown): Track | null {
   const products = extractTargetProducts(value);
   const parsedCountry = parseCountryCode(value);
   const isSwedish = parsedCountry === "SE" || isSwedishTrackName(name);
+
+  // Endast svenska banor ska ingå. Ingen filtrering på spelprodukt.
   if (!isSwedish) return null;
 
-  return { id, name, startTime, products, countryCode: "SE" };
+  const countryCode: "SE" | "FR" = "SE";
+  const countryLabel: "Sverige" | "Frankrike" = "Sverige";
+
+  return { id, name, startTime, products, countryCode, countryLabel };
 }
 
 function parseMeetingRaceRefs(trackValue: unknown): MeetingRaceRef[] {
@@ -309,15 +373,13 @@ function parseMeetingRaceRefs(trackValue: unknown): MeetingRaceRef[] {
   const refs = raceCandidates
     .map((race) => {
       if (!isRecord(race)) return null;
-
-      const raceId = asString(race.id) || asString(race.raceId) || null;
+      const raceId = asString(race.id) ?? asString(race.raceId) ?? null;
       const raceNumber =
         asNumber(race.number) ??
         asNumber(race.raceNumber) ??
         (raceId
           ? Number((raceId.match(/(?:_|-)(\d{1,2})$/)?.[1] ?? ""))
           : null);
-
       if (!raceNumber || !Number.isFinite(raceNumber) || raceNumber <= 0) return null;
 
       return {
@@ -364,8 +426,59 @@ function formatOdds(rawOdds: number | null) {
   return (rawOdds / 100).toFixed(2).replace(".", ",");
 }
 
+function parseTvillingComboOdds(value: unknown): number[][] {
+  if (!Array.isArray(value)) return [];
+  return value.map((row) => {
+    if (!Array.isArray(row)) return [];
+    return row.map((item) => asNumber(item) ?? 0);
+  });
+}
+
+function lookupTvillingRawOdds(comboOdds: number[][], a: number, b: number) {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0 || a === b) return null;
+  const high = Math.max(a, b);
+  const low = Math.min(a, b);
+  const row = comboOdds[high - 1];
+  if (!Array.isArray(row)) return null;
+  const raw = row[low - 1];
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return raw;
+}
+
+function parseTvillingMarket(data: unknown): TvillingRaceMarket {
+  if (!isRecord(data)) {
+    return { status: "error", comboOdds: [], fetchedAt: Date.now() };
+  }
+
+  const status = normalizeText(asString(data.status));
+  const pools = getRecord(data, "pools");
+  const tvillingPool = pools
+    ? getRecord(pools, "tvilling") ?? getRecord(pools, "twin")
+    : undefined;
+
+  if (!tvillingPool) {
+    return {
+      status: status === "closed" ? "closed" : "missing",
+      comboOdds: [],
+      fetchedAt: Date.now(),
+    };
+  }
+
+  const comboOdds = parseTvillingComboOdds(tvillingPool.comboOdds);
+
+  return {
+    status: status === "closed" ? "closed" : comboOdds.length ? "available" : "missing",
+    comboOdds,
+    fetchedAt: Date.now(),
+  };
+}
+
 function runnerKey(raceId: string, runnerNumber: number) {
   return `${raceId}:${runnerNumber}`;
+}
+
+function placeRunnerKey(raceId: string, runnerNumber: number) {
+  return `${raceId}:${runnerNumber}:place`;
 }
 
 function appendMinuteSnapshot(
@@ -601,8 +714,6 @@ function analyzeStablePressure(
     last5ChangePercent <= settings.maximumLast5RisePercent;
 
   const qualifies =
-    sortedHistory.length >= settings.minimumMeasurements &&
-    observedMinutes >= settings.minimumObservedMinutes &&
     totalDropPercent >= settings.minimumTotalDropPercent &&
     controlledStepRatio >= settings.minimumControlledStepRatio &&
     downwardStepRatio >= settings.minimumDownwardStepRatio &&
@@ -645,11 +756,13 @@ function findBestStablePressureHorse(
   race: Race,
   runners: TrendRunner[],
   oddsHistory: OddsHistory,
+  market: "winner" | "place" = "winner",
 ): StablePressureCandidate | null {
   const candidates = runners
-    .filter((runner) => !runner.scratched && runner.odds !== null && runner.odds > 0)
+    .filter((runner) => !runner.scratched && (market === "winner" ? runner.odds : runner.placeOdds) !== null)
     .map((runner) => {
-      const storedHistory = oddsHistory[runnerKey(race.id, runner.number)] ?? [];
+      const key = market === "winner" ? runnerKey(race.id, runner.number) : placeRunnerKey(race.id, runner.number);
+      const storedHistory = oddsHistory[key] ?? [];
       const history = historyInsideLastHour(storedHistory, race.startTime);
       return {
         runner,
@@ -664,6 +777,60 @@ function findBestStablePressureHorse(
     });
 
   return candidates[0] ?? null;
+}
+
+function buildRaceMarketOverview(
+  race: Race,
+  oddsHistory: OddsHistory,
+  nowMs: number,
+  record?: SignalRecord,
+): RaceMarketOverview {
+  const runners = buildTrendRunnersForRace(race, oddsHistory);
+  const ranked = [...runners]
+    .filter((runner) => !runner.scratched && runner.odds !== null)
+    .sort((a, b) => {
+      const aChange = a.changePercent ?? Number.POSITIVE_INFINITY;
+      const bChange = b.changePercent ?? Number.POSITIVE_INFINITY;
+      if (aChange !== bChange) return aChange - bChange;
+      return b.samples - a.samples;
+    });
+  const candidate = ranked[0] ?? null;
+  const winnerHistory = candidate
+    ? historyInsideLastHour(oddsHistory[runnerKey(race.id, candidate.number)] ?? [], race.startTime)
+    : [];
+  const placeHistory = candidate
+    ? historyInsideLastHour(oddsHistory[placeRunnerKey(race.id, candidate.number)] ?? [], race.startTime)
+    : [];
+  const observedMinutes = winnerHistory.length > 1
+    ? Math.max(1, Math.round((winnerHistory[winnerHistory.length - 1].timestamp - winnerHistory[0].timestamp) / 60000))
+    : winnerHistory.length;
+  const winChangePercent = candidate?.changePercent ?? null;
+  const placeFirst = placeHistory[0]?.odds ?? null;
+  const placeCurrent = placeHistory[placeHistory.length - 1]?.odds ?? candidate?.placeOdds ?? null;
+  const placeChangePercent = percentChange(placeFirst, placeCurrent);
+  const startMs = race.startTime ? new Date(race.startTime).getTime() : Number.NaN;
+  const started = !Number.isNaN(startMs) && nowMs >= startMs;
+
+  let status: RaceMarketOverview["status"] = "waiting";
+  if (record) status = record.status === "locked" ? "locked" : "finished";
+  else if (started) status = "finished";
+  else if (winnerHistory.length === 0) status = "waiting";
+  else if ((winChangePercent ?? 0) <= -8 && observedMinutes >= 10) status = "strong";
+  else if ((winChangePercent ?? 0) <= -3 && observedMinutes >= 3) status = "preliminary";
+  else status = "collecting";
+
+  const confidence: RaceMarketOverview["confidence"] =
+    observedMinutes >= 30 ? "hög" : observedMinutes >= 10 ? "medel" : "låg";
+
+  return {
+    candidate,
+    collectedMinutes: Math.min(60, observedMinutes),
+    sampleCount: winnerHistory.length,
+    winChangePercent,
+    placeChangePercent,
+    status,
+    confidence,
+  };
 }
 
 function formatPercent(value: number | null) {
@@ -709,6 +876,13 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
     (winnerPool ? asNumber(winnerPool.odds) : null) ??
     asNumber(value.odds);
 
+  const placePool = pools
+    ? getRecord(pools, "plats") ?? getRecord(pools, "place")
+    : undefined;
+  const placeOdds =
+    (placePool ? asNumber(placePool.odds) : null) ??
+    asNumber(value.placeOdds);
+
   const scratched =
     value.scratched === true ||
     value.withdrawn === true ||
@@ -719,6 +893,7 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
     name,
     driver: parseDriver(value),
     odds,
+    placeOdds,
     scratched,
   };
 }
@@ -744,9 +919,7 @@ function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRu
   return race.runners.map((runner) => {
     const storedHistory = oddsHistory[runnerKey(race.id, runner.number)] ?? [];
     const history = historyInsideLastHour(storedHistory, race.startTime);
-    // 60 minuter är maxfönstret, inte ett krav.
-    // Öppnas appen sent används första tillgängliga mätningen som startvärde.
-    const firstOdds = history[0]?.odds ?? null;
+    const firstOdds = checkpointOdds(history, race.startTime, 60);
     const previousOdds = history.length >= 2 ? history[history.length - 2].odds : runner.odds;
     const currentOdds = runner.odds;
     const changePercent = percentChange(firstOdds, currentOdds);
@@ -998,10 +1171,6 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
 }
 
 export default function App() {
-  useEffect(() => {
-    console.log("[KOMBEN] APP VERSION DEBUG 1");
-  }, []);
-
   const [dbStatus, setDbStatus] = useState("Testar...");
   useEffect(() => {
   async function testConnection() {
@@ -1021,6 +1190,7 @@ export default function App() {
 }, []);
   const [date, setDate] = useState(today());
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [countryFilter, setCountryFilter] = useState<"SE" | "FR">("SE");
   const [trackId, setTrackId] = useState("");
   const [races, setRaces] = useState<Race[]>([]);
   const [racesByTrack, setRacesByTrack] = useState<RacesByTrack>({});
@@ -1033,7 +1203,8 @@ export default function App() {
   const [updated, setUpdated] = useState("");
   const [secondsToRefresh, setSecondsToRefresh] = useState(REFRESH_SECONDS);
   const [oddsHistory, setOddsHistory] = useState<OddsHistory>({});
-  const [savedBets, setSavedBets] = useState<SavedBet[]>([]);
+  const [tvillingBets, setTvillingBets] = useState<TvillingBet[]>([]);
+  const [signalRecords, setSignalRecords] = useState<SignalRecord[]>([]);
   const [lockedSelection, setLockedSelection] = useState<{
     a1: TrendRunner;
     a2: TrendRunner;
@@ -1041,28 +1212,35 @@ export default function App() {
   } | null>(null);
   const [firstNumber, setFirstNumber] = useState("");
   const [secondNumber, setSecondNumber] = useState("");
-  const [comboOddsInput, setComboOddsInput] = useState("");
   const [allRacesUpdated, setAllRacesUpdated] = useState("");
   const [backgroundCollecting, setBackgroundCollecting] = useState(false);
   const [nowMs, setNowMs] = useState(Date.now());
   const [autoSelections, setAutoSelections] = useState<AutoSelection[]>([]);
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
-  const [pendingOddsInputs, setPendingOddsInputs] = useState<Record<string, string>>({});
+  const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
+  const [tvillingMarkets, setTvillingMarkets] = useState<Record<string, TvillingRaceMarket>>({});
 
   const selectedTrack = useMemo(
     () => tracks.find((track) => String(track.id) === trackId),
     [tracks, trackId],
   );
 
+  const tracksByCountry = useMemo(
+    () => ({
+      SE: tracks.filter((track) => track.countryCode === "SE"),
+      FR: tracks.filter((track) => track.countryCode === "FR"),
+    }),
+    [tracks],
+  );
+
+  const selectableTracks = useMemo(
+    () => tracksByCountry[countryFilter],
+    [tracksByCountry, countryFilter],
+  );
+
   const selectedRace = useMemo(
     () => races.find((race) => String(race.raceNumber) === raceNumber),
     [races, raceNumber],
-  );
-
-  const swedishMeetingsCount = tracks.length;
-  const swedishRacesCount = useMemo(
-    () => Object.values(meetingRacesByTrack).reduce((sum, meetingRaces) => sum + meetingRaces.length, 0),
-    [meetingRacesByTrack],
   );
 
   const countdown = useMemo(() => {
@@ -1152,23 +1330,57 @@ export default function App() {
 
   useEffect(() => {
     try {
-      const stored = window.localStorage.getItem(BETS_STORAGE_KEY);
+      const stored = window.localStorage.getItem(LEGACY_KOMB_BETS_STORAGE_KEY);
       if (stored) {
-        const parsed = JSON.parse(stored) as SavedBet[];
-        if (Array.isArray(parsed)) setSavedBets(parsed);
+        const archived = window.localStorage.getItem(LEGACY_KOMB_BETS_ARCHIVE_STORAGE_KEY);
+        if (!archived) {
+          window.localStorage.setItem(LEGACY_KOMB_BETS_ARCHIVE_STORAGE_KEY, stored);
+        }
       }
     } catch (error) {
-      console.error("Kunde inte läsa sparad speljournal", error);
+      console.error("Kunde inte arkivera tidigare kombjournal", error);
     }
   }, []);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(BETS_STORAGE_KEY, JSON.stringify(savedBets));
+      const stored = window.localStorage.getItem(TVILLING_BETS_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as TvillingBet[];
+        if (Array.isArray(parsed)) setTvillingBets(parsed);
+      }
     } catch (error) {
-      console.error("Kunde inte spara speljournal", error);
+      console.error("Kunde inte läsa sparad tvillingjournal", error);
     }
-  }, [savedBets]);
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TVILLING_BETS_STORAGE_KEY, JSON.stringify(tvillingBets));
+    } catch (error) {
+      console.error("Kunde inte spara tvillingjournal", error);
+    }
+  }, [tvillingBets]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SIGNALS_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as SignalRecord[];
+        if (Array.isArray(parsed)) setSignalRecords(parsed);
+      }
+    } catch (error) {
+      console.error("Kunde inte läsa signaljournalen", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIGNALS_STORAGE_KEY, JSON.stringify(signalRecords));
+    } catch (error) {
+      console.error("Kunde inte spara signaljournalen", error);
+    }
+  }, [signalRecords]);
 
   useEffect(() => {
     try {
@@ -1194,74 +1406,79 @@ export default function App() {
     setLockedSelection(null);
     setFirstNumber("");
     setSecondNumber("");
-    setComboOddsInput("");
   }, [trackId, raceNumber]);
+
+  useEffect(() => {
+    if (!selectableTracks.some((track) => String(track.id) === trackId)) {
+      setTrackId("");
+      setRaces([]);
+      setRaceNumber("");
+      setLockedSelection(null);
+      setFirstNumber("");
+      setSecondNumber("");
+    }
+  }, [countryFilter, selectableTracks, trackId]);
 
   
   const candidates = useMemo(() => rankCandidates(trendRunners), [trendRunners]);
 
   const stablePressureCandidate = useMemo<StablePressureCandidate | null>(() => {
     if (!selectedRace) return null;
-    return findBestStablePressureHorse(selectedRace, trendRunners, oddsHistory);
+    return findBestStablePressureHorse(selectedRace, trendRunners, oddsHistory, "winner");
+  }, [selectedRace, trendRunners, oddsHistory]);
+
+  const placePressureCandidate = useMemo<StablePressureCandidate | null>(() => {
+    if (!selectedRace) return null;
+    return findBestStablePressureHorse(selectedRace, trendRunners, oddsHistory, "place");
+  }, [selectedRace, trendRunners, oddsHistory]);
+
+  const marketPulse = useMemo(() => {
+    if (!selectedRace) return { score: 0, strengthening: 0, weakening: 0 };
+    let strengthening = 0;
+    let weakening = 0;
+    let activity = 0;
+    for (const runner of trendRunners) {
+      const win = percentChange(runner.firstOdds, runner.odds);
+      const placeHistory = historyInsideLastHour(
+        oddsHistory[placeRunnerKey(selectedRace.id, runner.number)] ?? [],
+        selectedRace.startTime,
+      );
+      const place = percentChange(
+        checkpointOdds(placeHistory, selectedRace.startTime, 60),
+        runner.placeOdds,
+      );
+      const combined = [win, place].filter((value): value is number => value !== null);
+      if (!combined.length) continue;
+      const average = combined.reduce((sum, value) => sum + value, 0) / combined.length;
+      activity += Math.min(20, Math.abs(average));
+      if (average <= -2) strengthening += 1;
+      if (average >= 2) weakening += 1;
+    }
+    return {
+      score: clamp(Math.round(activity * 2.5), 0, 100),
+      strengthening,
+      weakening,
+    };
   }, [selectedRace, trendRunners, oddsHistory]);
 
   const marketAnalysisProgress = useMemo(() => {
     if (!selectedRace) {
-      return { measurementCount: 0, observedMinutes: 0, active: false };
+      return { analyzedMinutes: 0, progressPercent: 0, complete: false };
     }
 
-    let largestMeasurementCount = 0;
-    let longestObservedMinutes = 0;
+    const largestMeasurementCount = trendRunners.reduce((largest, runner) => {
+      const storedHistory = oddsHistory[runnerKey(selectedRace.id, runner.number)] ?? [];
+      const history = historyInsideLastHour(storedHistory, selectedRace.startTime);
+      return Math.max(largest, history.length);
+    }, 0);
 
-    for (const runner of trendRunners) {
-      const storedHistory =
-        oddsHistory[runnerKey(selectedRace.id, runner.number)] ?? [];
-      const history = historyInsideLastHour(
-        storedHistory,
-        selectedRace.startTime,
-      );
-
-      largestMeasurementCount = Math.max(
-        largestMeasurementCount,
-        history.length,
-      );
-
-      if (history.length >= 2) {
-        const observedMinutes =
-          (history[history.length - 1].timestamp - history[0].timestamp) /
-          60_000;
-
-        longestObservedMinutes = Math.max(
-          longestObservedMinutes,
-          observedMinutes,
-        );
-      }
-    }
-
+    const analyzedMinutes = Math.min(60, largestMeasurementCount);
     return {
-      measurementCount: largestMeasurementCount,
-      observedMinutes: Math.max(0, Math.round(longestObservedMinutes)),
-      active: largestMeasurementCount >= 2,
+      analyzedMinutes,
+      progressPercent: Math.round((analyzedMinutes / 60) * 100),
+      complete: largestMeasurementCount >= 2,
     };
   }, [selectedRace, trendRunners, oddsHistory]);
-
-  const raceCollectionSummary = useMemo(() => {
-    let active = 0;
-    let waiting = 0;
-
-    for (const race of races) {
-      const window = raceCollectionWindow(race.startTime);
-      if (!window) continue;
-
-      if (nowMs >= window.collectionStartMs && nowMs < window.startMs) {
-        active += 1;
-      } else if (nowMs < window.collectionStartMs) {
-        waiting += 1;
-      }
-    }
-
-    return { active, waiting, total: races.length };
-  }, [races, nowMs]);
 
   const favoriteRunner = useMemo(() => {
     return [...trendRunners]
@@ -1302,14 +1519,165 @@ export default function App() {
   }, [favoriteRunner, candidates]);
 
 
+  const eveningSignals = useMemo(() => {
+    if (!selectedTrack) return [];
+    return signalRecords
+      .filter((record) => record.date === date && record.trackId === selectedTrack.id)
+      .sort((a, b) => a.raceNumber - b.raceNumber);
+  }, [signalRecords, selectedTrack, date]);
+
+  const eveningSignalTotals = useMemo(() => {
+    const played = eveningSignals.filter((record) => record.stake > 0);
+    const stake = played.reduce((sum, record) => sum + record.stake, 0);
+    const returnAmount = played.reduce((sum, record) => sum + record.returnAmount, 0);
+    const net = returnAmount - stake;
+    return {
+      races: eveningSignals.length,
+      signals: played.length,
+      winners: eveningSignals.filter((record) => record.finishPosition === 1).length,
+      places: eveningSignals.filter((record) => record.finishPosition !== null && record.finishPosition > 1 && (record.status === "place" || record.status === "payout-pending")).length,
+      noSignals: eveningSignals.filter((record) => record.status === "no-signal").length,
+      pending: eveningSignals.filter((record) => record.payoutPending).length,
+      stake,
+      returnAmount,
+      net,
+      roi: stake > 0 ? (net / stake) * 100 : 0,
+    };
+  }, [eveningSignals]);
+
   const journalTotals = useMemo(() => {
-    const stake = savedBets.reduce((sum, bet) => sum + bet.stake, 0);
-    const returnAmount = savedBets.reduce((sum, bet) => sum + bet.returnAmount, 0);
+    const stake = tvillingBets.reduce((sum, bet) => sum + bet.stake, 0);
+    const returnAmount = tvillingBets.reduce((sum, bet) => sum + bet.returnAmount, 0);
     const net = returnAmount - stake;
     const roi = stake > 0 ? (net / stake) * 100 : 0;
-    const hits = savedBets.filter((bet) => bet.hit).length;
+    const hits = tvillingBets.filter((bet) => bet.hit).length;
     return { stake, returnAmount, net, roi, hits };
-  }, [savedBets]);
+  }, [tvillingBets]);
+
+  const seTvillingStats = useMemo(() => {
+    const bets = tvillingBets.filter((bet) => bet.countryCode === "SE");
+    const stake = bets.reduce((sum, bet) => sum + bet.stake, 0);
+    const returnAmount = bets.reduce((sum, bet) => sum + bet.returnAmount, 0);
+    const net = returnAmount - stake;
+    const hits = bets.filter((bet) => bet.hit).length;
+    const count = bets.length;
+    return {
+      count,
+      hits,
+      hitRate: count > 0 ? (hits / count) * 100 : 0,
+      stake,
+      returnAmount,
+      net,
+      roi: stake > 0 ? (net / stake) * 100 : 0,
+    };
+  }, [tvillingBets]);
+
+  const frTvillingStats = useMemo(() => {
+    const bets = tvillingBets.filter((bet) => bet.countryCode === "FR");
+    const stake = bets.reduce((sum, bet) => sum + bet.stake, 0);
+    const returnAmount = bets.reduce((sum, bet) => sum + bet.returnAmount, 0);
+    const net = returnAmount - stake;
+    const hits = bets.filter((bet) => bet.hit).length;
+    const count = bets.length;
+    return {
+      count,
+      hits,
+      hitRate: count > 0 ? (hits / count) * 100 : 0,
+      stake,
+      returnAmount,
+      net,
+      roi: stake > 0 ? (net / stake) * 100 : 0,
+    };
+  }, [tvillingBets]);
+
+  const displayedPair = useMemo(() => {
+    const a1 = lockedSelection?.a1 ?? candidates[0] ?? null;
+    const a2 = lockedSelection?.a2 ?? candidates[1] ?? null;
+    return { a1, a2 };
+  }, [lockedSelection, candidates]);
+
+  const currentTvilling = useMemo(() => {
+    if (!selectedRace || !displayedPair.a1 || !displayedPair.a2) {
+      return {
+        rawOdds: null as number | null,
+        message: "Väntar på två kandidater (A1 och A2).",
+      };
+    }
+
+    const market = tvillingMarkets[selectedRace.id];
+    if (!market) {
+      return {
+        rawOdds: null,
+        message: "Tvilling hämtas…",
+      };
+    }
+
+    const rawOdds = lookupTvillingRawOdds(
+      market.comboOdds,
+      displayedPair.a1.number,
+      displayedPair.a2.number,
+    );
+
+    if (rawOdds) {
+      return {
+        rawOdds,
+        message: "",
+      };
+    }
+
+    if (market.status === "closed") {
+      return {
+        rawOdds: null,
+        message: "Tvilling är stängd för loppet.",
+      };
+    }
+
+    if (market.status === "missing") {
+      return {
+        rawOdds: null,
+        message: "Tvillingodds saknas eller är ännu inte publicerade.",
+      };
+    }
+
+    return {
+      rawOdds: null,
+      message: "Tvilling kunde inte läsas just nu.",
+    };
+  }, [selectedRace, displayedPair, tvillingMarkets]);
+
+  const lockedRecommendationOdds = useMemo(() => {
+    if (!selectedRace || !displayedPair.a1 || !displayedPair.a2) {
+      return null;
+    }
+
+    const a1 = displayedPair.a1;
+    const a2 = displayedPair.a2;
+
+    const tvillingMarket = tvillingMarkets[selectedRace.id];
+    const tvillingRaw = tvillingMarket
+      ? lookupTvillingRawOdds(tvillingMarket.comboOdds, a1.number, a2.number)
+      : null;
+
+    const tvillingMessage =
+      tvillingRaw
+        ? null
+        : !tvillingMarket
+          ? "Hämtar Tvilling-marknad..."
+          : tvillingMarket.status === "missing"
+            ? "Ingen Tvilling-marknad tillgänglig"
+            : tvillingMarket.status === "closed"
+              ? "Tvilling-marknad stängd"
+              : tvillingMarket.status === "error"
+                ? "Tvilling-marknad kunde inte läsas"
+                : "Odds ej tillgängligt ännu";
+
+    return {
+      a1,
+      a2,
+      tvillingRaw,
+      tvillingMessage,
+    };
+  }, [selectedRace, displayedPair, tvillingMarkets]);
 
   function lockCurrentSelection() {
     if (selectedRace?.isMonte) {
@@ -1348,23 +1716,19 @@ export default function App() {
     const isA2A1 = first === a2.number && second === a1.number;
     const hit = isA1A2 || isA2A1;
 
-    const parsedOdds = Number(comboOddsInput.replace(",", "."));
-    const comboOdds = Number.isFinite(parsedOdds) && parsedOdds > 0 ? parsedOdds : null;
-
-    if (hit && comboOdds === null) {
-      setError("Ange komboddset för den vinnande ordningen.");
-      return;
-    }
-
-    const stake = 100;
-    const returnAmount = hit && comboOdds ? 50 * comboOdds : 0;
-    const net = returnAmount - stake;
-
-    const bet: SavedBet = {
-      id: `${date}-${selectedTrack.id}-${selectedRace.raceNumber}-${Date.now()}`,
+    const tvillingRawOdds = lookupTvillingRawOdds(
+      tvillingMarkets[selectedRace.id]?.comboOdds ?? [],
+      a1.number,
+      a2.number,
+    );
+    const tvillingOdds = tvillingRawOdds ? tvillingRawOdds / 100 : null;
+    const tvillingReturn = hit && tvillingOdds ? TVILLING_STAKE * tvillingOdds : 0;
+    const tvillingBet: TvillingBet = {
+      id: `${date}-${selectedTrack.id}-${selectedRace.raceNumber}-${Date.now()}-tvilling`,
       date,
       trackId: selectedTrack.id,
       trackName: selectedTrack.name,
+      countryCode: selectedTrack.countryCode,
       raceNumber: selectedRace.raceNumber,
       a1Number: a1.number,
       a1Name: a1.name,
@@ -1372,41 +1736,50 @@ export default function App() {
       a2Name: a2.name,
       firstNumber: first,
       secondNumber: second,
-      comboOdds,
+      tvillingOdds,
       hit,
       winningOrder: isA1A2 ? "A1-A2" : isA2A1 ? "A2-A1" : "MISS",
-      stake,
-      returnAmount,
-      net,
+      stake: TVILLING_STAKE,
+      returnAmount: tvillingReturn,
+      net: tvillingReturn - TVILLING_STAKE,
       lockedAt: lockedSelection.lockedAt,
       savedAt: new Date().toISOString(),
+      needsTvillingOdds: hit && tvillingOdds === null,
     };
 
-    setSavedBets((current) => [bet, ...current]);
+    setTvillingBets((current) => [tvillingBet, ...current]);
+
     setFirstNumber("");
     setSecondNumber("");
-    setComboOddsInput("");
     setLockedSelection(null);
     setError("");
   }
 
-  function deleteSavedBet(id: string) {
-    setSavedBets((current) => current.filter((bet) => bet.id !== id));
+  function deleteTvillingBet(id: string) {
+    setTvillingBets((current) => current.filter((bet) => bet.id !== id));
   }
 
-  function finalizeComboOdds(id: string) {
-    const raw = pendingOddsInputs[id] ?? "";
+  function finalizeTvillingOdds(id: string) {
+    const raw = pendingTvillingOddsInputs[id] ?? "";
     const odds = Number(raw.replace(",", "."));
     if (!Number.isFinite(odds) || odds <= 0) {
-      setError("Ange ett giltigt kombodds.");
+      setError("Ange ett giltigt tvillingodds.");
       return;
     }
-    setSavedBets((current) => current.map((bet) => {
+
+    setTvillingBets((current) => current.map((bet) => {
       if (bet.id !== id) return bet;
-      const returnAmount = 50 * odds;
-      return { ...bet, comboOdds: odds, returnAmount, net: returnAmount - bet.stake, needsComboOdds: false };
+      const returnAmount = bet.hit ? bet.stake * odds : 0;
+      return {
+        ...bet,
+        tvillingOdds: odds,
+        returnAmount,
+        net: returnAmount - bet.stake,
+        needsTvillingOdds: false,
+      };
     }));
-    setPendingOddsInputs((current) => {
+
+    setPendingTvillingOddsInputs((current) => {
       const next = { ...current };
       delete next[id];
       return next;
@@ -1414,10 +1787,79 @@ export default function App() {
     setError("");
   }
 
+  async function fetchPairMarket(
+    track: Track,
+    number: number,
+    product: "tvilling",
+    parser: (data: unknown) => PairMarket,
+  ) {
+    const gameId = `${product}_${date}_${track.id}_${number}`;
+    const response = await fetch(`${API}/games/${gameId}`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return {
+        raceNumber: number,
+        market: {
+          status: response.status === 404 ? "missing" : "error",
+          comboOdds: [],
+          fetchedAt: Date.now(),
+        } as PairMarket,
+      };
+    }
+
+    const data: unknown = await response.json();
+    return {
+      raceNumber: number,
+      market: parser(data),
+    };
+  }
+
+  async function fetchTvillingMarket(track: Track, number: number) {
+    return fetchPairMarket(track, number, "tvilling", parseTvillingMarket);
+  }
+
+  async function refreshPairMarkets<TMarket extends PairMarket>(
+    track: Track,
+    raceNumbers: number[],
+    fetcher: (track: Track, raceNumber: number) => Promise<{ raceNumber: number; market: TMarket }>,
+    setter: React.Dispatch<React.SetStateAction<Record<string, TMarket>>>,
+    raceList?: Race[],
+  ) {
+    const results = await Promise.all(
+      raceNumbers.map((number) => fetcher(track, number).catch(() => ({
+        raceNumber: number,
+        market: {
+          status: "error" as const,
+          comboOdds: [],
+          fetchedAt: Date.now(),
+        } as unknown as TMarket,
+      }))),
+    );
+
+    setter((current) => {
+      const next = { ...current };
+      const sourceRaces = raceList ?? races;
+      for (const result of results) {
+        const race = sourceRaces.find((item) => item.raceNumber === result.raceNumber);
+        if (race) {
+          next[race.id] = result.market;
+        }
+      }
+      return next;
+    });
+  }
+
+  async function refreshTvillingMarkets(track: Track, raceNumbers: number[], raceList?: Race[]) {
+    await refreshPairMarkets(track, raceNumbers, fetchTvillingMarket, setTvillingMarkets, raceList);
+  }
+
 
   async function loadTracks() {
     setLoadingTracks(true);
     setError("");
+    setCountryFilter("SE");
     setRaces([]);
     setRacesByTrack({});
     setMeetingRacesByTrack({});
@@ -1433,7 +1875,55 @@ export default function App() {
       }
 
       const data = (await response.json()) as CalendarResponse;
+      console.log("[KOMBEN] API response", data);
+
       const rawTracks = data.tracks ?? [];
+      const detectedMeetings = rawTracks.map((rawTrack) => {
+        const parsedTrack = parseTrack(rawTrack);
+        const parsedCountry = parseCountryCode(rawTrack);
+        const trackRecord = isRecord(rawTrack) ? rawTrack : {};
+        const trackIdCandidate =
+          asNumber((trackRecord as UnknownRecord).id) ??
+          asNumber((trackRecord as UnknownRecord).trackId) ??
+          asNumber((trackRecord as UnknownRecord).number);
+        const trackNameCandidate =
+          asString((trackRecord as UnknownRecord).name) ??
+          asString((trackRecord as UnknownRecord).trackName) ??
+          asString((trackRecord as UnknownRecord).displayName) ??
+          "okänd bana";
+        const meetingRaces = parseMeetingRaceRefs(rawTrack);
+        return {
+          trackId: trackIdCandidate,
+          trackName: trackNameCandidate,
+          countryRaw:
+            asString((trackRecord as UnknownRecord).countryCode) ??
+            asString((trackRecord as UnknownRecord).country) ??
+            asString((trackRecord as UnknownRecord).nation) ??
+            null,
+          parsedCountry,
+          includedAsSwedish: Boolean(parsedTrack),
+          raceCount: meetingRaces.length,
+          raceNumbers: meetingRaces.map((race) => race.raceNumber),
+          raceIds: meetingRaces.map((race) => race.raceId).filter((id): id is string => Boolean(id)),
+          races: meetingRaces,
+        };
+      });
+
+      for (const meeting of detectedMeetings) {
+        const countryCode = meeting.parsedCountry ?? "UNKNOWN";
+        if (!meeting.races.length) {
+          console.log(
+            `[KOMBEN] Track detected | track=${meeting.trackName} | country=${countryCode} | raceNumber=- | raceId=- | startTime=-`,
+          );
+          continue;
+        }
+
+        for (const race of meeting.races) {
+          console.log(
+            `[KOMBEN] Track detected | track=${meeting.trackName} | country=${countryCode} | raceNumber=${race.raceNumber} | raceId=${race.raceId ?? "-"} | startTime=${race.startTime ?? "-"}`,
+          );
+        }
+      }
 
       const swedishMeetings = rawTracks
         .map((rawTrack) => {
@@ -1453,11 +1943,21 @@ export default function App() {
         nextMeetingRacesByTrack[meeting.track.id] = meeting.meetingRaces;
       }
 
-      const swedishMeetingsCountNext = swedishMeetings.length;
-      const swedishRacesCountNext = swedishMeetings.reduce((sum, meeting) => sum + meeting.meetingRaces.length, 0);
+      const swedishRaceTotal = swedishMeetings.reduce((sum, meeting) => sum + meeting.meetingRaces.length, 0);
 
-      console.log(`[KOMBEN] Swedish meetings: ${swedishMeetingsCountNext}`);
-      console.log(`[KOMBEN] Swedish races: ${swedishRacesCountNext}`);
+      console.log(
+        `[KOMBEN] Swedish meetings found ${swedishMeetings.length} (races: ${swedishRaceTotal})`,
+      );
+
+      console.log("[KOMBEN] Swedish meetings payload", swedishMeetings.map((meeting) => ({
+        trackId: meeting.track.id,
+        trackName: meeting.track.name,
+        races: meeting.meetingRaces.map((race) => ({ number: race.raceNumber, id: race.raceId, startTime: race.startTime })),
+      })));
+
+      console.log(
+        `[KOMBEN] Selector totals | meetings=${swedishMeetings.length} | races=${swedishRaceTotal}`,
+      );
 
       setTracks(list);
       setMeetingRacesByTrack(nextMeetingRacesByTrack);
@@ -1474,11 +1974,11 @@ export default function App() {
 
       if (!list.length) {
         setError(
-          "Inga svenska banor hittades för valt datum.",
+          "Inga svenska travlopp hittades för valt datum.",
         );
       }
     } catch (err) {
-      console.error("[KOMBEN] loadTracks error", err);
+      console.error("[KOMBEN] loadTracks fetch/parse error", err);
       setTracks([]);
       setError("Kunde inte hämta banorna från ATG.");
     } finally {
@@ -1520,13 +2020,21 @@ export default function App() {
         );
 
         const availableRaces = results
-          .filter((race): race is Race => race !== null)
+          .filter(
+            (race): race is Race => race !== null,
+          )
           .sort((a, b) => {
             const aTime = a.startTime ? new Date(a.startTime).getTime() : Number.POSITIVE_INFINITY;
             const bTime = b.startTime ? new Date(b.startTime).getTime() : Number.POSITIVE_INFINITY;
             if (aTime !== bTime) return aTime - bTime;
             return a.raceNumber - b.raceNumber;
           });
+
+        await refreshTvillingMarkets(
+          currentTrack,
+          availableRaces.map((race) => race.raceNumber),
+          availableRaces,
+        );
 
         return { track: currentTrack, races: availableRaces };
       }));
@@ -1554,6 +2062,12 @@ export default function App() {
               const key = runnerKey(race.id, runner.number);
               const history = next[key] ?? [];
               next[key] = appendMinuteSnapshot(history, runner.odds, timestamp);
+
+              if (runner.placeOdds !== null && runner.placeOdds > 0) {
+                const placeKey = placeRunnerKey(race.id, runner.number);
+                const placeHistory = next[placeKey] ?? [];
+                next[placeKey] = appendMinuteSnapshot(placeHistory, runner.placeOdds, timestamp);
+              }
             }
           }
         }
@@ -1572,7 +2086,7 @@ export default function App() {
         );
       }
     } catch (err) {
-      console.error("[KOMBEN] loadRaces error", err);
+      console.error(err);
       setError(`Kunde inte hämta loppen för ${track.name}.`);
     } finally {
       setLoadingRaces(false);
@@ -1613,6 +2127,7 @@ export default function App() {
             raceNumbers.map((number) => fetchRace(track, number).catch(() => null)),
           );
           const refreshedRaces = refreshedResults.filter((race): race is Race => race !== null);
+          await refreshTvillingMarkets(track, refreshedRaces.map((race) => race.raceNumber), refreshedRaces);
           return { trackId: track.id, refreshedRaces };
         }),
       );
@@ -1629,6 +2144,12 @@ export default function App() {
               const key = runnerKey(race.id, runner.number);
               const history = next[key] ?? [];
               next[key] = appendMinuteSnapshot(history, runner.odds, timestamp);
+
+              if (runner.placeOdds !== null && runner.placeOdds > 0) {
+                const placeKey = placeRunnerKey(race.id, runner.number);
+                const placeHistory = next[placeKey] ?? [];
+                next[placeKey] = appendMinuteSnapshot(placeHistory, runner.placeOdds, timestamp);
+              }
             }
           }
         }
@@ -1669,6 +2190,8 @@ export default function App() {
         throw new Error("Loppet kunde inte hämtas.");
       }
 
+      await refreshTvillingMarkets(selectedTrack, [refreshed.raceNumber], [refreshed]);
+
       const snapshotTime = Date.now();
       if (shouldCollectOdds(refreshed.startTime, snapshotTime)) {
         setOddsHistory((current) => {
@@ -1680,6 +2203,12 @@ export default function App() {
             const key = runnerKey(refreshed.id, runner.number);
             const history = next[key] ?? [];
             next[key] = appendMinuteSnapshot(history, runner.odds, snapshotTime);
+
+            if (runner.placeOdds !== null && runner.placeOdds > 0) {
+              const placeKey = placeRunnerKey(refreshed.id, runner.number);
+              const placeHistory = next[placeKey] ?? [];
+              next[placeKey] = appendMinuteSnapshot(placeHistory, runner.placeOdds, snapshotTime);
+            }
           }
 
           return next;
@@ -1691,6 +2220,16 @@ export default function App() {
           race.raceNumber === refreshed.raceNumber ? refreshed : race,
         ),
       );
+      setRacesByTrack((current) => {
+        if (!selectedTrack) return current;
+        const existing = current[selectedTrack.id] ?? [];
+        return {
+          ...current,
+          [selectedTrack.id]: existing.map((race) =>
+            race.raceNumber === refreshed.raceNumber ? refreshed : race,
+          ),
+        };
+      });
       setUpdated(new Date().toLocaleTimeString("sv-SE"));
       setSecondsToRefresh(REFRESH_SECONDS);
     } catch (err) {
@@ -1765,19 +2304,122 @@ export default function App() {
   }, [tracks.length, Object.keys(racesByTrack).length, date]);
 
   useEffect(() => {
+    if (!selectedTrack || !races.length) return;
+
+    const now = Date.now();
+    setSignalRecords((current) => {
+      const next = [...current];
+      let changed = false;
+      const byRaceId = new Map(
+        next
+          .filter((record) => record.date === date && record.trackId === selectedTrack.id)
+          .map((record) => [record.raceId, record]),
+      );
+
+      for (const race of races) {
+        if (race.isMonte || race.isP21 || !race.startTime) continue;
+        const startMs = new Date(race.startTime).getTime();
+        if (Number.isNaN(startMs)) continue;
+        const secondsLeft = Math.floor((startMs - now) / 1000);
+        let record = byRaceId.get(race.id);
+
+        if (!record && secondsLeft <= 60 && secondsLeft >= -120) {
+          const trendRunners = buildTrendRunnersForRace(race, oddsHistory);
+          const stable = findBestStablePressureHorse(race, trendRunners, oddsHistory);
+          const fallback = rankCandidates(trendRunners)[0] ?? null;
+          const signal = stable?.runner ?? fallback;
+          record = {
+            id: `${date}-${selectedTrack.id}-${race.raceNumber}-signal`,
+            date,
+            trackId: selectedTrack.id,
+            trackName: selectedTrack.name,
+            raceId: race.id,
+            raceNumber: race.raceNumber,
+            startTime: race.startTime,
+            runnerNumber: signal?.number ?? null,
+            runnerName: signal?.name ?? null,
+            lockedWinOdds: signal?.odds ? signal.odds / 100 : null,
+            lockedPlaceOdds: signal?.placeOdds ? signal.placeOdds / 100 : null,
+            lockedAt: new Date().toISOString(),
+            status: signal ? "locked" : "no-signal",
+            finishPosition: null,
+            stake: signal ? 200 : 0,
+            returnAmount: 0,
+            net: signal ? -200 : 0,
+            payoutPending: false,
+          };
+          next.push(record);
+          byRaceId.set(race.id, record);
+          changed = true;
+        }
+
+        if (!record || record.status === "no-signal" || race.finishOrder.length === 0 || record.runnerNumber === null) continue;
+        const finishPosition = race.finishOrder.indexOf(record.runnerNumber) + 1;
+        if (finishPosition <= 0) continue;
+        const activeStarters = race.runners.filter((runner) => !runner.scratched).length;
+        const paidPlaces = activeStarters >= 8 ? 3 : activeStarters >= 4 ? 2 : 0;
+        const winHit = finishPosition === 1;
+        const placeHit = paidPlaces > 0 && finishPosition <= paidPlaces;
+        const resultRunner = race.runners.find((runner) => runner.number === record?.runnerNumber);
+        const resolvedPlaceOdds = record.lockedPlaceOdds ?? (resultRunner?.placeOdds ? resultRunner.placeOdds / 100 : null);
+        const placePayoutMissing = placeHit && resolvedPlaceOdds === null;
+        const returnAmount =
+          (winHit && record.lockedWinOdds ? 100 * record.lockedWinOdds : 0) +
+          (placeHit && resolvedPlaceOdds ? 100 * resolvedPlaceOdds : 0);
+        const status: SignalRecordStatus = placePayoutMissing
+          ? "payout-pending"
+          : winHit
+            ? "winner"
+            : placeHit
+              ? "place"
+              : "loss";
+
+        if (
+          record.finishPosition !== finishPosition ||
+          record.status !== status ||
+          record.returnAmount !== returnAmount ||
+          record.payoutPending !== placePayoutMissing
+        ) {
+          const index = next.findIndex((item) => item.id === record?.id);
+          if (index >= 0) {
+            next[index] = {
+              ...record,
+              finishPosition,
+              status,
+              lockedPlaceOdds: resolvedPlaceOdds,
+              returnAmount,
+              net: returnAmount - record.stake,
+              payoutPending: placePayoutMissing,
+            };
+            byRaceId.set(race.id, next[index]);
+            changed = true;
+          }
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [nowMs, races, oddsHistory, selectedTrack, date]);
+
+  useEffect(() => {
     if (!selectedTrack || !races.length) {
       setAutoStatus("Helkvällsautomaten väntar på en bana.");
       return;
     }
 
     const now = Date.now();
-    const savedRaceNumbers = new Set(savedBets.filter((bet) => bet.date === date && bet.trackId === selectedTrack.id).map((bet) => bet.raceNumber));
+    const savedTvillingRaceNumbers = new Set(
+      tvillingBets
+        .filter((bet) => bet.date === date && bet.trackId === selectedTrack.id)
+        .map((bet) => bet.raceNumber),
+    );
     const selectionsByRace = new Map(autoSelections.map((selection) => [selection.raceId, selection]));
     const newSelections: AutoSelection[] = [];
 
     for (const race of races) {
       if (race.isMonte) continue;
-      if (!race.startTime || savedRaceNumbers.has(race.raceNumber) || selectionsByRace.has(race.id)) continue;
+      if (!race.startTime || selectionsByRace.has(race.id)) continue;
+      if (savedTvillingRaceNumbers.has(race.raceNumber)) continue;
       const startMs = new Date(race.startTime).getTime();
       if (Number.isNaN(startMs)) continue;
       const secondsLeft = Math.floor((startMs - now) / 1000);
@@ -1804,9 +2446,9 @@ export default function App() {
       setAutoStatus(`Låste automatiskt ${newSelections.map((selection) => `lopp ${selection.raceNumber}`).join(", ")}.`);
     }
 
-    const betsToAdd: SavedBet[] = [];
+    const tvillingBetsToAdd: TvillingBet[] = [];
     for (const race of races) {
-      if (race.finishOrder.length < 2 || savedRaceNumbers.has(race.raceNumber)) continue;
+      if (race.finishOrder.length < 2) continue;
       const selection = selectionsByRace.get(race.id);
       if (!selection) continue;
       const first = race.finishOrder[0];
@@ -1814,45 +2456,65 @@ export default function App() {
       const isA1A2 = first === selection.a1.number && second === selection.a2.number;
       const isA2A1 = first === selection.a2.number && second === selection.a1.number;
       const hit = isA1A2 || isA2A1;
-      betsToAdd.push({
-        id: `${date}-${selectedTrack.id}-${race.raceNumber}-auto`,
-        date,
-        trackId: selectedTrack.id,
-        trackName: selectedTrack.name,
-        raceNumber: race.raceNumber,
-        a1Number: selection.a1.number,
-        a1Name: selection.a1.name,
-        a2Number: selection.a2.number,
-        a2Name: selection.a2.name,
-        firstNumber: first,
-        secondNumber: second,
-        comboOdds: null,
-        hit,
-        winningOrder: isA1A2 ? "A1-A2" : isA2A1 ? "A2-A1" : "MISS",
-        stake: 100,
-        returnAmount: 0,
-        net: -100,
-        lockedAt: selection.lockedAt,
-        savedAt: new Date().toISOString(),
-        automatic: true,
-        needsComboOdds: hit,
-      });
-      savedRaceNumbers.add(race.raceNumber);
+
+      if (!savedTvillingRaceNumbers.has(race.raceNumber)) {
+        const rawTvillingOdds = lookupTvillingRawOdds(
+          tvillingMarkets[race.id]?.comboOdds ?? [],
+          selection.a1.number,
+          selection.a2.number,
+        );
+        const tvillingOdds = rawTvillingOdds ? rawTvillingOdds / 100 : null;
+        const returnAmount = hit && tvillingOdds ? TVILLING_STAKE * tvillingOdds : 0;
+        tvillingBetsToAdd.push({
+          id: `${date}-${selectedTrack.id}-${race.raceNumber}-auto-tvilling`,
+          date,
+          trackId: selectedTrack.id,
+          trackName: selectedTrack.name,
+          countryCode: selectedTrack.countryCode,
+          raceNumber: race.raceNumber,
+          a1Number: selection.a1.number,
+          a1Name: selection.a1.name,
+          a2Number: selection.a2.number,
+          a2Name: selection.a2.name,
+          firstNumber: first,
+          secondNumber: second,
+          tvillingOdds,
+          hit,
+          winningOrder: isA1A2 ? "A1-A2" : isA2A1 ? "A2-A1" : "MISS",
+          stake: TVILLING_STAKE,
+          returnAmount,
+          net: returnAmount - TVILLING_STAKE,
+          lockedAt: selection.lockedAt,
+          savedAt: new Date().toISOString(),
+          automatic: true,
+          needsTvillingOdds: hit && tvillingOdds === null,
+        });
+        savedTvillingRaceNumbers.add(race.raceNumber);
+      }
     }
 
-    if (betsToAdd.length) {
-      setSavedBets((current) => [...betsToAdd, ...current]);
-      setAutoStatus(`Rättade automatiskt ${betsToAdd.map((bet) => `lopp ${bet.raceNumber}`).join(", ")}.`);
+    if (tvillingBetsToAdd.length) {
+      setTvillingBets((current) => [...tvillingBetsToAdd, ...current]);
+    }
+
+    if (tvillingBetsToAdd.length) {
+      const racesUpdated = [...new Set(tvillingBetsToAdd.map((bet) => bet.raceNumber))];
+      setAutoStatus(`Rättade automatiskt ${racesUpdated.map((race) => `lopp ${race}`).join(", ")}.`);
     }
 
     const upcoming = races
-      .filter((race) => race.startTime && new Date(race.startTime).getTime() > now - 30_000 && !savedRaceNumbers.has(race.raceNumber))
+      .filter(
+        (race) =>
+          race.startTime &&
+          new Date(race.startTime).getTime() > now - 30_000 &&
+          !savedTvillingRaceNumbers.has(race.raceNumber),
+      )
       .sort((a, b) => new Date(a.startTime ?? 0).getTime() - new Date(b.startTime ?? 0).getTime())[0];
-    if (!newSelections.length && !betsToAdd.length) {
+    if (!newSelections.length && !tvillingBetsToAdd.length) {
       const next = upcoming?.startTime ? formatTime(upcoming.startTime) : "–";
       setAutoStatus(`Helkvällsautomaten är aktiv. Nästa lopp ${upcoming?.raceNumber ?? "–"} kl. ${next}.`);
     }
-  }, [nowMs, races, oddsHistory, selectedTrack, selectedRace?.raceNumber, savedBets, autoSelections, date, raceNumber]);
+  }, [nowMs, races, oddsHistory, selectedTrack, selectedRace?.raceNumber, tvillingBets, autoSelections, date, raceNumber, tvillingMarkets]);
 
   function countdownStyle() {
     if (countdown.phase === "critical" || countdown.phase === "started") {
@@ -1899,23 +2561,126 @@ export default function App() {
         <header style={s.header}>
           <div>
             <p style={s.kicker}>LIVEODDS FRÅN ATG</p>
-            <h1 style={s.title}>🏇 KOMBEN Live</h1>
-            <p style={s.debugStamp}>Swedish meetings: {swedishMeetingsCount}</p>
-            <p style={s.debugStamp}>Swedish races: {swedishRacesCount}</p>
+            <h1 style={s.title}>🏇 Tvilling Live</h1>
           </div>
           <span style={s.live}>LIVE</span>
         </header>
 
         <div style={s.filterBanner}>
           <strong>LANDSFILTER AKTIVT</strong>
-          <span>Alla svenska meetings och lopp för valt datum visas. Ingen filtrering sker på spelprodukt.</span>
+          <span>Sverige och Frankrike visas separat med samma Tvillingmodell.</span>
         </div>
 
         <div style={s.autoBanner}>
           <strong>🤖 HELKVÄLLSAUTOMATIK</strong>
           <span>{autoStatus}</span>
-          <small>A1/A2 låses vid 1:00. Resultat rättas när ATG visar placeringarna. Vid träff fyller du i komboddset i journalen.</small>
+          <small>
+            A1/A2 låses vid 1:00. Resultat rättas när ATG visar placeringarna. Tvillingodds hämtas automatiskt när de finns.
+          </small>
         </div>
+
+        {selectedTrack && (
+          <section style={s.eveningPanel}>
+            <div style={s.journalHeader}>
+              <div>
+                <p style={s.kicker}>ALLA LOPP TICKAR SAMTIDIGT</p>
+                <h2 style={s.raceTitle}>Kvällens marknad</h2>
+              </div>
+              <strong>Vinnarodds styr signalen · platsodds loggas</strong>
+            </div>
+
+            <div style={s.statsGrid}>
+              <div style={s.statCard}><span style={s.small}>LOPP</span><strong>{races.length}</strong></div>
+              <div style={s.statCard}><span style={s.small}>INSAMLING</span><strong>{races.filter((race) => buildRaceMarketOverview(race, oddsHistory, nowMs, eveningSignals.find((item) => item.raceId === race.id)).sampleCount > 0).length}</strong></div>
+              <div style={s.statCard}><span style={s.small}>SIGNALER</span><strong>{eveningSignalTotals.signals}</strong></div>
+              <div style={s.statCard}><span style={s.small}>VINNARE</span><strong>{eveningSignalTotals.winners}</strong></div>
+              <div style={s.statCard}><span style={s.small}>NETTO</span><strong style={{ color: eveningSignalTotals.net >= 0 ? "#4ade80" : "#fb7185" }}>{eveningSignalTotals.net >= 0 ? "+" : ""}{eveningSignalTotals.net.toFixed(0)} kr</strong></div>
+              <div style={s.statCard}><span style={s.small}>ROI</span><strong style={{ color: eveningSignalTotals.roi >= 0 ? "#4ade80" : "#fb7185" }}>{eveningSignalTotals.roi >= 0 ? "+" : ""}{eveningSignalTotals.roi.toFixed(1).replace(".", ",")} %</strong></div>
+            </div>
+
+            <div style={s.eveningGrid}>
+              {races.map((race) => {
+                const record = eveningSignals.find((item) => item.raceId === race.id);
+                const overview = buildRaceMarketOverview(race, oddsHistory, nowMs, record);
+                const startMs = race.startTime ? new Date(race.startTime).getTime() : Number.NaN;
+                const secondsLeft = Number.isNaN(startMs) ? null : Math.floor((startMs - nowMs) / 1000);
+                const timeLabel = secondsLeft === null
+                  ? "Starttid saknas"
+                  : secondsLeft <= 0
+                    ? "Startat"
+                    : secondsLeft < 3600
+                      ? `Start om ${Math.max(1, Math.ceil(secondsLeft / 60))} min`
+                      : `Start ${formatTime(race.startTime)}`;
+                const statusLabel = record
+                  ? record.status === "locked"
+                    ? "SIGNAL LÅST"
+                    : record.status === "no-signal"
+                      ? "INGEN SIGNAL"
+                      : record.status === "winner"
+                        ? "VINNARE"
+                        : record.status === "place"
+                          ? "PLATS"
+                          : record.status === "payout-pending"
+                            ? "TRÄFF – VÄNTAR PLATSODDS"
+                            : "MISS"
+                  : overview.status === "strong"
+                    ? "STARK VINNARSÄNKNING"
+                    : overview.status === "preliminary"
+                      ? "PRELIMINÄR SIGNAL"
+                      : overview.status === "collecting"
+                        ? "SAMLAR DATA"
+                        : overview.status === "finished"
+                          ? "LOPP AVSLUTAT"
+                          : "VÄNTAR PÅ INSAMLING";
+                const accent = record
+                  ? record.status === "winner" || record.status === "place"
+                    ? "#4ade80"
+                    : record.status === "no-signal"
+                      ? "#94a3b8"
+                      : record.status === "payout-pending"
+                        ? "#facc15"
+                        : record.status === "locked"
+                          ? "#60a5fa"
+                          : "#fb7185"
+                  : overview.status === "strong"
+                    ? "#4ade80"
+                    : overview.status === "preliminary"
+                      ? "#facc15"
+                      : "#60a5fa";
+                const signalHorse = record?.runnerNumber
+                  ? `${record.runnerNumber}. ${record.runnerName}`
+                  : overview.candidate
+                    ? `${overview.candidate.number}. ${overview.candidate.name}`
+                    : "Ingen kandidat ännu";
+                return (
+                  <button
+                    key={race.id}
+                    type="button"
+                    onClick={() => setRaceNumber(String(race.raceNumber))}
+                    style={{ ...s.eveningCard, borderColor: accent, boxShadow: String(race.raceNumber) === raceNumber ? `0 0 0 2px ${accent}` : "none" }}
+                  >
+                    <div style={s.eveningCardTop}>
+                      <strong>Lopp {race.raceNumber}</strong>
+                      <span>{timeLabel}</span>
+                    </div>
+                    <span style={{ ...s.signalBadge, color: accent }}>{statusLabel}</span>
+                    <strong style={s.signalHorse}>{signalHorse}</strong>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, width: "100%" }}>
+                      <span style={s.historyLine}>Vinnare <strong style={{ color: totalTrendColor(overview.winChangePercent) }}>{formatPercent(overview.winChangePercent)}</strong></span>
+                      <span style={s.historyLine}>Plats {formatPercent(overview.placeChangePercent)}</span>
+                    </div>
+                    <div style={{ width: "100%", height: 7, background: "#1e293b", borderRadius: 99, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, (overview.collectedMinutes / 60) * 100)}%`, height: "100%", background: accent }} />
+                    </div>
+                    <span style={s.historyLine}>{overview.collectedMinutes} min insamlade · säkerhet {overview.confidence}</span>
+                    {record?.finishPosition && <span style={s.historyLine}>Placering {record.finishPosition} · Netto {record.net >= 0 ? "+" : ""}{record.net.toFixed(0)} kr</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <p style={s.disclaimer}>Alla lopp hämtas varje minut i bakgrunden. Analysen använder den vinnaroddshistorik som faktiskt hunnit samlas in, även när appen startas sent. Platsoddset sparas parallellt men väljer inte signalhästen.</p>
+          </section>
+        )}
 
         <div style={s.controls}>
           <label style={s.label}>
@@ -1941,21 +2706,34 @@ export default function App() {
           </button>
 
           <label style={s.label}>
+            Land
+            <select
+              value={countryFilter}
+              onChange={(event) => setCountryFilter(event.target.value as "SE" | "FR")}
+              disabled={loadingTracks}
+              style={s.input}
+            >
+              <option value="SE">Sverige</option>
+              <option value="FR">Frankrike</option>
+            </select>
+          </label>
+
+          <label style={s.label}>
             Välj bana
             <select
               value={trackId}
               onChange={(event) => setTrackId(event.target.value)}
-              disabled={loadingTracks || !tracks.length}
+              disabled={loadingTracks || !selectableTracks.length}
               style={s.input}
             >
               <option value="">
-                {tracks.length
-                  ? `Välj bland ${tracks.length} banor`
+                {selectableTracks.length
+                  ? `Välj bland ${selectableTracks.length} banor`
                   : "Inga banor laddade"}
               </option>
-              {tracks.map((track) => (
+              {selectableTracks.map((track) => (
                 <option key={track.id} value={track.id}>
-                  {track.countryCode} · {track.name} · {track.products.join("/") || "Spel"}
+                  {track.name} · {track.products.join("/") || "Tvilling"}
                 </option>
               ))}
             </select>
@@ -1997,12 +2775,11 @@ export default function App() {
               <strong>
                 {backgroundCollecting
                   ? "Hämtar godkända lopp…"
-                  : "Endast svenska mållopp bevakas"}
+                    : "Svenska mållopp bevakas (Tvilling)"}
               </strong>
             </div>
             <span style={s.collectionText}>
-              {raceCollectionSummary.active} lopp samlas in nu ·{" "}
-              {raceCollectionSummary.waiting} väntar · Senast{" "}
+              Varje minut · Senast{" "}
               {allRacesUpdated || "väntar"}
             </span>
           </div>
@@ -2013,7 +2790,7 @@ export default function App() {
             <div>
               <span style={s.small}>VALD BANA</span>
               <strong>
-                {selectedTrack.name} · {selectedTrack.products.join("/")}
+                {selectedTrack.countryLabel} · {selectedTrack.name} · {selectedTrack.products.join("/") || "Tvilling"}
               </strong>
             </div>
             <div>
@@ -2068,14 +2845,39 @@ export default function App() {
                 ...s.stablePressureCard,
                 ...(stablePressureCandidate
                   ? s.marketAnalysisActive
-                  : marketAnalysisProgress.active
+                  : marketAnalysisProgress.complete
                     ? s.marketAnalysisComplete
                     : s.marketAnalysisCollecting),
               }}
             >
               <div style={s.stablePressureIcon}>🛡</div>
               <div style={s.stablePressureContent}>
-                <span style={s.stablePressureKicker}>MARKNADSANALYS</span>
+                <span style={s.stablePressureKicker}>MARKNADSANALYS · VINNARE + PLATS</span>
+                <div style={s.marketPulseRow}>
+                  <div>
+                    <span style={s.marketPulseLabel}>MARKNADENS PULS</span>
+                    <strong style={s.marketPulseValue}>{marketPulse.score}/100</strong>
+                  </div>
+                  <div style={s.marketPulseTrack}>
+                    <div style={{ ...s.marketPulseFill, width: `${marketPulse.score}%` }} />
+                  </div>
+                  <span style={s.marketPulseMeta}>
+                    {marketPulse.strengthening} stärks · {marketPulse.weakening} försvagas
+                  </span>
+                </div>
+
+                <div style={s.dualMarketGrid}>
+                  <div style={s.marketMiniCard}>
+                    <span style={s.marketMiniLabel}>VINNARMARKNAD</span>
+                    <strong>{stablePressureCandidate ? `${stablePressureCandidate.runner.number}. ${stablePressureCandidate.runner.name}` : "Ingen tydlig signal"}</strong>
+                    <span>{stablePressureCandidate ? `−${stablePressureCandidate.analysis.totalDropPercent.toFixed(1).replace(".", ",")} % · ${Math.round(stablePressureCandidate.analysis.score)}/100` : "Samlar minutdata"}</span>
+                  </div>
+                  <div style={s.marketMiniCard}>
+                    <span style={s.marketMiniLabel}>PLATSMARKNAD</span>
+                    <strong>{placePressureCandidate ? `${placePressureCandidate.runner.number}. ${placePressureCandidate.runner.name}` : "Ingen tydlig signal"}</strong>
+                    <span>{placePressureCandidate ? `−${placePressureCandidate.analysis.totalDropPercent.toFixed(1).replace(".", ",")} % · ${Math.round(placePressureCandidate.analysis.score)}/100` : "Samlar minutdata"}</span>
+                  </div>
+                </div>
 
                 {stablePressureCandidate ? (
                   <>
@@ -2098,42 +2900,39 @@ export default function App() {
                       Jämnast tydliga sänkning i loppet · informationssignal, inte automatiskt platsspel
                     </span>
                   </>
-                ) : marketAnalysisProgress.active ? (
+                ) : marketAnalysisProgress.complete ? (
                   <>
-                    <span style={s.marketAnalysisStatus}>🔎 Analys aktiv</span>
-                    <strong style={s.stablePressureName}>
-                      Ingen tydlig signal just nu
-                    </strong>
+                    <span style={s.marketAnalysisStatus}>✅ Analys klar</span>
+                    <strong style={s.stablePressureName}>Ingen tydlig signal</strong>
                     <span style={s.stablePressureStats}>
-                      {marketAnalysisProgress.measurementCount} mätpunkter ·{" "}
-                      {marketAnalysisProgress.observedMinutes} minuter observerade
-                    </span>
-                    <span style={s.stablePressureNotice}>
-                      Bedömningen fortsätter att uppdateras varje minut.
+                      Ingen häst uppfyller kriterierna för jämn och långvarig oddssänkning.
                     </span>
                   </>
                 ) : (
                   <>
-                    <span style={s.marketAnalysisStatus}>
-                      ⏳ Startar marknadsanalys…
-                    </span>
+                    <span style={s.marketAnalysisStatus}>⏳ Samlar data…</span>
                     <strong style={s.stablePressureName}>
-                      {marketAnalysisProgress.measurementCount
-                        ? "Första oddset är sparat"
-                        : "Väntar på första oddsmätningen"}
+                      Analys: {marketAnalysisProgress.progressPercent} % klar
                     </strong>
+                    <div style={s.marketAnalysisProgressTrack}>
+                      <div
+                        style={{
+                          ...s.marketAnalysisProgressFill,
+                          width: `${marketAnalysisProgress.progressPercent}%`,
+                        }}
+                      />
+                    </div>
                     <span style={s.stablePressureStats}>
-                      Analysen behöver inte 60 minuter. Den startar när två
-                      mätpunkter finns.
+                      {marketAnalysisProgress.analyzedMinutes} av 60 minuter analyserade
                     </span>
                     <span style={s.stablePressureNotice}>
-                      Öppnas appen sent används tiden som finns kvar före start.
+                      Söker efter hästar med jämn och långvarig oddssänkning.
                     </span>
                   </>
                 )}
 
                 <span style={s.marketAnalysisFooter}>
-                  Analyserar varje minut. Högst de sista 60 minuterna används.
+                  Analyserar 1 minut i taget under sista timmen före start.
                 </span>
               </div>
 
@@ -2176,9 +2975,18 @@ export default function App() {
                       </div>
                       <span style={s.driver}>{runner.driver}</span>
                       <span style={s.firstToNow}>
-                        Första uppmätta odds <strong>{formatOdds(runner.firstOdds)}</strong>
+                        Vinnare 60 min <strong>{formatOdds(runner.firstOdds)}</strong>
                         <span style={s.oddsArrow}>→</span>
                         Nu <strong>{formatOdds(runner.odds)}</strong>
+                      </span>
+                      <span style={s.firstToNow}>
+                        Plats 60 min <strong>{formatOdds(checkpointOdds(
+                          historyInsideLastHour(oddsHistory[placeRunnerKey(selectedRace.id, runner.number)] ?? [], selectedRace.startTime),
+                          selectedRace.startTime,
+                          60,
+                        ))}</strong>
+                        <span style={s.oddsArrow}>→</span>
+                        Nu <strong>{formatOdds(runner.placeOdds)}</strong>
                       </span>
                       <span style={s.radarLine}>
                         Trend: {momentumDisplay(runner.momentum)} · {runner.samples} minutpunkter
@@ -2186,7 +2994,7 @@ export default function App() {
                       {!runner.scratched && runner.modelScore !== undefined && (
                         <div style={s.modelBox}>
                           <span style={s.modelScore}>
-                            KOMBEN-score <strong>{runner.modelScore}</strong>/100
+                            TVILLING-score <strong>{runner.modelScore}</strong>/100
                           </span>
                           <span style={s.modelDecision}>
                             {runner.modelQualified ? "Kandidat" : "Avvakta"}
@@ -2292,7 +3100,7 @@ export default function App() {
 
             {candidates[0] && !candidates[1] && (
               <div style={s.noPlayNotice}>
-                <strong>Ingen A2 väljs.</strong> Modellen hittar bara en tillräckligt tydlig kandidat, därför blir det inget kombinationsspel.
+                <strong>Ingen A2 väljs.</strong> Modellen hittar bara en tillräckligt tydlig kandidat, därför blir det inget tvillingspel.
               </div>
             )}
             {!candidates[0] && (
@@ -2346,13 +3154,56 @@ export default function App() {
                     : "Vänta på fler uppdateringar"}
                 </span>
               </div>
+
+              <div style={s.comboCard}>
+                <span style={s.small}>TVILLING A1/A2</span>
+                <strong style={s.comboName}>
+                  {displayedPair.a1 && displayedPair.a2
+                    ? `${Math.min(displayedPair.a1.number, displayedPair.a2.number)}-${Math.max(displayedPair.a1.number, displayedPair.a2.number)} · ${displayedPair.a1.name} / ${displayedPair.a2.name}`
+                    : "Väntar på A1 och A2"}
+                </strong>
+                <span style={s.comboTrend}>
+                  {currentTvilling.rawOdds ? `Odds ${formatOdds(currentTvilling.rawOdds)}` : currentTvilling.message}
+                </span>
+              </div>
             </div>
+
+            {lockedRecommendationOdds && (
+              <section style={s.recommendationPreviewCard}>
+                <p style={s.kicker}>FÖRHANDSKORT · SPELREKOMMENDATION</p>
+                <div style={s.recommendationPairGrid}>
+                  <div style={s.recommendationPairItem}>
+                    <span style={s.small}>A1</span>
+                    <strong>{lockedRecommendationOdds.a1.number}. {lockedRecommendationOdds.a1.name}</strong>
+                  </div>
+                  <div style={s.recommendationPairItem}>
+                    <span style={s.small}>A2</span>
+                    <strong>{lockedRecommendationOdds.a2.number}. {lockedRecommendationOdds.a2.name}</strong>
+                  </div>
+                </div>
+
+                <div style={s.recommendationMarketBlock}>
+                  <span style={s.small}>TVILLING</span>
+                  <div style={s.recommendationOddsRow}>
+                    <span>
+                      {Math.min(lockedRecommendationOdds.a1.number, lockedRecommendationOdds.a2.number)}-
+                      {Math.max(lockedRecommendationOdds.a1.number, lockedRecommendationOdds.a2.number)}
+                    </span>
+                    <strong>
+                      {lockedRecommendationOdds.tvillingRaw
+                        ? formatOdds(lockedRecommendationOdds.tvillingRaw)
+                        : lockedRecommendationOdds.tvillingMessage}
+                    </strong>
+                  </div>
+                </div>
+              </section>
+            )}
 
             <p style={s.disclaimer}>
               A1/A2 är fortfarande en teknisk trendrankning. Den väger nu
               samman total oddssänkning, senaste rörelsen och kortsiktigt momentum.
               Appen visar inte “pengar in”, eftersom oddsrörelse inte avslöjar exakt
-              spelbelopp. Den riktiga KOMBEN-modellen låses först efter test mot
+              spelbelopp. Den riktiga Tvillingmodellen låses först efter test mot
               verkliga lopp.
             </p>
 
@@ -2517,14 +3368,12 @@ export default function App() {
                   </div>
 
                   <label style={s.label}>
-                    Kombodds för rätt ordning
-                    <input
-                      value={comboOddsInput}
-                      onChange={(e) => setComboOddsInput(e.target.value)}
-                      inputMode="decimal"
-                      placeholder="Exempel: 12,40"
-                      style={s.input}
-                    />
+                    Tvillingodds (hämtas automatiskt)
+                    <div style={s.readonlyInfo}>
+                      {currentTvilling.rawOdds
+                        ? `Aktuellt tvillingodds: ${formatOdds(currentTvilling.rawOdds)}`
+                        : currentTvilling.message}
+                    </div>
                   </label>
 
                   <button type="button" onClick={saveResult} style={s.button}>
@@ -2532,13 +3381,12 @@ export default function App() {
                   </button>
 
                   <p style={s.disclaimer}>
-                    Insatsen räknas som 50 kr på A1–A2 och 50 kr på A2–A1,
-                    totalt 100 kr. Kombodds behövs endast vid träff.
+                    Tvilling registreras för A1/A2 i valfri ordning. Träff är när A1 och A2 blir etta och tvåa i valfri ordning.
                   </p>
                 </>
               ) : (
                 <p style={s.muted}>
-                  Lås A1 och A2 före start. Därefter kan resultat och kombodds sparas här.
+                  Lås A1 och A2 före start. Därefter kan resultat och odds registreras här.
                 </p>
               )}
             </section>
@@ -2570,14 +3418,14 @@ export default function App() {
               <p style={s.kicker}>TOTAL STATISTIK</p>
               <h2 style={s.raceTitle}>Speljournal</h2>
             </div>
-            <strong>{savedBets.length} lopp</strong>
+            <strong>{tvillingBets.length} lopp</strong>
           </div>
 
           <div style={s.statsGrid}>
             <div style={s.statCard}><span style={s.small}>TRÄFFAR</span><strong>{journalTotals.hits}</strong></div>
             <div style={s.statCard}><span style={s.small}>INSATS</span><strong>{journalTotals.stake.toFixed(0)} kr</strong></div>
             <div style={s.statCard}><span style={s.small}>ÅTERBETALNING</span><strong>{journalTotals.returnAmount.toFixed(0)} kr</strong></div>
-            <div style={s.statCard}><span style={s.small}>VÄNTAR ODDS</span><strong>{savedBets.filter((bet) => bet.needsComboOdds).length}</strong></div>
+            <div style={s.statCard}><span style={s.small}>TRÄFF%</span><strong>{tvillingBets.length ? ((journalTotals.hits / tvillingBets.length) * 100).toFixed(1).replace(".", ",") : "0,0"} %</strong></div>
             <div style={s.statCard}>
               <span style={s.small}>NETTO</span>
               <strong style={{ color: journalTotals.net >= 0 ? "#4ade80" : "#fb7185" }}>
@@ -2592,32 +3440,50 @@ export default function App() {
             </div>
           </div>
 
+          <div style={s.statsGrid}>
+            <div style={s.statCard}><span style={s.small}>SE TVILLING SPEL</span><strong>{seTvillingStats.count}</strong></div>
+            <div style={s.statCard}><span style={s.small}>SE TVILLING TRÄFFAR</span><strong>{seTvillingStats.hits}</strong></div>
+            <div style={s.statCard}><span style={s.small}>SE TVILLING TRÄFF%</span><strong>{seTvillingStats.hitRate.toFixed(1).replace(".", ",")} %</strong></div>
+            <div style={s.statCard}><span style={s.small}>SE TVILLING INSATS</span><strong>{seTvillingStats.stake.toFixed(0)} kr</strong></div>
+            <div style={s.statCard}><span style={s.small}>SE TVILLING ÅTER</span><strong>{seTvillingStats.returnAmount.toFixed(0)} kr</strong></div>
+            <div style={s.statCard}><span style={s.small}>SE TVILLING NETTO</span><strong style={{ color: seTvillingStats.net >= 0 ? "#4ade80" : "#fb7185" }}>{seTvillingStats.net >= 0 ? "+" : ""}{seTvillingStats.net.toFixed(0)} kr</strong></div>
+            <div style={s.statCard}><span style={s.small}>SE TVILLING ROI</span><strong style={{ color: seTvillingStats.roi >= 0 ? "#4ade80" : "#fb7185" }}>{seTvillingStats.roi >= 0 ? "+" : ""}{seTvillingStats.roi.toFixed(1).replace(".", ",")} %</strong></div>
+          </div>
+
+          <div style={s.statsGrid}>
+            <div style={s.statCard}><span style={s.small}>FR TVILLING SPEL</span><strong>{frTvillingStats.count}</strong></div>
+            <div style={s.statCard}><span style={s.small}>FR TVILLING TRÄFFAR</span><strong>{frTvillingStats.hits}</strong></div>
+            <div style={s.statCard}><span style={s.small}>FR TVILLING TRÄFF%</span><strong>{frTvillingStats.hitRate.toFixed(1).replace(".", ",")} %</strong></div>
+            <div style={s.statCard}><span style={s.small}>FR TVILLING INSATS</span><strong>{frTvillingStats.stake.toFixed(0)} kr</strong></div>
+            <div style={s.statCard}><span style={s.small}>FR TVILLING ÅTER</span><strong>{frTvillingStats.returnAmount.toFixed(0)} kr</strong></div>
+            <div style={s.statCard}><span style={s.small}>FR TVILLING NETTO</span><strong style={{ color: frTvillingStats.net >= 0 ? "#4ade80" : "#fb7185" }}>{frTvillingStats.net >= 0 ? "+" : ""}{frTvillingStats.net.toFixed(0)} kr</strong></div>
+            <div style={s.statCard}><span style={s.small}>FR TVILLING ROI</span><strong style={{ color: frTvillingStats.roi >= 0 ? "#4ade80" : "#fb7185" }}>{frTvillingStats.roi >= 0 ? "+" : ""}{frTvillingStats.roi.toFixed(1).replace(".", ",")} %</strong></div>
+          </div>
+
           <div style={s.historyList}>
-            {savedBets.length ? savedBets.map((bet) => (
+            {tvillingBets.length ? tvillingBets.map((bet) => (
               <article key={bet.id} style={s.historyCard}>
                 <div>
-                  <strong>{bet.date} · {bet.trackName} · Lopp {bet.raceNumber}</strong>
+                  <strong>{bet.date} · {bet.countryCode === "SE" ? "Sverige" : "Frankrike"} · {bet.trackName} · Lopp {bet.raceNumber}</strong>
                   <span style={s.historyLine}>A1 {bet.a1Number}. {bet.a1Name} · A2 {bet.a2Number}. {bet.a2Name}</span>
-                  <span style={s.historyLine}>Resultat {bet.firstNumber}–{bet.secondNumber} · {bet.hit ? `Träff ${bet.winningOrder}` : "Miss"}</span>
-                  <span style={s.historyLine}>
-                    Kombodds {bet.comboOdds?.toFixed(2).replace(".", ",") ?? "–"} · Åter {bet.returnAmount.toFixed(0)} kr · Netto {bet.net >= 0 ? "+" : ""}{bet.net.toFixed(0)} kr
-                  </span>
-                  {bet.needsComboOdds && (
+                  <span style={s.historyLine}>Tvilling {Math.min(bet.a1Number, bet.a2Number)}-{Math.max(bet.a1Number, bet.a2Number)} · Resultat {bet.firstNumber}–{bet.secondNumber} · {bet.hit ? "Träff" : "Miss"}</span>
+                  <span style={s.historyLine}>Tvillingodds {bet.tvillingOdds?.toFixed(2).replace(".", ",") ?? "–"} · Åter {bet.returnAmount.toFixed(0)} kr · Netto {bet.net >= 0 ? "+" : ""}{bet.net.toFixed(0)} kr</span>
+                  {bet.needsTvillingOdds && (
                     <div style={s.pendingOddsRow}>
                       <input
-                        value={pendingOddsInputs[bet.id] ?? ""}
-                        onChange={(event) => setPendingOddsInputs((current) => ({ ...current, [bet.id]: event.target.value }))}
-                        placeholder="Ange kombodds"
+                        value={pendingTvillingOddsInputs[bet.id] ?? ""}
+                        onChange={(event) => setPendingTvillingOddsInputs((current) => ({ ...current, [bet.id]: event.target.value }))}
+                        placeholder="Ange tvillingodds"
                         inputMode="decimal"
                         style={s.pendingOddsInput}
                       />
-                      <button type="button" onClick={() => finalizeComboOdds(bet.id)} style={s.pendingOddsButton}>Räkna klart</button>
+                      <button type="button" onClick={() => finalizeTvillingOdds(bet.id)} style={s.pendingOddsButton}>Räkna klart</button>
                     </div>
                   )}
                 </div>
-                <button type="button" onClick={() => deleteSavedBet(bet.id)} style={s.deleteButton}>Ta bort</button>
+                <button type="button" onClick={() => deleteTvillingBet(bet.id)} style={s.deleteButton}>Ta bort</button>
               </article>
-            )) : <p style={s.muted}>Inga lopp är sparade ännu.</p>}
+            )) : <p style={s.muted}>Inga tvillingspel är sparade ännu.</p>}
           </div>
         </section>
 
@@ -2676,13 +3542,6 @@ const s: Record<string, CSSProperties> = {
     margin: 0,
     color: "#f8fafc",
     fontSize: "clamp(30px, 8vw, 42px)",
-  },
-  debugStamp: {
-    margin: "6px 0 0",
-    color: "#fde68a",
-    fontSize: 12,
-    fontWeight: 700,
-    letterSpacing: ".04em",
   },
   live: {
     height: "fit-content",
@@ -2917,6 +3776,63 @@ const s: Record<string, CSSProperties> = {
     color: "#e2e8f0",
     fontSize: 12,
     fontWeight: 850,
+  },
+  marketPulseRow: {
+    display: "grid",
+    gridTemplateColumns: "auto minmax(120px, 1fr) auto",
+    alignItems: "center",
+    gap: 12,
+    width: "100%",
+    padding: "12px 0",
+  },
+  marketPulseLabel: {
+    display: "block",
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: "#94a3b8",
+  },
+  marketPulseValue: {
+    display: "block",
+    fontSize: 20,
+    color: "#f8fafc",
+  },
+  marketPulseTrack: {
+    height: 10,
+    borderRadius: 999,
+    overflow: "hidden",
+    background: "rgba(148,163,184,.22)",
+  },
+  marketPulseFill: {
+    height: "100%",
+    borderRadius: 999,
+    background: "linear-gradient(90deg,#38bdf8,#a3e635,#facc15)",
+    transition: "width .35s ease",
+  },
+  marketPulseMeta: {
+    fontSize: 12,
+    color: "#cbd5e1",
+    whiteSpace: "nowrap",
+  },
+  dualMarketGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))",
+    gap: 10,
+    width: "100%",
+    marginBottom: 10,
+  },
+  marketMiniCard: {
+    display: "grid",
+    gap: 4,
+    padding: 12,
+    borderRadius: 14,
+    border: "1px solid rgba(148,163,184,.22)",
+    background: "rgba(15,23,42,.62)",
+    color: "#e2e8f0",
+  },
+  marketMiniLabel: {
+    fontSize: 10,
+    letterSpacing: 1.1,
+    color: "#a3e635",
   },
   marketAnalysisProgressTrack: {
     width: "100%",
@@ -3157,7 +4073,7 @@ const s: Record<string, CSSProperties> = {
   comboPanel: {
     color: "#f8fafc",
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
     gap: 10,
     padding: 14,
     background: "#111827",
@@ -3179,6 +4095,54 @@ const s: Record<string, CSSProperties> = {
     color: "#4ade80",
     fontSize: 13,
     fontWeight: 800,
+  },
+  readonlyInfo: {
+    minHeight: 48,
+    display: "flex",
+    alignItems: "center",
+    padding: "0 12px",
+    border: "1px solid #334155",
+    borderRadius: 12,
+    background: "#0f172a",
+    color: "#e2e8f0",
+    fontSize: 14,
+  },
+  recommendationPreviewCard: {
+    color: "#f8fafc",
+    display: "grid",
+    gap: 12,
+    padding: "14px 14px 16px",
+    borderTop: "1px solid #263244",
+    background: "#0f172a",
+  },
+  recommendationPairGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 10,
+  },
+  recommendationPairItem: {
+    display: "grid",
+    gap: 4,
+    padding: 10,
+    border: "1px solid #334155",
+    borderRadius: 12,
+    background: "#111827",
+  },
+  recommendationMarketBlock: {
+    display: "grid",
+    gap: 8,
+    padding: 10,
+    border: "1px solid #334155",
+    borderRadius: 12,
+    background: "#111827",
+  },
+  recommendationOddsRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    color: "#e2e8f0",
+    fontSize: 14,
   },
   disclaimer: {
     margin: 0,
@@ -3419,6 +4383,46 @@ const s: Record<string, CSSProperties> = {
     color: "#fecaca",
     cursor: "pointer",
     whiteSpace: "nowrap",
+  },
+  eveningPanel: {
+    marginTop: 18,
+    padding: 18,
+    border: "1px solid #334155",
+    borderRadius: 18,
+    background: "rgba(15,23,42,.72)",
+  },
+  eveningGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+    gap: 12,
+    marginTop: 14,
+  },
+  eveningCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    padding: 14,
+    border: "1px solid #334155",
+    borderRadius: 14,
+    background: "#0f172a",
+    color: "#f8fafc",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  eveningCardTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    color: "#cbd5e1",
+  },
+  signalBadge: {
+    fontSize: 12,
+    fontWeight: 900,
+    letterSpacing: ".08em",
+  },
+  signalHorse: {
+    fontSize: 16,
+    lineHeight: 1.3,
   },
   footer: {
     display: "flex",
