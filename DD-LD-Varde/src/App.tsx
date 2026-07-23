@@ -15,6 +15,14 @@ type CalendarResponse = {
   tracks?: unknown[];
 };
 
+type RunnerStats = {
+  earningsPerStart: number | null;
+  winPercent: number | null;
+  driverWinPercent: number | null;
+  startPoints: number | null;
+  gallopPercent: number | null;
+};
+
 type Runner = {
   number: number;
   name: string;
@@ -22,6 +30,7 @@ type Runner = {
   odds: number | null;
   placeOdds: number | null;
   scratched: boolean;
+  stats: RunnerStats;
 };
 
 type Race = {
@@ -115,6 +124,7 @@ const TVILLING_BETS_STORAGE_KEY = "komben-live-tvilling-bets-v1";
 const SIGNALS_STORAGE_KEY = "komben-live-signals-v1";
 const ODDS_STORAGE_KEY = "komben-live-odds-history-v1";
 const AUTO_SELECTIONS_STORAGE_KEY = "komben-live-auto-selections-v1";
+const TRACK_RACE_SELECTIONS_STORAGE_KEY = "komben-live-track-race-selections-v1";
 const ALL_RACES_REFRESH_SECONDS = 60;
 const MAX_HISTORY_POINTS = 720;
 const TVILLING_STAKE = 100;
@@ -196,10 +206,54 @@ type MeetingRaceRef = {
   startTime?: string;
 };
 type MeetingRacesByTrack = Record<number, MeetingRaceRef[]>;
+type AppTab = "overview" | "race" | "journal" | "stats";
+type StatKey = "KR" | "ST" | "K" | "SP" | "G" | "ODD";
+type StatDefinition = {
+  key: StatKey;
+  shortLabel: string;
+  label: string;
+  best: "high" | "low";
+};
+type RunnerIndicator = {
+  key: StatKey;
+  label: string;
+  shortLabel: string;
+  value: number | null;
+  rank: number | null;
+  available: number;
+  positive: boolean;
+  tooltip: string;
+};
+type RunnerInsights = {
+  consistency: number | null;
+  strength: number;
+  indicators: RunnerIndicator[];
+};
+type RaceInsights = {
+  byRunner: Record<number, RunnerInsights>;
+  smoothest: TrendRunner | null;
+  biggestDrop: TrendRunner | null;
+};
 
 const API = "https://www.atg.se/services/racinginfo/v1/api";
 const REFRESH_SECONDS = 60;
 const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
+
+const APP_TABS: Array<{ id: AppTab; label: string }> = [
+  { id: "overview", label: "Oversikt" },
+  { id: "race", label: "Lopp" },
+  { id: "journal", label: "Speljournal" },
+  { id: "stats", label: "Statistik" },
+];
+
+const STAT_DEFINITIONS: StatDefinition[] = [
+  { key: "KR", shortLabel: "KR", label: "Kronor per start", best: "high" },
+  { key: "ST", shortLabel: "ST", label: "Segerprocent", best: "high" },
+  { key: "K", shortLabel: "K", label: "Kuskprocent", best: "high" },
+  { key: "SP", shortLabel: "SP", label: "Startpoang", best: "high" },
+  { key: "G", shortLabel: "G", label: "Galopp", best: "low" },
+  { key: "ODD", shortLabel: "ODD", label: "Oddsmodell", best: "high" },
+];
 
 
 const STABLE_PRESSURE_SETTINGS = {
@@ -273,6 +327,14 @@ function formatTime(value?: string) {
   });
 }
 
+function formatClockTime(timestamp: number) {
+  return new Date(timestamp).toLocaleTimeString("sv-SE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
 }
@@ -283,6 +345,28 @@ function asString(value: unknown) {
 
 function asNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function percentValue(value: unknown) {
+  const parsed = asNumber(value);
+  if (parsed === null) return null;
+  return parsed > 0 && parsed <= 1 ? parsed * 100 : parsed;
+}
+
+function firstNumeric(value: unknown, paths: string[][], parser: (raw: unknown) => number | null = asNumber) {
+  for (const path of paths) {
+    let current: unknown = value;
+    for (const key of path) {
+      if (!isRecord(current)) {
+        current = null;
+        break;
+      }
+      current = current[key];
+    }
+    const parsed = parser(current);
+    if (parsed !== null) return parsed;
+  }
+  return null;
 }
 
 function normalizeText(value: string) {
@@ -811,13 +895,17 @@ function buildRaceMarketOverview(
   const startMs = race.startTime ? new Date(race.startTime).getTime() : Number.NaN;
   const started = !Number.isNaN(startMs) && nowMs >= startMs;
 
-  let status: RaceMarketOverview["status"] = "waiting";
-  if (record) status = record.status === "locked" ? "locked" : "finished";
-  else if (started) status = "finished";
-  else if (winnerHistory.length === 0) status = "waiting";
-  else if ((winChangePercent ?? 0) <= -8 && observedMinutes >= 10) status = "strong";
-  else if ((winChangePercent ?? 0) <= -3 && observedMinutes >= 3) status = "preliminary";
-  else status = "collecting";
+  const status: RaceMarketOverview["status"] = record
+    ? record.status === "locked" ? "locked" : "finished"
+    : started
+      ? "finished"
+      : winnerHistory.length === 0
+        ? "waiting"
+        : (winChangePercent ?? 0) <= -8 && observedMinutes >= 10
+          ? "strong"
+          : (winChangePercent ?? 0) <= -3 && observedMinutes >= 3
+            ? "preliminary"
+            : "collecting";
 
   const confidence: RaceMarketOverview["confidence"] =
     observedMinutes >= 30 ? "hög" : observedMinutes >= 10 ? "medel" : "låg";
@@ -839,6 +927,139 @@ function formatPercent(value: number | null) {
   return `${sign}${value.toFixed(1).replace(".", ",")} %`;
 }
 
+function formatStatValue(key: StatKey, value: number | null) {
+  if (value === null) return "Saknas";
+  if (key === "KR") return `${value.toFixed(0).replace(".", ",")} kr`;
+  if (key === "ST" || key === "K" || key === "G") {
+    return `${value.toFixed(1).replace(".", ",")} %`;
+  }
+  if (key === "ODD") return `${value.toFixed(0)} p`;
+  return value.toFixed(1).replace(".", ",");
+}
+
+function mean(values: number[]) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function standardDeviation(values: number[]) {
+  if (values.length < 2) return 0;
+  const avg = mean(values);
+  const variance = values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function consistencyValue(historyOdds: number[]) {
+  if (historyOdds.length < 3) return null;
+  const avg = mean(historyOdds);
+  if (!avg) return null;
+  return (standardDeviation(historyOdds) / avg) * 100;
+}
+
+function runnerOddsSignal(runner: TrendRunner) {
+  if (runner.modelScore !== undefined) return runner.modelScore;
+  if (runner.changePercent === null) return null;
+  return -runner.changePercent;
+}
+
+function buildRaceInsights(runners: TrendRunner[]) {
+  const activeRunners = runners.filter((runner) => !runner.scratched);
+  const valuesByKey = new Map<StatKey, Array<{ runnerNumber: number; value: number }>>();
+
+  for (const definition of STAT_DEFINITIONS) {
+    const entries = activeRunners
+      .map((runner) => {
+        const value =
+          definition.key === "KR"
+            ? runner.stats.earningsPerStart
+            : definition.key === "ST"
+              ? runner.stats.winPercent
+              : definition.key === "K"
+                ? runner.stats.driverWinPercent
+                : definition.key === "SP"
+                  ? runner.stats.startPoints
+                  : definition.key === "G"
+                    ? runner.stats.gallopPercent
+                    : runnerOddsSignal(runner);
+        return value === null ? null : { runnerNumber: runner.number, value };
+      })
+      .filter((entry): entry is { runnerNumber: number; value: number } => entry !== null)
+      .sort((a, b) => definition.best === "low" ? a.value - b.value : b.value - a.value);
+
+    valuesByKey.set(definition.key, entries);
+  }
+
+  const byRunner: Record<number, RunnerInsights> = {};
+  for (const runner of activeRunners) {
+    const indicators = STAT_DEFINITIONS.map((definition) => {
+      const ranking = valuesByKey.get(definition.key) ?? [];
+      const matchIndex = ranking.findIndex((entry) => entry.runnerNumber === runner.number);
+      const rank = matchIndex >= 0 ? matchIndex + 1 : null;
+      const value =
+        definition.key === "KR"
+          ? runner.stats.earningsPerStart
+          : definition.key === "ST"
+            ? runner.stats.winPercent
+            : definition.key === "K"
+              ? runner.stats.driverWinPercent
+              : definition.key === "SP"
+                ? runner.stats.startPoints
+                : definition.key === "G"
+                  ? runner.stats.gallopPercent
+                  : runnerOddsSignal(runner);
+      const available = ranking.length;
+      const positive = rank !== null && rank <= 4;
+      const tooltip = value === null
+        ? `${definition.label}: saknas` 
+        : `${definition.label}: ${formatStatValue(definition.key, value)}\nRankad ${rank} av ${available}${definition.key === "G" ? ", dar lagst varde ar bast" : ""}`;
+
+      return {
+        key: definition.key,
+        label: definition.label,
+        shortLabel: definition.shortLabel,
+        value,
+        rank,
+        available,
+        positive,
+        tooltip,
+      } satisfies RunnerIndicator;
+    });
+
+    byRunner[runner.number] = {
+      consistency: consistencyValue(runner.historyOdds),
+      strength: indicators.filter((indicator) => indicator.positive).length,
+      indicators,
+    };
+  }
+
+  const smoothest = [...activeRunners]
+    .filter((runner) => byRunner[runner.number]?.consistency !== null)
+    .sort((a, b) => (byRunner[a.number]?.consistency ?? Number.POSITIVE_INFINITY) - (byRunner[b.number]?.consistency ?? Number.POSITIVE_INFINITY))[0] ?? null;
+  const biggestDrop = [...activeRunners]
+    .filter((runner) => runner.changePercent !== null)
+    .sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0))[0] ?? null;
+
+  return {
+    byRunner,
+    smoothest,
+    biggestDrop,
+  } satisfies RaceInsights;
+}
+
+function sparklinePoints(values: number[], width = 96, height = 24) {
+  if (values.length < 2) return "";
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  return values
+    .map((value, index) => {
+      const x = (index / (values.length - 1)) * width;
+      const y = height - ((value - min) / range) * height;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
 function parseDriver(start: UnknownRecord) {
   const driver = getRecord(start, "driver");
   if (!driver) return "–";
@@ -849,6 +1070,60 @@ function parseDriver(start: UnknownRecord) {
   return [asString(driver.firstName), asString(driver.lastName)]
     .filter(Boolean)
     .join(" ") || "–";
+}
+
+function extractRunnerStats(start: UnknownRecord): RunnerStats {
+  const driver = getRecord(start, "driver");
+
+  // Null means the current ATG payload did not expose the field for this runner.
+  // The UI still renders a gray indicator so later feed mappings can slot in safely.
+  return {
+    earningsPerStart: firstNumeric(start, [
+      ["earningsPerStart"],
+      ["moneyPerStart"],
+      ["statistics", "earningsPerStart"],
+      ["statistics", "moneyPerStart"],
+      ["horse", "statistics", "earningsPerStart"],
+      ["horse", "statistics", "moneyPerStart"],
+      ["career", "earningsPerStart"],
+      ["horse", "career", "earningsPerStart"],
+    ]),
+    winPercent: firstNumeric(start, [
+      ["winPercent"],
+      ["winPercentage"],
+      ["statistics", "winPercent"],
+      ["statistics", "winPercentage"],
+      ["horse", "statistics", "winPercent"],
+      ["horse", "statistics", "winPercentage"],
+      ["career", "winPercent"],
+      ["career", "winPercentage"],
+    ], percentValue),
+    driverWinPercent: firstNumeric(driver ?? start, [
+      ["winPercent"],
+      ["winPercentage"],
+      ["statistics", "winPercent"],
+      ["statistics", "winPercentage"],
+      ["career", "winPercentage"],
+    ], percentValue),
+    startPoints: firstNumeric(start, [
+      ["startPoints"],
+      ["startPoang"],
+      ["statistics", "startPoints"],
+      ["statistics", "startPoang"],
+      ["horse", "statistics", "startPoints"],
+      ["horse", "statistics", "startPoang"],
+    ]),
+    gallopPercent: firstNumeric(start, [
+      ["gallopPercent"],
+      ["galoppPercent"],
+      ["gallopRate"],
+      ["statistics", "gallopPercent"],
+      ["statistics", "galoppPercent"],
+      ["horse", "statistics", "gallopPercent"],
+      ["horse", "statistics", "galoppPercent"],
+      ["career", "gallopPercent"],
+    ], percentValue),
+  };
 }
 
 function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
@@ -895,6 +1170,7 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
     odds,
     placeOdds,
     scratched,
+    stats: extractRunnerStats(value),
   };
 }
 
@@ -1188,6 +1464,7 @@ export default function App() {
 
   testConnection();
 }, []);
+  const [activeTab, setActiveTab] = useState<AppTab>("race");
   const [date, setDate] = useState(today());
   const [tracks, setTracks] = useState<Track[]>([]);
   const [countryFilter, setCountryFilter] = useState<"SE" | "FR">("SE");
@@ -1214,11 +1491,23 @@ export default function App() {
   const [secondNumber, setSecondNumber] = useState("");
   const [allRacesUpdated, setAllRacesUpdated] = useState("");
   const [backgroundCollecting, setBackgroundCollecting] = useState(false);
-  const [nowMs, setNowMs] = useState(Date.now());
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [autoSelections, setAutoSelections] = useState<AutoSelection[]>([]);
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
   const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
   const [tvillingMarkets, setTvillingMarkets] = useState<Record<string, TvillingRaceMarket>>({});
+  const [selectedRaceByTrack, setSelectedRaceByTrack] = useState<Record<string, string>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = window.localStorage.getItem(TRACK_RACE_SELECTIONS_STORAGE_KEY);
+      if (!stored) return {};
+      const parsed = JSON.parse(stored) as Record<string, string>;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  const [expandedRunnerKey, setExpandedRunnerKey] = useState<string | null>(null);
 
   const selectedTrack = useMemo(
     () => tracks.find((track) => String(track.id) === trackId),
@@ -1241,6 +1530,16 @@ export default function App() {
   const selectedRace = useMemo(
     () => races.find((race) => String(race.raceNumber) === raceNumber),
     [races, raceNumber],
+  );
+
+  const selectedTrackRaces = useMemo(
+    () => (selectedTrack ? racesByTrack[selectedTrack.id] ?? [] : []),
+    [selectedTrack, racesByTrack],
+  );
+
+  const selectedTrackMeetingRefs = useMemo(
+    () => (selectedTrack ? meetingRacesByTrack[selectedTrack.id] ?? [] : []),
+    [selectedTrack, meetingRacesByTrack],
   );
 
   const countdown = useMemo(() => {
@@ -1296,12 +1595,14 @@ export default function App() {
       phase,
       totalSeconds: diffSeconds,
     };
-  }, [selectedRace?.startTime, nowMs]);
+  }, [selectedRace, nowMs]);
 
   const trendRunners = useMemo<TrendRunner[]>(() => {
     if (!selectedRace) return [];
     return buildTrendRunnersForRace(selectedRace, oddsHistory);
   }, [selectedRace, oddsHistory]);
+
+  const raceInsights = useMemo(() => buildRaceInsights(trendRunners), [trendRunners]);
 
   useEffect(() => {
     try {
@@ -1403,9 +1704,18 @@ export default function App() {
   }, [autoSelections]);
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(TRACK_RACE_SELECTIONS_STORAGE_KEY, JSON.stringify(selectedRaceByTrack));
+    } catch (error) {
+      console.error("Kunde inte spara loppval per bana", error);
+    }
+  }, [selectedRaceByTrack]);
+
+  useEffect(() => {
     setLockedSelection(null);
     setFirstNumber("");
     setSecondNumber("");
+    setExpandedRunnerKey(null);
   }, [trackId, raceNumber]);
 
   useEffect(() => {
@@ -1679,6 +1989,56 @@ export default function App() {
     };
   }, [selectedRace, displayedPair, tvillingMarkets]);
 
+  const firstOddsRegisteredAt = useMemo(() => {
+    if (!selectedRace) return null;
+    const timestamps = trendRunners
+      .flatMap((runner) => historyInsideLastHour(oddsHistory[runnerKey(selectedRace.id, runner.number)] ?? [], selectedRace.startTime))
+      .map((point) => point.timestamp);
+    if (!timestamps.length) return null;
+    return new Date(Math.min(...timestamps)).toISOString();
+  }, [selectedRace, trendRunners, oddsHistory]);
+
+  const minutesToLock = useMemo(() => {
+    if (countdown.totalSeconds === null) return null;
+    return Math.max(0, Math.floor((countdown.totalSeconds - 60) / 60));
+  }, [countdown.totalSeconds]);
+
+  const trackAlerts = useMemo(() => {
+    const next: Record<number, string | null> = {};
+    for (const track of tracks) {
+      const trackRaces = racesByTrack[track.id] ?? [];
+      const hasReadyCandidate = trackRaces.some((race) => rankCandidates(buildTrendRunnersForRace(race, oddsHistory)).length > 0);
+      const hasStartingSoon = trackRaces.some((race) => {
+        if (!race.startTime) return false;
+        const diff = new Date(race.startTime).getTime() - nowMs;
+        return diff > 0 && diff <= 10 * 60_000;
+      });
+      next[track.id] = hasReadyCandidate ? "A1/A2 redo" : hasStartingSoon ? "Snart start" : null;
+    }
+    return next;
+  }, [tracks, racesByTrack, oddsHistory, nowMs]);
+
+  const overviewRows = useMemo(() => {
+    return tracks.flatMap((track) => {
+      const trackRaces = racesByTrack[track.id] ?? [];
+      return trackRaces.map((race) => {
+        const runners = buildTrendRunnersForRace(race, oddsHistory);
+        const insights = buildRaceInsights(runners);
+        const ranked = rankCandidates(runners);
+        const startMs = race.startTime ? new Date(race.startTime).getTime() : Number.NaN;
+        const secondsLeft = Number.isNaN(startMs) ? null : Math.floor((startMs - nowMs) / 1000);
+        return {
+          track,
+          race,
+          ranked,
+          insights,
+          secondsLeft,
+          insufficientData: runners.filter((runner) => runner.samples >= 3).length < 2,
+        };
+      });
+    });
+  }, [tracks, racesByTrack, oddsHistory, nowMs]);
+
   function lockCurrentSelection() {
     if (selectedRace?.isMonte) {
       setError("Montélopp räknas inte och ska inte spelas enligt modellen.");
@@ -1863,7 +2223,6 @@ export default function App() {
     setRaces([]);
     setRacesByTrack({});
     setMeetingRacesByTrack({});
-    setRaceNumber("");
 
     try {
       const response = await fetch(`${API}/calendar/day/${date}`, {
@@ -1965,11 +2324,15 @@ export default function App() {
 
       if (list.length) {
         const currentTrackIsValid = list.some((track) => String(track.id) === trackId);
+        const nextTrack = currentTrackIsValid
+          ? list.find((track) => String(track.id) === trackId) ?? list[0]
+          : list[0];
+
         if (!currentTrackIsValid) {
-          setTrackId(String(list[0].id));
+          setTrackId(String(nextTrack.id));
         }
 
-        void loadRaces(list[0], list, nextMeetingRacesByTrack);
+        void loadRaces(nextTrack, list, nextMeetingRacesByTrack);
       }
 
       if (!list.length) {
@@ -2077,8 +2440,18 @@ export default function App() {
       setUpdated(new Date().toLocaleTimeString("sv-SE"));
 
       if (selectedTrackRaces.length) {
-        if (!selectedTrackRaces.some((race) => String(race.raceNumber) === raceNumber)) {
-          setRaceNumber(String(selectedTrackRaces[0].raceNumber));
+        const currentTrackKey = String(selectedTrackId);
+        const rememberedRace = selectedRaceByTrack[currentTrackKey];
+        const rememberedExists = rememberedRace
+          ? selectedTrackRaces.some((race) => String(race.raceNumber) === rememberedRace)
+          : false;
+
+        if (rememberedExists) {
+          setRaceNumber(rememberedRace ?? "");
+        } else if (!selectedTrackRaces.some((race) => String(race.raceNumber) === raceNumber)) {
+          const fallbackRace = String(selectedTrackRaces[0].raceNumber);
+          setRaceNumber(fallbackRace);
+          setSelectedRaceByTrack((current) => ({ ...current, [currentTrackKey]: fallbackRace }));
         }
       } else {
         setError(
@@ -2262,10 +2635,24 @@ export default function App() {
 
     const selectedTrackRaces = racesByTrack[selectedTrack.id] ?? [];
     setRaces(selectedTrackRaces);
-    if (!selectedTrackRaces.some((race) => String(race.raceNumber) === raceNumber)) {
-      setRaceNumber(selectedTrackRaces.length ? String(selectedTrackRaces[0].raceNumber) : "");
+    const rememberedRace = selectedRaceByTrack[String(selectedTrack.id)];
+    const rememberedRaceExists = rememberedRace
+      ? selectedTrackRaces.some((race) => String(race.raceNumber) === rememberedRace)
+      : false;
+
+    if (rememberedRaceExists && raceNumber !== rememberedRace) {
+      setRaceNumber(rememberedRace);
+      return;
     }
-  }, [selectedTrack, racesByTrack, raceNumber]);
+
+    if (!selectedTrackRaces.some((race) => String(race.raceNumber) === raceNumber)) {
+      const fallbackRace = selectedTrackRaces.length ? String(selectedTrackRaces[0].raceNumber) : "";
+      setRaceNumber(fallbackRace);
+      if (fallbackRace) {
+        setSelectedRaceByTrack((current) => ({ ...current, [String(selectedTrack.id)]: fallbackRace }));
+      }
+    }
+  }, [selectedTrack, racesByTrack, raceNumber, selectedRaceByTrack]);
 
   useEffect(() => {
     if (!selectedTrack || !raceNumber) return;
@@ -2553,6 +2940,540 @@ export default function App() {
     if (change <= -5) return "Stärks";
     if (change >= 5) return "Försvagas";
     return "Stabil";
+  }
+
+  function selectTrack(nextTrackId: string) {
+    setTrackId(nextTrackId);
+    const rememberedRace = selectedRaceByTrack[nextTrackId];
+    if (rememberedRace) {
+      setRaceNumber(rememberedRace);
+    }
+  }
+
+  function selectRaceForTrack(track: Track, nextRaceNumber: number | string) {
+    const nextValue = String(nextRaceNumber);
+    if (trackId !== String(track.id)) {
+      setTrackId(String(track.id));
+    }
+    setRaceNumber(nextValue);
+    setSelectedRaceByTrack((current) => ({ ...current, [String(track.id)]: nextValue }));
+  }
+
+  function openRaceFromOverview(track: Track, nextRaceNumber: number) {
+    setActiveTab("race");
+    selectRaceForTrack(track, nextRaceNumber);
+  }
+
+  function runnerStrength(runner: TrendRunner) {
+    return raceInsights.byRunner[runner.number]?.strength ?? 0;
+  }
+
+  function renderStrengthDots(strength: number) {
+    return Array.from({ length: 6 }, (_, index) => (
+      <span
+        key={`strength-${index}`}
+        className={`strength-dot ${index < strength ? "is-on" : ""}`}
+      />
+    ));
+  }
+
+  function renderIndicators(runner: TrendRunner) {
+    const indicators = raceInsights.byRunner[runner.number]?.indicators ?? [];
+    return (
+      <div className="indicator-stack">
+        <div className="indicator-label-row">
+          {STAT_DEFINITIONS.map((definition) => (
+            <span key={definition.key}>{definition.shortLabel}</span>
+          ))}
+        </div>
+        <div className="indicator-dot-row">
+          {indicators.map((indicator) => (
+            <button
+              key={`${runner.number}-${indicator.key}`}
+              type="button"
+              title={indicator.tooltip}
+              className={`indicator-dot ${indicator.positive ? "is-positive" : ""}`}
+              onClick={() => setExpandedRunnerKey((current) => current === `${selectedRace?.id}-${runner.number}` ? null : `${selectedRace?.id}-${runner.number}`)}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderOverviewTab() {
+    return (
+      <section className="tab-section">
+        <div className="panel-header-row">
+          <div>
+            <p style={s.kicker}>OVERSIKT</p>
+            <h2 style={s.raceTitle}>Kvällens banor och lopp</h2>
+          </div>
+          <div className="panel-meta-row">
+            <span>{tracks.length} banor</span>
+            <span>Senast {allRacesUpdated || updated || "vantar"}</span>
+          </div>
+        </div>
+
+        <div className="overview-grid">
+          {overviewRows.map(({ track, race, ranked, insights, secondsLeft, insufficientData }) => (
+            <button
+              key={`${track.id}-${race.id}`}
+              type="button"
+              className="overview-card"
+              onClick={() => openRaceFromOverview(track, race.raceNumber)}
+            >
+              <div className="overview-card-top">
+                <strong>{track.name} L{race.raceNumber}</strong>
+                <span>{formatTime(race.startTime)}</span>
+              </div>
+              <div className="overview-card-meta">
+                <span>{secondsLeft === null ? "Ingen starttid" : secondsLeft <= 0 ? "Startat" : `${Math.max(1, Math.ceil(secondsLeft / 60))} min kvar`}</span>
+                <span>{race.status || "Vantar"}</span>
+              </div>
+              <div className="overview-card-body">
+                <span>A1: {ranked[0] ? `${ranked[0].number}. ${ranked[0].name}` : "For lite data"}</span>
+                <span>A2: {ranked[1] ? `${ranked[1].number}. ${ranked[1].name}` : "Ingen tillrackligt tydlig A2"}</span>
+                <span>Jamnast: {insights.smoothest ? `${insights.smoothest.number}. ${insights.smoothest.name}` : "Saknas"}</span>
+                <span>Mest sankta: {insights.biggestDrop ? `${insights.biggestDrop.number}. ${insights.biggestDrop.name}` : "Saknas"}</span>
+                {insufficientData && <span className="muted-badge">Otillracklig data</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  function renderRaceTab() {
+    return (
+      <section className="tab-section">
+        <div className="track-tabs">
+          {tracks.map((track) => (
+            <button
+              key={track.id}
+              type="button"
+              className={`track-tab ${String(track.id) === trackId ? "is-active" : ""}`}
+              onClick={() => selectTrack(String(track.id))}
+            >
+              <span>{track.name}</span>
+              {trackAlerts[track.id] ? <small>{trackAlerts[track.id]}</small> : null}
+            </button>
+          ))}
+        </div>
+
+        {selectedTrack ? (
+          <>
+            <div className="race-hero-bar">
+              <div className="race-hero-main">
+                <div className="race-hero-title-row">
+                  <h2 className="race-hero-title">LOPP {selectedRace?.raceNumber || "-"}</h2>
+                  <span className="race-hero-meta">{formatTime(selectedRace?.startTime)} · {selectedTrack.name} · Spel</span>
+                  <span className="flag-chip">SE</span>
+                </div>
+                <div className="race-hero-subrow">
+                  <strong className="countdown-highlight">START OM {countdown.label}</strong>
+                  <span className="status-chip">{selectedRace?.status || "Stabil"}</span>
+                </div>
+              </div>
+              <div className="race-hero-side">
+                <strong>A1/A2 låses vid 1:00</strong>
+                <span>Modell: Trendranking + Momentum</span>
+                <span>Första uppclock: {formatTime(firstOddsRegisteredAt ?? undefined)} · Nu: {formatClockTime(nowMs)} · {minutesToLock === null ? "-" : `${minutesToLock} min kvar`}</span>
+              </div>
+            </div>
+
+            <div className="race-toolbar">
+              <div className="selector-panels">
+                <div className="selector-panel">
+                  <span className="selector-label">Bana</span>
+                  <div className="race-chip-row">
+                    {tracks.map((track) => (
+                      <button
+                        key={`toolbar-${track.id}`}
+                        type="button"
+                        className={`race-chip selector-track-chip ${String(track.id) === trackId ? "is-active" : ""}`}
+                        onClick={() => selectTrack(String(track.id))}
+                      >
+                        {track.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="selector-panel">
+                  <span className="selector-label">Lopp</span>
+                  <div className="race-chip-row">
+                    {(selectedTrackMeetingRefs.length ? selectedTrackMeetingRefs : selectedTrackRaces).map((raceRef) => {
+                      const number = raceRef.raceNumber;
+                      return (
+                        <button
+                          key={`${selectedTrack.id}-${number}`}
+                          type="button"
+                          className={`race-chip ${String(number) === raceNumber ? "is-active" : ""}`}
+                          onClick={() => selectRaceForTrack(selectedTrack, number)}
+                        >
+                          {number}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="race-status-grid">
+                <div><span>Start</span><strong>{formatTime(selectedRace?.startTime)}</strong></div>
+                <div><span>Nedrakning</span><strong>{countdown.label}</strong></div>
+                <div><span>Status</span><strong>{selectedRace?.status || "Vantar"}</strong></div>
+                <div><span>Forsta odds</span><strong>{formatTime(firstOddsRegisteredAt ?? undefined)}</strong></div>
+                <div><span>Lasning om</span><strong>{minutesToLock === null ? "-" : `${minutesToLock} min`}</strong></div>
+                <div><span>Live</span><strong>{updated || "-"}</strong></div>
+              </div>
+            </div>
+
+            {selectedRace ? (
+              <>
+                <div className="race-layout">
+                  <div className="race-main-panel">
+                    <div className="compact-table-header compact-grid-row">
+                      <span>Nr</span>
+                      <span>Hast / kusk</span>
+                      <span>V-odds</span>
+                      <span>Sankning %</span>
+                      <span>Trend 60 min</span>
+                      <span>Jamnhet CV %</span>
+                      <span>Statistik indikatorer</span>
+                      <span>Styrka</span>
+                      <span>Mark.</span>
+                    </div>
+
+                    <div className="compact-table-body">
+                      {trendRunners.map((runner) => {
+                        const rowKey = `${selectedRace.id}-${runner.number}`;
+                        const isA1 = candidates[0]?.number === runner.number;
+                        const isA2 = candidates[1]?.number === runner.number;
+                        const runnerInfo = raceInsights.byRunner[runner.number];
+                        const isExpanded = expandedRunnerKey === rowKey;
+                        const consistency = runnerInfo?.consistency;
+
+                        return (
+                          <div
+                            key={rowKey}
+                            className={`compact-row ${isA1 ? "is-a1" : ""} ${isA2 ? "is-a2" : ""} ${runner.scratched ? "is-scratched" : ""}`}
+                          >
+                            <button
+                              type="button"
+                              className="compact-grid-row compact-row-button"
+                              onClick={() => setExpandedRunnerKey((current) => current === rowKey ? null : rowKey)}
+                            >
+                              <span className="number-pill">{runner.number}</span>
+                              <span className="runner-name-cell">
+                                <span className="runner-title-line">
+                                  {(isA1 || isA2) ? <span className={`inline-tag ${isA1 ? "a1" : "a2"}`}>{isA1 ? "A1" : "A2"}</span> : null}
+                                  <strong>{runner.name}</strong>
+                                </span>
+                                <small>{runner.driver}</small>
+                              </span>
+                              <span>{formatOdds(runner.odds)}</span>
+                              <span className={`change-value ${runner.changePercent === null ? "is-neutral" : runner.changePercent < -0.05 ? "is-down" : runner.changePercent > 0.05 ? "is-up" : "is-neutral"}`}>
+                                {formatPercent(runner.changePercent)}
+                              </span>
+                              <span className="sparkline-cell">
+                                <svg viewBox="0 0 96 24" className="sparkline-svg" aria-hidden="true">
+                                  <path d={sparklinePoints(runner.historyOdds)} fill="none" stroke={runner.changePercent !== null && runner.changePercent < 0 ? "#55e89a" : runner.changePercent !== null && runner.changePercent > 0 ? "#ff9a5a" : "#9db3a8"} strokeWidth="1.5" strokeLinecap="round" />
+                                </svg>
+                              </span>
+                              <span>{consistency === null ? "-" : consistency.toFixed(2).replace(".", ",")}</span>
+                              <span>{renderIndicators(runner)}</span>
+                              <span className="strength-cell" title={`Styrka: ${runnerStrength(runner)} av 6 positiva indikatorer`}>
+                                <strong>{runnerStrength(runner)}/6</strong>
+                                <span className="strength-dots">{renderStrengthDots(runnerStrength(runner))}</span>
+                              </span>
+                              <span className="candidate-cell">
+                                {isA1 ? <span className="candidate-badge a1">A1</span> : null}
+                                {isA2 ? <span className="candidate-badge a2">A2</span> : null}
+                                {raceInsights.smoothest?.number === runner.number ? <span className="comment-mark smoothest">J</span> : null}
+                                {raceInsights.biggestDrop?.number === runner.number ? <span className="comment-mark drop">S</span> : null}
+                                {!isA1 && !isA2 ? <span className="candidate-badge neutral">-</span> : null}
+                              </span>
+                            </button>
+
+                            {isExpanded ? (
+                              <div className="expanded-row">
+                                <div className="expanded-grid">
+                                  <span>Vinnare 60m till nu: {formatOdds(runner.firstOdds)} till {formatOdds(runner.odds)}</span>
+                                  <span>Momentum: {momentumDisplay(runner.momentum)}</span>
+                                  <span>Jamnhet: {consistency === null ? "Saknas" : consistency.toFixed(2).replace(".", ",")}</span>
+                                  <span>Oddsmodell: {runner.modelScore ?? "Saknas"}</span>
+                                </div>
+                                <div className="expanded-stat-list">
+                                  {(runnerInfo?.indicators ?? []).map((indicator) => (
+                                    <span key={`${rowKey}-${indicator.key}`}>
+                                      {indicator.label}: {formatStatValue(indicator.key, indicator.value)}{indicator.rank ? ` · Rank ${indicator.rank}/${indicator.available}` : ""}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <aside className="race-side-panel">
+                    <section className="side-card">
+                      <div className="side-card-title">A1 & A2 just nu</div>
+                      <div className="candidate-summary">
+                        <span>A1</span>
+                        <strong>{displayedPair.a1 ? `${displayedPair.a1.number}. ${displayedPair.a1.name}` : "Ingen kandidat"}</strong>
+                        <small>{displayedPair.a1 ? `${formatOdds(displayedPair.a1.odds)} · ${formatPercent(displayedPair.a1.changePercent)} · ${runnerStrength(displayedPair.a1)}/6` : "-"}</small>
+                      </div>
+                      <div className="candidate-summary a2">
+                        <span>A2</span>
+                        <strong>{displayedPair.a2 ? `${displayedPair.a2.number}. ${displayedPair.a2.name}` : "Ingen tillrackligt tydlig A2"}</strong>
+                        <small>{displayedPair.a2 ? `${formatOdds(displayedPair.a2.odds)} · ${formatPercent(displayedPair.a2.changePercent)} · ${runnerStrength(displayedPair.a2)}/6` : "Modellen tvingar inte fram A2"}</small>
+                      </div>
+                      <div className="odds-highlight-card">
+                        <span>KOMBODDS</span>
+                        <strong>{currentTvilling.rawOdds ? formatOdds(currentTvilling.rawOdds) : "-"}</strong>
+                        <small>{currentTvilling.rawOdds ? "Beraknat kombodds A1-A2" : currentTvilling.message}</small>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={lockCurrentSelection}
+                        disabled={!candidates[0] || !candidates[1]}
+                        style={{ ...s.button, marginBottom: 0, background: "#ff6b00", color: "#fff", opacity: !candidates[0] || !candidates[1] ? 0.45 : 1 }}
+                      >
+                        {lockedSelection ? `A1/A2 låst ${lockedSelection.lockedAt}` : "Lås A1 & A2"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void refreshSelectedRace()}
+                        disabled={loadingOdds || !selectedRace}
+                        style={{ ...s.refreshButton, width: "100%", minHeight: 44, opacity: loadingOdds || !selectedRace ? 0.45 : 1 }}
+                      >
+                        {loadingOdds ? "Uppdaterar lopp..." : "Uppdatera lopp"}
+                      </button>
+                    </section>
+
+                    <section className="side-card">
+                      <div className="side-card-title">Jamnaste hast</div>
+                      <strong>{raceInsights.smoothest ? `${raceInsights.smoothest.number}. ${raceInsights.smoothest.name}` : "Saknas"}</strong>
+                      <small>{raceInsights.smoothest ? `${(raceInsights.byRunner[raceInsights.smoothest.number]?.consistency ?? 0).toFixed(2).replace(".", ",")} · ${formatPercent(raceInsights.smoothest.changePercent)}` : "For lite oddshistorik"}</small>
+                    </section>
+
+                    <section className="side-card">
+                      <div className="side-card-title">Mest sankta</div>
+                      <strong>{raceInsights.biggestDrop ? `${raceInsights.biggestDrop.number}. ${raceInsights.biggestDrop.name}` : "Saknas"}</strong>
+                      <small>{raceInsights.biggestDrop ? `${formatOdds(raceInsights.biggestDrop.firstOdds)} till ${formatOdds(raceInsights.biggestDrop.odds)} · ${formatPercent(raceInsights.biggestDrop.changePercent)}` : "Ingen trend an"}</small>
+                    </section>
+
+                    <section className="side-card legend-card">
+                      <div className="side-card-title">Statistik indikatorer</div>
+                      {STAT_DEFINITIONS.map((definition) => (
+                        <span key={definition.key}>{definition.shortLabel}: {definition.label}</span>
+                      ))}
+                      <small>Grönt = topp 4 i loppet. G rankas med lägst värde som bäst.</small>
+                    </section>
+                  </aside>
+                </div>
+
+                <section className="result-card">
+                  <div className="panel-header-row">
+                    <div>
+                      <p style={s.kicker}>RESULTAT</p>
+                      <h3 className="minor-heading">Ratta lopp och journal</h3>
+                    </div>
+                    <span className="panel-meta-chip">Nasta liveuppdatering om {secondsToRefresh}s</span>
+                  </div>
+
+                  {lockedSelection ? (
+                    <>
+                      <div className="locked-strip">
+                        <strong>A1 {lockedSelection.a1.number}. {lockedSelection.a1.name}</strong>
+                        <strong>A2 {lockedSelection.a2.number}. {lockedSelection.a2.name}</strong>
+                        <span>Last {lockedSelection.lockedAt}</span>
+                      </div>
+                      <div className="result-grid">
+                        <label style={s.label}>
+                          1:a i mal
+                          <select value={firstNumber} onChange={(event) => setFirstNumber(event.target.value)} style={s.input}>
+                            <option value="">Valj vinnare</option>
+                            {selectedRace.runners.filter((runner) => !runner.scratched).map((runner) => (
+                              <option key={`first-${runner.number}`} value={runner.number}>{runner.number}. {runner.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label style={s.label}>
+                          2:a i mal
+                          <select value={secondNumber} onChange={(event) => setSecondNumber(event.target.value)} style={s.input}>
+                            <option value="">Valj tvaa</option>
+                            {selectedRace.runners.filter((runner) => !runner.scratched).map((runner) => (
+                              <option key={`second-${runner.number}`} value={runner.number}>{runner.number}. {runner.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="result-footer-row">
+                        <div className="side-inline-value">Tvilling: {currentTvilling.rawOdds ? formatOdds(currentTvilling.rawOdds) : currentTvilling.message}</div>
+                        <button type="button" onClick={saveResult} style={{ ...s.button, width: "auto", paddingInline: 20, marginBottom: 0 }}>Spara lopp</button>
+                      </div>
+                    </>
+                  ) : (
+                    <p style={s.muted}>Las A1 och A2 fore start. Resultatkontrollen och journalen ar oforandrade.</p>
+                  )}
+                </section>
+              </>
+            ) : (
+              <div className="empty-state-card">
+                <strong>Valj ett lopp for att visa liveanalysen.</strong>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="empty-state-card">
+            <strong>Hamta svenska banor for att starta kvallsvyn.</strong>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function renderJournalTab() {
+    return (
+      <section className="tab-section">
+        <div className="panel-header-row">
+          <div>
+            <p style={s.kicker}>SPELJOURNAL</p>
+            <h2 style={s.raceTitle}>Tvillinghistorik</h2>
+          </div>
+          <div className="panel-meta-row">
+            <span>{tvillingBets.length} lopp</span>
+            <span>{journalTotals.hits} traffar</span>
+          </div>
+        </div>
+        <div className="mini-stats-grid">
+          <div className="mini-stat-card"><span>Insats</span><strong>{journalTotals.stake.toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Ater</span><strong>{journalTotals.returnAmount.toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Netto</span><strong>{journalTotals.net >= 0 ? "+" : ""}{journalTotals.net.toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>ROI</span><strong>{journalTotals.roi.toFixed(1).replace(".", ",")} %</strong></div>
+        </div>
+        <div className="history-list-compact">
+          {tvillingBets.length ? tvillingBets.map((bet) => (
+            <article key={bet.id} className="history-row-card">
+              <div>
+                <strong>{bet.date} · {bet.trackName} · Lopp {bet.raceNumber}</strong>
+                <span>A1 {bet.a1Number}. {bet.a1Name} · A2 {bet.a2Number}. {bet.a2Name}</span>
+                <span>Resultat {bet.firstNumber}-{bet.secondNumber} · {bet.hit ? "Traff" : "Miss"} · Kombodds {bet.tvillingOdds?.toFixed(2).replace(".", ",") ?? "-"}</span>
+                <span>Insats {bet.stake} kr · Ater {bet.returnAmount.toFixed(0)} kr · Netto {bet.net >= 0 ? "+" : ""}{bet.net.toFixed(0)} kr</span>
+                {bet.needsTvillingOdds ? (
+                  <div className="pending-row-inline">
+                    <input
+                      value={pendingTvillingOddsInputs[bet.id] ?? ""}
+                      onChange={(event) => setPendingTvillingOddsInputs((current) => ({ ...current, [bet.id]: event.target.value }))}
+                      placeholder="Ange tvillingodds"
+                      style={s.pendingOddsInput}
+                    />
+                    <button type="button" onClick={() => finalizeTvillingOdds(bet.id)} style={s.pendingOddsButton}>Rakna klart</button>
+                  </div>
+                ) : null}
+              </div>
+              <button type="button" onClick={() => deleteTvillingBet(bet.id)} className="delete-lite">Ta bort</button>
+            </article>
+          )) : <p style={s.muted}>Inga tvillingspel ar sparade an.</p>}
+        </div>
+      </section>
+    );
+  }
+
+  function renderStatsTab() {
+    return (
+      <section className="tab-section">
+        <div className="panel-header-row">
+          <div>
+            <p style={s.kicker}>STATISTIK</p>
+            <h2 style={s.raceTitle}>Total utfall</h2>
+          </div>
+          <div className="panel-meta-row">
+            <span>Databas {dbStatus.startsWith("✅") ? "ansluten" : dbStatus}</span>
+          </div>
+        </div>
+        <div className="mini-stats-grid">
+          <div className="mini-stat-card"><span>Genomforda lopp</span><strong>{tvillingBets.length}</strong></div>
+          <div className="mini-stat-card"><span>Traffar</span><strong>{journalTotals.hits}</strong></div>
+          <div className="mini-stat-card"><span>Insats</span><strong>{journalTotals.stake.toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Aterbetalning</span><strong>{journalTotals.returnAmount.toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Netto</span><strong>{journalTotals.net >= 0 ? "+" : ""}{journalTotals.net.toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>ROI</span><strong>{journalTotals.roi.toFixed(1).replace(".", ",")} %</strong></div>
+          <div className="mini-stat-card"><span>Vantar pa odds</span><strong>{tvillingBets.filter((bet) => bet.needsTvillingOdds).length}</strong></div>
+          <div className="mini-stat-card"><span>Signaler ikvall</span><strong>{eveningSignalTotals.signals}</strong></div>
+        </div>
+      </section>
+    );
+  }
+
+  if (activeTab) {
+    return (
+      <main style={s.page}>
+        <section style={{ ...s.card, maxWidth: 1480, padding: 18 }}>
+          <div className="top-nav-shell">
+            <div className="app-headline">
+              <div>
+                <p style={s.kicker}>KOMBEN LIVE</p>
+                <h1 className="app-title-compact">Tvilling Live</h1>
+              </div>
+              <div className="top-status-group">
+                <span className="live-pill">LIVE</span>
+                <span className="top-status-text">Svenska banor · lokal uppdatering var 60s</span>
+              </div>
+            </div>
+
+            <div className="top-toolbar-row">
+              <div className="top-toolbar-controls">
+                <label className="toolbar-field">
+                  <span>Datum</span>
+                  <input type="date" value={date} onChange={(event) => setDate(event.target.value)} style={s.input} />
+                </label>
+                <button type="button" onClick={() => void loadTracks()} disabled={loadingTracks} style={{ ...s.button, width: "auto", paddingInline: 18, marginBottom: 0, opacity: loadingTracks ? 0.65 : 1 }}>
+                  {loadingTracks ? "Hamtar banor..." : "Hamta banor"}
+                </button>
+                <button type="button" onClick={() => void refreshSelectedRace()} disabled={!selectedRace || loadingOdds} style={{ ...s.refreshButton, opacity: !selectedRace || loadingOdds ? 0.6 : 1 }}>
+                  {loadingOdds ? "Uppdaterar..." : "Uppdatera lopp"}
+                </button>
+              </div>
+              <div className="toolbar-health">{autoStatus}</div>
+            </div>
+
+            <nav className="top-nav-tabs" aria-label="Huvudmeny">
+              {APP_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`top-nav-tab ${activeTab === tab.id ? "is-active" : ""}`}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          {error ? <div style={s.error}>{error}</div> : null}
+
+          {activeTab === "overview" ? renderOverviewTab() : null}
+          {activeTab === "race" ? renderRaceTab() : null}
+          {activeTab === "journal" ? renderJournalTab() : null}
+          {activeTab === "stats" ? renderStatsTab() : null}
+
+          <footer className="footer-compact">
+            <span>Banor {tracks.length}</span>
+            <span>Vald bana {selectedTrack?.name || "-"}</span>
+            <span>Senast {updated || "-"}</span>
+            <span>Bakgrund {backgroundCollecting ? "hamtar" : "aktiv"}</span>
+          </footer>
+        </section>
+      </main>
+    );
   }
 
   return (
