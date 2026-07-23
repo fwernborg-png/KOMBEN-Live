@@ -137,8 +137,8 @@ const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
 
 
 const STABLE_PRESSURE_SETTINGS = {
-  minimumMeasurements: 25,
-  minimumObservedMinutes: 30,
+  minimumMeasurements: 4,
+  minimumObservedMinutes: 3,
   minimumTotalDropPercent: 8,
   minimumControlledStepRatio: 0.8,
   minimumDownwardStepRatio: 0.3,
@@ -553,6 +553,8 @@ function analyzeStablePressure(
     last5ChangePercent <= settings.maximumLast5RisePercent;
 
   const qualifies =
+    sortedHistory.length >= settings.minimumMeasurements &&
+    observedMinutes >= settings.minimumObservedMinutes &&
     totalDropPercent >= settings.minimumTotalDropPercent &&
     controlledStepRatio >= settings.minimumControlledStepRatio &&
     downwardStepRatio >= settings.minimumDownwardStepRatio &&
@@ -694,7 +696,9 @@ function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRu
   return race.runners.map((runner) => {
     const storedHistory = oddsHistory[runnerKey(race.id, runner.number)] ?? [];
     const history = historyInsideLastHour(storedHistory, race.startTime);
-    const firstOdds = checkpointOdds(history, race.startTime, 60);
+    // 60 minuter är maxfönstret, inte ett krav.
+    // Öppnas appen sent används första tillgängliga mätningen som startvärde.
+    const firstOdds = history[0]?.odds ?? null;
     const previousOdds = history.length >= 2 ? history[history.length - 2].odds : runner.odds;
     const currentOdds = runner.odds;
     const changePercent = percentChange(firstOdds, currentOdds);
@@ -1143,22 +1147,61 @@ export default function App() {
 
   const marketAnalysisProgress = useMemo(() => {
     if (!selectedRace) {
-      return { analyzedMinutes: 0, progressPercent: 0, complete: false };
+      return { measurementCount: 0, observedMinutes: 0, active: false };
     }
 
-    const largestMeasurementCount = trendRunners.reduce((largest, runner) => {
-      const storedHistory = oddsHistory[runnerKey(selectedRace.id, runner.number)] ?? [];
-      const history = historyInsideLastHour(storedHistory, selectedRace.startTime);
-      return Math.max(largest, history.length);
-    }, 0);
+    let largestMeasurementCount = 0;
+    let longestObservedMinutes = 0;
 
-    const analyzedMinutes = Math.min(60, largestMeasurementCount);
+    for (const runner of trendRunners) {
+      const storedHistory =
+        oddsHistory[runnerKey(selectedRace.id, runner.number)] ?? [];
+      const history = historyInsideLastHour(
+        storedHistory,
+        selectedRace.startTime,
+      );
+
+      largestMeasurementCount = Math.max(
+        largestMeasurementCount,
+        history.length,
+      );
+
+      if (history.length >= 2) {
+        const observedMinutes =
+          (history[history.length - 1].timestamp - history[0].timestamp) /
+          60_000;
+
+        longestObservedMinutes = Math.max(
+          longestObservedMinutes,
+          observedMinutes,
+        );
+      }
+    }
+
     return {
-      analyzedMinutes,
-      progressPercent: Math.round((analyzedMinutes / 60) * 100),
-      complete: largestMeasurementCount >= 2,
+      measurementCount: largestMeasurementCount,
+      observedMinutes: Math.max(0, Math.round(longestObservedMinutes)),
+      active: largestMeasurementCount >= 2,
     };
   }, [selectedRace, trendRunners, oddsHistory]);
+
+  const raceCollectionSummary = useMemo(() => {
+    let active = 0;
+    let waiting = 0;
+
+    for (const race of races) {
+      const window = raceCollectionWindow(race.startTime);
+      if (!window) continue;
+
+      if (nowMs >= window.collectionStartMs && nowMs < window.startMs) {
+        active += 1;
+      } else if (nowMs < window.collectionStartMs) {
+        waiting += 1;
+      }
+    }
+
+    return { active, waiting, total: races.length };
+  }, [races, nowMs]);
 
   const favoriteRunner = useMemo(() => {
     return [...trendRunners]
@@ -1810,7 +1853,8 @@ export default function App() {
               </strong>
             </div>
             <span style={s.collectionText}>
-              Varje minut · Senast{" "}
+              {raceCollectionSummary.active} lopp samlas in nu ·{" "}
+              {raceCollectionSummary.waiting} väntar · Senast{" "}
               {allRacesUpdated || "väntar"}
             </span>
           </div>
@@ -1876,7 +1920,7 @@ export default function App() {
                 ...s.stablePressureCard,
                 ...(stablePressureCandidate
                   ? s.marketAnalysisActive
-                  : marketAnalysisProgress.complete
+                  : marketAnalysisProgress.active
                     ? s.marketAnalysisComplete
                     : s.marketAnalysisCollecting),
               }}
@@ -1906,39 +1950,42 @@ export default function App() {
                       Jämnast tydliga sänkning i loppet · informationssignal, inte automatiskt platsspel
                     </span>
                   </>
-                ) : marketAnalysisProgress.complete ? (
+                ) : marketAnalysisProgress.active ? (
                   <>
-                    <span style={s.marketAnalysisStatus}>✅ Analys klar</span>
-                    <strong style={s.stablePressureName}>Ingen tydlig signal</strong>
+                    <span style={s.marketAnalysisStatus}>🔎 Analys aktiv</span>
+                    <strong style={s.stablePressureName}>
+                      Ingen tydlig signal just nu
+                    </strong>
                     <span style={s.stablePressureStats}>
-                      Ingen häst uppfyller kriterierna för jämn och långvarig oddssänkning.
+                      {marketAnalysisProgress.measurementCount} mätpunkter ·{" "}
+                      {marketAnalysisProgress.observedMinutes} minuter observerade
+                    </span>
+                    <span style={s.stablePressureNotice}>
+                      Bedömningen fortsätter att uppdateras varje minut.
                     </span>
                   </>
                 ) : (
                   <>
-                    <span style={s.marketAnalysisStatus}>⏳ Samlar data…</span>
+                    <span style={s.marketAnalysisStatus}>
+                      ⏳ Startar marknadsanalys…
+                    </span>
                     <strong style={s.stablePressureName}>
-                      Analys: {marketAnalysisProgress.progressPercent} % klar
+                      {marketAnalysisProgress.measurementCount
+                        ? "Första oddset är sparat"
+                        : "Väntar på första oddsmätningen"}
                     </strong>
-                    <div style={s.marketAnalysisProgressTrack}>
-                      <div
-                        style={{
-                          ...s.marketAnalysisProgressFill,
-                          width: `${marketAnalysisProgress.progressPercent}%`,
-                        }}
-                      />
-                    </div>
                     <span style={s.stablePressureStats}>
-                      {marketAnalysisProgress.analyzedMinutes} av 60 minuter analyserade
+                      Analysen behöver inte 60 minuter. Den startar när två
+                      mätpunkter finns.
                     </span>
                     <span style={s.stablePressureNotice}>
-                      Söker efter hästar med jämn och långvarig oddssänkning.
+                      Öppnas appen sent används tiden som finns kvar före start.
                     </span>
                   </>
                 )}
 
                 <span style={s.marketAnalysisFooter}>
-                  Analyserar 1 minut i taget under sista timmen före start.
+                  Analyserar varje minut. Högst de sista 60 minuterna används.
                 </span>
               </div>
 
@@ -1981,7 +2028,7 @@ export default function App() {
                       </div>
                       <span style={s.driver}>{runner.driver}</span>
                       <span style={s.firstToNow}>
-                        Odds 60 min före <strong>{formatOdds(runner.firstOdds)}</strong>
+                        Första uppmätta odds <strong>{formatOdds(runner.firstOdds)}</strong>
                         <span style={s.oddsArrow}>→</span>
                         Nu <strong>{formatOdds(runner.odds)}</strong>
                       </span>
