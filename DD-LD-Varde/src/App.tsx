@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "./lib/supabase";
 
@@ -237,6 +237,8 @@ type RaceInsights = {
 
 const API = "https://www.atg.se/services/racinginfo/v1/api";
 const REFRESH_SECONDS = 60;
+const FETCH_TIMEOUT_MS = 12000;
+const FETCH_RETRY_ATTEMPTS = 1;
 const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
 
 const APP_TABS: Array<{ id: AppTab; label: string }> = [
@@ -563,6 +565,10 @@ function runnerKey(raceId: string, runnerNumber: number) {
 
 function placeRunnerKey(raceId: string, runnerNumber: number) {
   return `${raceId}:${runnerNumber}:place`;
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function appendMinuteSnapshot(
@@ -1472,7 +1478,7 @@ export default function App() {
   const [races, setRaces] = useState<Race[]>([]);
   const [racesByTrack, setRacesByTrack] = useState<RacesByTrack>({});
   const [meetingRacesByTrack, setMeetingRacesByTrack] = useState<MeetingRacesByTrack>({});
-  const [raceNumber, setRaceNumber] = useState("");
+  const [selectedRaceId, setSelectedRaceId] = useState("");
   const [loadingTracks, setLoadingTracks] = useState(false);
   const [loadingRaces, setLoadingRaces] = useState(false);
   const [loadingOdds, setLoadingOdds] = useState(false);
@@ -1508,6 +1514,14 @@ export default function App() {
     }
   });
   const [expandedRunnerKey, setExpandedRunnerKey] = useState<string | null>(null);
+  const selectedRaceByTrackRef = useRef(selectedRaceByTrack);
+  const latestRaceSelectionRef = useRef({ trackId, raceId: selectedRaceId });
+  const pendingRaceNumberByTrackRef = useRef<Record<string, string>>({});
+  const currentMeetingIdRef = useRef(trackId);
+  const currentRaceIdRef = useRef(selectedRaceId);
+  const selectedRaceRequestRef = useRef(0);
+  const selectedRaceAbortRef = useRef<AbortController | null>(null);
+  const loadingOddsRef = useRef(false);
 
   const selectedTrack = useMemo(
     () => tracks.find((track) => String(track.id) === trackId),
@@ -1528,9 +1542,29 @@ export default function App() {
   );
 
   const selectedRace = useMemo(
-    () => races.find((race) => String(race.raceNumber) === raceNumber),
-    [races, raceNumber],
+    () =>
+      races.find((race) => String(race.id) === selectedRaceId) ??
+      races.find((race) => String(race.raceNumber) === selectedRaceId),
+    [races, selectedRaceId],
   );
+
+  const raceNumber = selectedRace ? String(selectedRace.raceNumber) : "";
+
+  useEffect(() => {
+    if (!selectedTrack || !selectedRace) return;
+    const normalizedRaceId = String(selectedRace.id);
+    if (selectedRaceId === normalizedRaceId) return;
+    setSelectedRaceId(normalizedRaceId);
+    setSelectedRaceByTrack((current) => ({
+      ...current,
+      [String(selectedTrack.id)]: normalizedRaceId,
+    }));
+  }, [selectedTrack, selectedRace, selectedRaceId]);
+
+  useEffect(() => {
+    currentMeetingIdRef.current = trackId;
+    currentRaceIdRef.current = selectedRaceId;
+  }, [trackId, selectedRaceId]);
 
   const selectedTrackRaces = useMemo(
     () => (selectedTrack ? racesByTrack[selectedTrack.id] ?? [] : []),
@@ -1712,17 +1746,29 @@ export default function App() {
   }, [selectedRaceByTrack]);
 
   useEffect(() => {
+    selectedRaceByTrackRef.current = selectedRaceByTrack;
+  }, [selectedRaceByTrack]);
+
+  useEffect(() => {
+    latestRaceSelectionRef.current = { trackId, raceId: selectedRaceId };
+  }, [trackId, selectedRaceId]);
+
+  useEffect(() => {
+    loadingOddsRef.current = loadingOdds;
+  }, [loadingOdds]);
+
+  useEffect(() => {
     setLockedSelection(null);
     setFirstNumber("");
     setSecondNumber("");
     setExpandedRunnerKey(null);
-  }, [trackId, raceNumber]);
+  }, [trackId, selectedRaceId]);
 
   useEffect(() => {
     if (!selectableTracks.some((track) => String(track.id) === trackId)) {
       setTrackId("");
       setRaces([]);
-      setRaceNumber("");
+      setSelectedRaceId("");
       setLockedSelection(null);
       setFirstNumber("");
       setSecondNumber("");
@@ -2349,16 +2395,77 @@ export default function App() {
     }
   }
 
-  async function fetchRace(track: Track, number: number) {
+  function cancelSelectedRaceRequest() {
+    selectedRaceAbortRef.current?.abort();
+    selectedRaceAbortRef.current = null;
+  }
+
+  function stableRaceId(track: Track, raceNumberValue: number) {
+    return `${date}_${track.id}_${raceNumberValue}`;
+  }
+
+  async function fetchRace(track: Track, number: number, signal?: AbortSignal) {
     const gameId = `vinnare_${date}_${track.id}_${number}`;
-    const response = await fetch(`${API}/games/${gameId}`, {
-      cache: "no-store",
-    });
+    for (let attempt = 0; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
+      const timeoutController = new AbortController();
+      const timeoutHandle = window.setTimeout(() => {
+        timeoutController.abort();
+      }, FETCH_TIMEOUT_MS);
+      const parentAbort = () => timeoutController.abort();
 
-    if (!response.ok) return null;
+      if (signal) {
+        signal.addEventListener("abort", parentAbort, { once: true });
+      }
 
-    const data: unknown = await response.json();
-    return parseRace(data, number);
+      try {
+        const response = await fetch(`${API}/games/${gameId}`, {
+          cache: "no-store",
+          signal: timeoutController.signal,
+        });
+
+        if (!response.ok) {
+          if (response.status >= 500 && attempt < FETCH_RETRY_ATTEMPTS) {
+            continue;
+          }
+          return null;
+        }
+
+        const data: unknown = await response.json();
+        const parsed = parseRace(data, number);
+        if (!parsed) return null;
+        return { ...parsed, id: stableRaceId(track, parsed.raceNumber || number) };
+      } catch (error) {
+        if (signal?.aborted && isAbortError(error)) {
+          throw error;
+        }
+
+        if (attempt < FETCH_RETRY_ATTEMPTS) {
+          continue;
+        }
+
+        return null;
+      } finally {
+        window.clearTimeout(timeoutHandle);
+        if (signal) {
+          signal.removeEventListener("abort", parentAbort);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function buildPlaceholderRace(track: Track, raceNumberValue: number, startTime?: string): Race {
+    return {
+      raceNumber: raceNumberValue,
+      id: stableRaceId(track, raceNumberValue),
+      startTime,
+      status: "Väntar på data",
+      runners: [],
+      isMonte: false,
+      isP21: false,
+      finishOrder: [],
+    };
   }
 
   async function loadRaces(track = selectedTrack, trackList?: Track[], meetingRaceRefsByTrack?: MeetingRacesByTrack) {
@@ -2382,10 +2489,13 @@ export default function App() {
           raceNumbers.map((number) => fetchRace(currentTrack, number).catch(() => null)),
         );
 
-        const availableRaces = results
-          .filter(
-            (race): race is Race => race !== null,
-          )
+        const availableRaces = raceNumbers
+          .map((raceNumberValue, index) => {
+            const fetchedRace = results[index];
+            if (fetchedRace) return fetchedRace;
+            const raceRef = meetingRaceRefs.find((ref) => ref.raceNumber === raceNumberValue);
+            return buildPlaceholderRace(currentTrack, raceNumberValue, raceRef?.startTime);
+          })
           .sort((a, b) => {
             const aTime = a.startTime ? new Date(a.startTime).getTime() : Number.POSITIVE_INFINITY;
             const bTime = b.startTime ? new Date(b.startTime).getTime() : Number.POSITIVE_INFINITY;
@@ -2441,16 +2551,32 @@ export default function App() {
 
       if (selectedTrackRaces.length) {
         const currentTrackKey = String(selectedTrackId);
-        const rememberedRace = selectedRaceByTrack[currentTrackKey];
-        const rememberedExists = rememberedRace
-          ? selectedTrackRaces.some((race) => String(race.raceNumber) === rememberedRace)
-          : false;
+        const pendingRaceNumber = pendingRaceNumberByTrackRef.current[currentTrackKey] ?? "";
+        const pendingRace = pendingRaceNumber
+          ? selectedTrackRaces.find((race) => String(race.raceNumber) === pendingRaceNumber)
+          : undefined;
+        const rememberedRace = selectedRaceByTrackRef.current[currentTrackKey] ?? "";
+        const latestSelection = latestRaceSelectionRef.current;
+        const currentRaceForTrack =
+          latestSelection.trackId === currentTrackKey
+            ? latestSelection.raceId
+            : "";
+        const preferredRace = currentRaceForTrack || pendingRace?.id || rememberedRace;
+        const preferredRaceIsValid =
+          preferredRace &&
+          selectedTrackRaces.some((race) => String(race.id) === preferredRace);
 
-        if (rememberedExists) {
-          setRaceNumber(rememberedRace ?? "");
-        } else if (!selectedTrackRaces.some((race) => String(race.raceNumber) === raceNumber)) {
-          const fallbackRace = String(selectedTrackRaces[0].raceNumber);
-          setRaceNumber(fallbackRace);
+        if (preferredRaceIsValid) {
+          if (currentRaceForTrack !== preferredRace) {
+            setSelectedRaceId(preferredRace);
+            setSelectedRaceByTrack((current) => ({ ...current, [currentTrackKey]: preferredRace }));
+          }
+          if (pendingRace) {
+            delete pendingRaceNumberByTrackRef.current[currentTrackKey];
+          }
+        } else {
+          const fallbackRace = String(selectedTrackRaces[0].id);
+          setSelectedRaceId(fallbackRace);
           setSelectedRaceByTrack((current) => ({ ...current, [currentTrackKey]: fallbackRace }));
         }
       } else {
@@ -2535,7 +2661,9 @@ export default function App() {
         for (const trackUpdate of refreshedByTrack) {
           const existing = next[trackUpdate.trackId] ?? [];
           const merged = existing.map((race) =>
-            trackUpdate.refreshedRaces.find((refreshed) => refreshed.raceNumber === race.raceNumber) ?? race,
+            trackUpdate.refreshedRaces.find(
+              (refreshed) => refreshed.id === race.id || refreshed.raceNumber === race.raceNumber,
+            ) ?? race,
           );
           next[trackUpdate.trackId] = merged;
         }
@@ -2552,18 +2680,52 @@ export default function App() {
   }
 
   async function refreshSelectedRace() {
-    if (!selectedTrack || !raceNumber) return;
+    if (!selectedTrack || !selectedRace) return;
+    if (loadingOddsRef.current) {
+      cancelSelectedRaceRequest();
+      loadingOddsRef.current = false;
+      setLoadingOdds(false);
+    }
 
+    cancelSelectedRaceRequest();
+    const controller = new AbortController();
+    selectedRaceAbortRef.current = controller;
+    const requestId = selectedRaceRequestRef.current + 1;
+    selectedRaceRequestRef.current = requestId;
+    const raceKeyAtStart = `${selectedTrack.id}:${selectedRace.id}`;
+
+    loadingOddsRef.current = true;
     setLoadingOdds(true);
+    setError("");
 
     try {
-      const refreshed = await fetchRace(selectedTrack, Number(raceNumber));
+      const refreshed = await fetchRace(selectedTrack, selectedRace.raceNumber, controller.signal);
 
       if (!refreshed) {
         throw new Error("Loppet kunde inte hämtas.");
       }
 
       await refreshTvillingMarkets(selectedTrack, [refreshed.raceNumber], [refreshed]);
+
+      const requestedMeetingId = selectedTrack.id;
+      const requestedRaceId = selectedRace.id;
+
+      if (controller.signal.aborted || requestId !== selectedRaceRequestRef.current) {
+        return;
+      }
+
+      const latestSelection = latestRaceSelectionRef.current;
+      const latestRaceKey = `${latestSelection.trackId}:${latestSelection.raceId}`;
+      if (raceKeyAtStart !== latestRaceKey) {
+        return;
+      }
+
+      if (
+        String(requestedMeetingId) !== String(currentMeetingIdRef.current) ||
+        String(requestedRaceId) !== String(currentRaceIdRef.current)
+      ) {
+        return;
+      }
 
       const snapshotTime = Date.now();
       if (shouldCollectOdds(refreshed.startTime, snapshotTime)) {
@@ -2590,7 +2752,7 @@ export default function App() {
 
       setRaces((current) =>
         current.map((race) =>
-          race.raceNumber === refreshed.raceNumber ? refreshed : race,
+          race.id === refreshed.id || race.raceNumber === refreshed.raceNumber ? refreshed : race,
         ),
       );
       setRacesByTrack((current) => {
@@ -2599,19 +2761,32 @@ export default function App() {
         return {
           ...current,
           [selectedTrack.id]: existing.map((race) =>
-            race.raceNumber === refreshed.raceNumber ? refreshed : race,
+            race.id === refreshed.id || race.raceNumber === refreshed.raceNumber ? refreshed : race,
           ),
         };
       });
       setUpdated(new Date().toLocaleTimeString("sv-SE"));
       setSecondsToRefresh(REFRESH_SECONDS);
     } catch (err) {
+      if (isAbortError(err)) {
+        return;
+      }
       console.error(err);
-      setError("Kunde inte uppdatera liveoddsen.");
+      setError("Kunde inte uppdatera liveoddsen. Försök igen.");
     } finally {
-      setLoadingOdds(false);
+      if (requestId === selectedRaceRequestRef.current) {
+        loadingOddsRef.current = false;
+        setLoadingOdds(false);
+        if (selectedRaceAbortRef.current === controller) {
+          selectedRaceAbortRef.current = null;
+        }
+      }
     }
   }
+
+  useEffect(() => () => {
+    cancelSelectedRaceRequest();
+  }, []);
 
   useEffect(() => {
     void loadTracks();
@@ -2629,33 +2804,73 @@ export default function App() {
   useEffect(() => {
     if (!selectedTrack) {
       setRaces([]);
-      setRaceNumber("");
+      setSelectedRaceId("");
       return;
     }
 
     const selectedTrackRaces = racesByTrack[selectedTrack.id] ?? [];
     setRaces(selectedTrackRaces);
-    const rememberedRace = selectedRaceByTrack[String(selectedTrack.id)];
-    const rememberedRaceExists = rememberedRace
-      ? selectedTrackRaces.some((race) => String(race.raceNumber) === rememberedRace)
-      : false;
 
-    if (rememberedRaceExists && raceNumber !== rememberedRace) {
-      setRaceNumber(rememberedRace);
+    if (selectedTrackRaces.some((race) => String(race.id) === selectedRaceId)) {
       return;
     }
 
-    if (!selectedTrackRaces.some((race) => String(race.raceNumber) === raceNumber)) {
-      const fallbackRace = selectedTrackRaces.length ? String(selectedTrackRaces[0].raceNumber) : "";
-      setRaceNumber(fallbackRace);
+    const trackKey = String(selectedTrack.id);
+    const pendingRaceNumber = pendingRaceNumberByTrackRef.current[trackKey] ?? "";
+    const pendingRace = pendingRaceNumber
+      ? selectedTrackRaces.find((race) => String(race.raceNumber) === pendingRaceNumber)
+      : undefined;
+    if (pendingRace) {
+      const pendingRaceId = String(pendingRace.id);
+      setSelectedRaceId(pendingRaceId);
+      setSelectedRaceByTrack((current) => ({ ...current, [trackKey]: pendingRaceId }));
+      delete pendingRaceNumberByTrackRef.current[trackKey];
+      return;
+    }
+
+    const rememberedRace = selectedRaceByTrackRef.current[String(selectedTrack.id)];
+    const rememberedRaceExists = rememberedRace
+      ? selectedTrackRaces.some((race) => String(race.id) === rememberedRace)
+      : false;
+
+    if (rememberedRaceExists && selectedRaceId !== rememberedRace) {
+      setSelectedRaceId(rememberedRace);
+      return;
+    }
+
+    if (!selectedTrackRaces.some((race) => String(race.id) === selectedRaceId)) {
+      const fallbackRace = selectedTrackRaces.length ? String(selectedTrackRaces[0].id) : "";
+      setSelectedRaceId(fallbackRace);
       if (fallbackRace) {
         setSelectedRaceByTrack((current) => ({ ...current, [String(selectedTrack.id)]: fallbackRace }));
       }
     }
-  }, [selectedTrack, racesByTrack, raceNumber, selectedRaceByTrack]);
+  }, [selectedTrack, racesByTrack, selectedRaceId]);
 
   useEffect(() => {
-    if (!selectedTrack || !raceNumber) return;
+    if (!selectedTrack) return;
+    if (loadingRaces) return;
+    const meetingRaceRefs = meetingRacesByTrack[selectedTrack.id] ?? [];
+    if (!meetingRaceRefs.length) return;
+    const loadedRaces = racesByTrack[selectedTrack.id] ?? [];
+    if (loadedRaces.length) return;
+    void loadRaces(selectedTrack);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTrack, loadingRaces, meetingRacesByTrack, racesByTrack]);
+
+  useEffect(() => {
+    if (!selectedTrack || !selectedRace) return;
+    if (loadingOddsRef.current) return;
+    const waitingForRaceData =
+      selectedRace.status === "Väntar på data" ||
+      selectedRace.runners.length === 0;
+    if (!waitingForRaceData) return;
+    void refreshSelectedRace();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTrack, selectedRaceId, selectedRace?.status, selectedRace?.runners.length]);
+
+  useEffect(() => {
+    if (!selectedTrack || !selectedRaceId) return;
 
     setSecondsToRefresh(REFRESH_SECONDS);
 
@@ -2673,9 +2888,10 @@ export default function App() {
     return () => {
       window.clearInterval(countdown);
       window.clearInterval(refresh);
+      cancelSelectedRaceRequest();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackId, raceNumber]);
+  }, [trackId, selectedRaceId]);
 
   useEffect(() => {
     if (!tracks.length) return;
@@ -2901,7 +3117,7 @@ export default function App() {
       const next = upcoming?.startTime ? formatTime(upcoming.startTime) : "–";
       setAutoStatus(`Helkvällsautomaten är aktiv. Nästa lopp ${upcoming?.raceNumber ?? "–"} kl. ${next}.`);
     }
-  }, [nowMs, races, oddsHistory, selectedTrack, selectedRace?.raceNumber, tvillingBets, autoSelections, date, raceNumber, tvillingMarkets]);
+  }, [nowMs, races, oddsHistory, selectedTrack, selectedRace?.raceNumber, tvillingBets, autoSelections, date, selectedRaceId, tvillingMarkets]);
 
   function countdownStyle() {
     if (countdown.phase === "critical" || countdown.phase === "started") {
@@ -2946,22 +3162,64 @@ export default function App() {
     setTrackId(nextTrackId);
     const rememberedRace = selectedRaceByTrack[nextTrackId];
     if (rememberedRace) {
-      setRaceNumber(rememberedRace);
+      setSelectedRaceId(rememberedRace);
+      return;
     }
+    setSelectedRaceId("");
   }
 
-  function selectRaceForTrack(track: Track, nextRaceNumber: number | string) {
-    const nextValue = String(nextRaceNumber);
+  function selectRaceForTrack(track: Track, nextRaceIdentity: number | string) {
+    const nextValue = String(nextRaceIdentity);
+    const trackKey = String(track.id);
+    const trackRaces = racesByTrack[track.id] ?? [];
+    const byId = trackRaces.find((race) => String(race.id) === nextValue);
+    const byNumber = trackRaces.find((race) => String(race.raceNumber) === nextValue);
+    const resolvedRace = byId ?? byNumber;
+    if (!resolvedRace) {
+      if (trackId !== String(track.id)) {
+        setTrackId(String(track.id));
+      }
+      setSelectedRaceId(nextValue);
+      pendingRaceNumberByTrackRef.current[trackKey] = nextValue;
+      setSelectedRaceByTrack((current) => ({ ...current, [trackKey]: nextValue }));
+      return;
+    }
+
     if (trackId !== String(track.id)) {
       setTrackId(String(track.id));
     }
-    setRaceNumber(nextValue);
-    setSelectedRaceByTrack((current) => ({ ...current, [String(track.id)]: nextValue }));
+    const resolvedRaceId = String(resolvedRace.id);
+    setSelectedRaceId(resolvedRaceId);
+    setSelectedRaceByTrack((current) => ({ ...current, [trackKey]: resolvedRaceId }));
+    delete pendingRaceNumberByTrackRef.current[trackKey];
   }
 
-  function openRaceFromOverview(track: Track, nextRaceNumber: number) {
+  function openRaceFromOverview(track: Track, nextRaceId: string) {
     setActiveTab("race");
-    selectRaceForTrack(track, nextRaceNumber);
+    selectRaceForTrack(track, nextRaceId);
+  }
+
+  async function retryLatestFetch() {
+    if (loadingTracks || loadingRaces || loadingOddsRef.current) return;
+    setError("");
+
+    if (!tracks.length) {
+      await loadTracks();
+      return;
+    }
+
+    if (!selectedTrack) {
+      await loadTracks();
+      return;
+    }
+
+    const selectedTrackRaces = racesByTrack[selectedTrack.id] ?? [];
+    if (!selectedTrackRaces.length) {
+      await loadRaces(selectedTrack);
+      return;
+    }
+
+    await refreshSelectedRace();
   }
 
   function runnerStrength(runner: TrendRunner) {
@@ -3021,7 +3279,7 @@ export default function App() {
               key={`${track.id}-${race.id}`}
               type="button"
               className="overview-card"
-              onClick={() => openRaceFromOverview(track, race.raceNumber)}
+              onClick={() => openRaceFromOverview(track, race.id)}
             >
               <div className="overview-card-top">
                 <strong>{track.name} L{race.raceNumber}</strong>
@@ -3105,12 +3363,17 @@ export default function App() {
                   <div className="race-chip-row">
                     {(selectedTrackMeetingRefs.length ? selectedTrackMeetingRefs : selectedTrackRaces).map((raceRef) => {
                       const number = raceRef.raceNumber;
+                      const raceRefId = "raceId" in raceRef ? raceRef.raceId : raceRef.id;
+                      const mappedRace = selectedTrackRaces.find((race) =>
+                        (raceRefId && race.id === raceRefId) || race.raceNumber === number,
+                      );
+                      const raceIdentity = mappedRace?.id ?? String(number);
                       return (
                         <button
                           key={`${selectedTrack.id}-${number}`}
                           type="button"
                           className={`race-chip ${String(number) === raceNumber ? "is-active" : ""}`}
-                          onClick={() => selectRaceForTrack(selectedTrack, number)}
+                          onClick={() => selectRaceForTrack(selectedTrack, raceIdentity)}
                         >
                           {number}
                         </button>
@@ -3160,10 +3423,17 @@ export default function App() {
                             key={rowKey}
                             className={`compact-row ${isA1 ? "is-a1" : ""} ${isA2 ? "is-a2" : ""} ${runner.scratched ? "is-scratched" : ""}`}
                           >
-                            <button
-                              type="button"
+                            <div
+                              role="button"
+                              tabIndex={0}
                               className="compact-grid-row compact-row-button"
                               onClick={() => setExpandedRunnerKey((current) => current === rowKey ? null : rowKey)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  setExpandedRunnerKey((current) => current === rowKey ? null : rowKey);
+                                }
+                              }}
                             >
                               <span className="number-pill">{runner.number}</span>
                               <span className="runner-name-cell">
@@ -3182,7 +3452,7 @@ export default function App() {
                                   <path d={sparklinePoints(runner.historyOdds)} fill="none" stroke={runner.changePercent !== null && runner.changePercent < 0 ? "#55e89a" : runner.changePercent !== null && runner.changePercent > 0 ? "#ff9a5a" : "#9db3a8"} strokeWidth="1.5" strokeLinecap="round" />
                                 </svg>
                               </span>
-                              <span>{consistency === null ? "-" : consistency.toFixed(2).replace(".", ",")}</span>
+                              <span>{consistency == null ? "-" : consistency.toFixed(2).replace(".", ",")}</span>
                               <span>{renderIndicators(runner)}</span>
                               <span className="strength-cell" title={`Styrka: ${runnerStrength(runner)} av 6 positiva indikatorer`}>
                                 <strong>{runnerStrength(runner)}/6</strong>
@@ -3195,14 +3465,14 @@ export default function App() {
                                 {raceInsights.biggestDrop?.number === runner.number ? <span className="comment-mark drop">S</span> : null}
                                 {!isA1 && !isA2 ? <span className="candidate-badge neutral">-</span> : null}
                               </span>
-                            </button>
+                            </div>
 
                             {isExpanded ? (
                               <div className="expanded-row">
                                 <div className="expanded-grid">
                                   <span>Vinnare 60m till nu: {formatOdds(runner.firstOdds)} till {formatOdds(runner.odds)}</span>
                                   <span>Momentum: {momentumDisplay(runner.momentum)}</span>
-                                  <span>Jamnhet: {consistency === null ? "Saknas" : consistency.toFixed(2).replace(".", ",")}</span>
+                                  <span>Jamnhet: {consistency == null ? "Saknas" : consistency.toFixed(2).replace(".", ",")}</span>
                                   <span>Oddsmodell: {runner.modelScore ?? "Saknas"}</span>
                                 </div>
                                 <div className="expanded-stat-list">
@@ -3440,6 +3710,11 @@ export default function App() {
                 <button type="button" onClick={() => void refreshSelectedRace()} disabled={!selectedRace || loadingOdds} style={{ ...s.refreshButton, opacity: !selectedRace || loadingOdds ? 0.6 : 1 }}>
                   {loadingOdds ? "Uppdaterar..." : "Uppdatera lopp"}
                 </button>
+                {error ? (
+                  <button type="button" onClick={() => void retryLatestFetch()} disabled={loadingTracks || loadingRaces || loadingOdds} style={{ ...s.refreshButton, opacity: loadingTracks || loadingRaces || loadingOdds ? 0.6 : 1 }}>
+                    Försök igen
+                  </button>
+                ) : null}
               </div>
               <div className="toolbar-health">{autoStatus}</div>
             </div>
@@ -3458,7 +3733,14 @@ export default function App() {
             </nav>
           </div>
 
-          {error ? <div style={s.error}>{error}</div> : null}
+          {error ? (
+            <div style={s.error}>
+              <span>{error}</span>
+              <button type="button" onClick={() => void retryLatestFetch()} disabled={loadingTracks || loadingRaces || loadingOdds} style={{ ...s.refreshButton, marginTop: 8, opacity: loadingTracks || loadingRaces || loadingOdds ? 0.6 : 1 }}>
+                Försök igen
+              </button>
+            </div>
+          ) : null}
 
           {activeTab === "overview" ? renderOverviewTab() : null}
           {activeTab === "race" ? renderRaceTab() : null}
@@ -3577,7 +3859,7 @@ export default function App() {
                   <button
                     key={race.id}
                     type="button"
-                    onClick={() => setRaceNumber(String(race.raceNumber))}
+                    onClick={() => selectRaceForTrack(selectedTrack, race.id)}
                     style={{ ...s.eveningCard, borderColor: accent, boxShadow: String(race.raceNumber) === raceNumber ? `0 0 0 2px ${accent}` : "none" }}
                   >
                     <div style={s.eveningCardTop}>
@@ -3664,8 +3946,14 @@ export default function App() {
             <label style={s.label}>
               Välj lopp
               <select
-                value={raceNumber}
-                onChange={(event) => setRaceNumber(event.target.value)}
+                value={selectedRaceId}
+                onChange={(event) => {
+                  const nextRaceId = event.target.value;
+                  setSelectedRaceId(nextRaceId);
+                  if (selectedTrack && nextRaceId) {
+                    setSelectedRaceByTrack((current) => ({ ...current, [String(selectedTrack.id)]: nextRaceId }));
+                  }
+                }}
                 disabled={loadingRaces || !races.length}
                 style={s.input}
               >
@@ -3677,7 +3965,7 @@ export default function App() {
                       : "Inga lopp hittade"}
                 </option>
                 {races.map((race) => (
-                  <option key={race.id} value={race.raceNumber}>
+                  <option key={race.id} value={race.id}>
                     Lopp {race.raceNumber} · {formatTime(race.startTime)}
                   </option>
                 ))}
@@ -3687,7 +3975,14 @@ export default function App() {
           )}
         </div>
 
-        {error && <div style={s.error}>{error}</div>}
+        {error && (
+          <div style={s.error}>
+            <span>{error}</span>
+            <button type="button" onClick={() => void retryLatestFetch()} disabled={loadingTracks || loadingRaces || loadingOdds} style={{ ...s.refreshButton, marginTop: 8, opacity: loadingTracks || loadingRaces || loadingOdds ? 0.6 : 1 }}>
+              Försök igen
+            </button>
+          </div>
+        )}
 
         {selectedTrack && (
           <div style={s.collectionBanner}>
