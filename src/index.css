@@ -32,9 +32,9 @@ button { cursor: pointer; }
   top: 0;
   z-index: 20;
   display: grid;
-  gap: 10px;
-  margin: -18px -18px 16px;
-  padding: 14px 18px 12px;
+  gap: 2px;
+  margin: -18px -18px 4px;
+  padding: 4px 8px;
   background: linear-gradient(180deg, rgba(4, 13, 20, 0.98), rgba(5, 16, 24, 0.94));
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
@@ -74,7 +74,7 @@ button { cursor: pointer; }
 
 .panel-header-row {
   gap: 16px;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
 
 .panel-meta-row,
@@ -84,13 +84,14 @@ button { cursor: pointer; }
 .footer-compact,
 .locked-strip,
 .pending-row-inline {
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .app-title-compact {
   margin: 0;
-  font-size: clamp(24px, 3vw, 34px);
+  font-size: clamp(14px, 1.5vw, 18px);
+  line-height: 1.05;
 }
 
 .live-pill,
@@ -100,11 +101,11 @@ button { cursor: pointer; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 26px;
-  padding: 0 10px;
+  min-height: 18px;
+  padding: 0 7px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
 }
 
@@ -127,7 +128,30 @@ button { cursor: pointer; }
 .result-footer-row,
 .panel-meta-chip {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 10px;
+}
+
+.top-toolbar-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.top-toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.toolbar-field {
+  min-width: 118px;
+}
+
+.toolbar-health {
+  text-align: right;
+  white-space: nowrap;
 }
 
 .top-toolbar-row,
@@ -156,7 +180,7 @@ button { cursor: pointer; }
 .runner-title-line,
 .odds-highlight-card {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .top-nav-tabs {
@@ -178,9 +202,9 @@ button { cursor: pointer; }
 .top-nav-tab,
 .track-tab,
 .race-chip {
-  min-height: 38px;
-  border-radius: 12px;
-  padding: 0 12px;
+  min-height: 24px;
+  border-radius: 9px;
+  padding: 0 8px;
   font-weight: 700;
 }
 
@@ -236,13 +260,13 @@ button { cursor: pointer; }
 .overview-card,
 .history-row-card,
 .race-hero-bar {
-  padding: 14px;
+  padding: 6px;
 }
 
 .race-hero-bar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 6px;
   background: linear-gradient(180deg, rgba(8, 18, 28, 0.86), rgba(7, 18, 27, 0.7));
 }
 
@@ -250,19 +274,19 @@ button { cursor: pointer; }
   grid-template-columns: auto auto auto;
   align-items: center;
   justify-content: start;
-  gap: 12px;
+  gap: 6px;
 }
 
 .race-hero-subrow {
   grid-template-columns: auto auto;
   justify-content: start;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .race-hero-title {
   margin: 0;
-  font-size: 34px;
+  font-size: 18px;
   letter-spacing: 0.02em;
 }
 
@@ -270,12 +294,12 @@ button { cursor: pointer; }
 .race-hero-side span,
 .race-hero-side strong {
   color: #d9e5de;
-  font-size: 13px;
+  font-size: 10px;
 }
 
 .race-hero-side {
   align-content: start;
-  padding-left: 16px;
+  padding-left: 10px;
   border-left: 1px solid rgba(172, 211, 190, 0.14);
 }
 
@@ -299,23 +323,23 @@ button { cursor: pointer; }
 }
 
 .status-chip {
-  min-height: 26px;
-  padding: 0 10px;
+  min-height: 18px;
+  padding: 0 6px;
   border: 1px solid rgba(172, 211, 190, 0.18);
   background: rgba(255, 255, 255, 0.04);
   color: #dbe8e0;
 }
 
-.countdown-highlight { color: #7df06b; font-size: 16px; }
+.countdown-highlight { color: #7df06b; font-size: 11px; }
 
 .selector-panels {
   grid-template-columns: minmax(220px, 1fr) minmax(300px, 1.3fr);
   align-items: start;
-  gap: 14px;
+  gap: 8px;
 }
 
 .selector-panel {
-  padding: 10px 12px;
+  padding: 6px 8px;
   border: 1px solid rgba(172, 211, 190, 0.12);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.015);
@@ -330,43 +354,47 @@ button { cursor: pointer; }
 .indicator-label-row span {
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-size: 10px;
+  font-size: 9px;
   color: var(--muted);
 }
 
 .selector-track-chip { min-width: 92px; }
 
-.race-toolbar { gap: 14px; }
+.race-toolbar { gap: 6px; }
 
 .race-layout {
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) 250px;
   align-items: start;
+}
+
+.race-main-panel {
+  min-width: 0;
 }
 
 .race-status-grid {
   flex-wrap: wrap;
-  gap: 12px 18px;
+  gap: 6px 10px;
 }
 
 .race-status-grid div,
 .mini-stat-card,
 .candidate-summary {
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .compact-table-header,
 .compact-row-button {
   display: grid;
-  grid-template-columns: 56px minmax(210px, 2.4fr) 84px 98px 110px 92px 182px 92px 110px;
+  grid-template-columns: 50px minmax(190px, 2.5fr) 82px 82px 94px 100px 88px 166px 86px 108px;
   align-items: center;
-  gap: 10px;
+  gap: 5px;
 }
 
 .compact-table-header {
-  padding: 10px 14px;
+  padding: 3px 6px;
   border-bottom: 1px solid var(--line);
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
   color: var(--muted);
   text-transform: uppercase;
@@ -379,13 +407,15 @@ button { cursor: pointer; }
 }
 
 .compact-row.is-a1 {
-  border-left: 2px solid #55e89a;
-  background: linear-gradient(90deg, rgba(41, 98, 54, 0.34), rgba(3, 15, 21, 0.46) 22%);
+  border-left: 4px solid #55e89a;
+  background: linear-gradient(90deg, rgba(45, 140, 74, 0.56), rgba(3, 15, 21, 0.46) 30%);
+  box-shadow: inset 0 0 0 1px rgba(85, 232, 154, 0.26);
 }
 
 .compact-row.is-a2 {
-  border-left: 2px solid #ffd166;
-  background: linear-gradient(90deg, rgba(120, 77, 18, 0.24), rgba(3, 15, 21, 0.46) 22%);
+  border-left: 3px solid #ffd166;
+  background: linear-gradient(90deg, rgba(165, 112, 26, 0.42), rgba(3, 15, 21, 0.46) 30%);
+  box-shadow: inset 0 0 0 1px rgba(255, 209, 102, 0.2);
 }
 
 .compact-row.is-scratched { opacity: 0.45; }
@@ -394,15 +424,15 @@ button { cursor: pointer; }
   width: 100%;
   border: 0;
   border-radius: 0;
-  padding: 8px 14px;
+  padding: 2px 5px;
   background: transparent;
   text-align: left;
 }
 
 .number-pill {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -413,10 +443,10 @@ button { cursor: pointer; }
 
 .runner-name-cell {
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
-.runner-name-cell strong { font-size: 14px; }
+.runner-name-cell strong { font-size: 11px; }
 
 .runner-title-line {
   grid-auto-flow: column;
@@ -427,25 +457,26 @@ button { cursor: pointer; }
 
 .runner-name-cell small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 8px;
 }
 
 .inline-tag {
-  min-width: 28px;
-  min-height: 22px;
-  padding: 0 7px;
+  min-width: 32px;
+  min-height: 18px;
+  padding: 0 6px;
+  font-size: 9px;
 }
 
 .inline-tag.a1 {
-  background: rgba(97, 222, 127, 0.18);
-  border: 1px solid rgba(97, 222, 127, 0.5);
-  color: #85ef9e;
+  background: rgba(97, 222, 127, 0.28);
+  border: 1px solid rgba(97, 222, 127, 0.7);
+  color: #b5ffd0;
 }
 
 .inline-tag.a2 {
-  background: rgba(255, 189, 86, 0.16);
-  border: 1px solid rgba(255, 189, 86, 0.5);
-  color: #ffca7b;
+  background: rgba(255, 189, 86, 0.24);
+  border: 1px solid rgba(255, 189, 86, 0.68);
+  color: #ffe0aa;
 }
 
 .change-value.is-down { color: #55e89a; }
@@ -458,8 +489,8 @@ button { cursor: pointer; }
 }
 
 .sparkline-svg {
-  width: 96px;
-  height: 24px;
+  width: 90px;
+  height: 18px;
   opacity: 0.95;
 }
 
@@ -469,7 +500,7 @@ button { cursor: pointer; }
 .indicator-dot-row {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 6px;
+  gap: 5px;
 }
 
 .indicator-dot {
@@ -488,14 +519,14 @@ button { cursor: pointer; }
 .strength-cell {
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: 4px;
 }
 
-.strength-dots { gap: 4px; }
+.strength-dots { gap: 3px; }
 
 .strength-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: rgba(157, 179, 168, 0.35);
 }
@@ -511,12 +542,14 @@ button { cursor: pointer; }
 
 .candidate-badge.a1 {
   color: #03150e;
-  background: rgba(85, 232, 154, 0.92);
+  background: rgba(85, 232, 154, 1);
+  box-shadow: 0 0 0 1px rgba(85, 232, 154, 0.5);
 }
 
 .candidate-badge.a2 {
   color: #382600;
-  background: rgba(255, 209, 102, 0.92);
+  background: rgba(255, 209, 102, 1);
+  box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.46);
 }
 
 .candidate-badge.neutral,
@@ -539,6 +572,14 @@ button { cursor: pointer; }
 }
 
 .expanded-row { padding: 0 14px 12px 14px; }
+
+.compact-row.is-a1 .number-pill {
+  background: linear-gradient(180deg, #9cffc5, #4ae38f);
+}
+
+.compact-row.is-a2 .number-pill {
+  background: linear-gradient(180deg, #ffe398, #ffc45f);
+}
 
 .expanded-grid {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -564,7 +605,7 @@ button { cursor: pointer; }
 .side-card-title,
 .minor-heading {
   margin: 0;
-  font-size: 18px;
+  font-size: 14px;
   color: #edf8f2;
 }
 
@@ -574,7 +615,7 @@ button { cursor: pointer; }
 }
 
 .candidate-summary {
-  padding: 10px 12px;
+  padding: 6px 8px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(172, 211, 190, 0.08);
@@ -583,14 +624,14 @@ button { cursor: pointer; }
 .candidate-summary.a2 { border-left: 2px solid #ffd166; }
 
 .odds-highlight-card {
-  padding: 12px;
+  padding: 10px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid rgba(172, 211, 190, 0.1);
 }
 
 .odds-highlight-card strong {
-  font-size: 38px;
+  font-size: 24px;
   line-height: 1;
   color: #ffffff;
 }
@@ -618,9 +659,17 @@ button { cursor: pointer; }
 }
 
 .footer-compact {
-  margin-top: 14px;
-  padding-top: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid rgba(172, 211, 190, 0.08);
+}
+
+@media (max-width: 1280px) {
+  .race-layout { grid-template-columns: 1fr; }
+
+  .race-side-panel {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
 }
 
 @media (max-width: 1120px) {
@@ -638,6 +687,21 @@ button { cursor: pointer; }
   .race-side-panel {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
+
+  .top-toolbar-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .top-toolbar-controls {
+    flex-wrap: wrap;
+  }
+
+  .toolbar-health {
+    text-align: left;
+    white-space: normal;
+  }
 }
 
 @media (max-width: 920px) {
@@ -646,22 +710,23 @@ button { cursor: pointer; }
   .compact-table-header { display: none; }
 
   .compact-row-button {
-    grid-template-columns: 44px minmax(0, 1fr) 74px 84px 72px;
+    grid-template-columns: 44px minmax(0, 1fr) 62px 62px 72px;
     grid-template-areas:
-      "num name odds change candidate"
-      "num strength strength strength strength";
+      "num name start odds candidate"
+      "num name change strength strength";
     gap: 8px 10px;
   }
 
   .compact-row-button > :nth-child(1) { grid-area: num; }
   .compact-row-button > :nth-child(2) { grid-area: name; }
-  .compact-row-button > :nth-child(3) { grid-area: odds; }
-  .compact-row-button > :nth-child(4) { grid-area: change; }
-  .compact-row-button > :nth-child(5),
+  .compact-row-button > :nth-child(3) { grid-area: start; }
+  .compact-row-button > :nth-child(4) { grid-area: odds; }
+  .compact-row-button > :nth-child(5) { grid-area: change; }
   .compact-row-button > :nth-child(6),
-  .compact-row-button > :nth-child(7) { display: none; }
-  .compact-row-button > :nth-child(8) { grid-area: strength; }
-  .compact-row-button > :nth-child(9) { grid-area: candidate; justify-self: end; }
+  .compact-row-button > :nth-child(7),
+  .compact-row-button > :nth-child(8) { display: none; }
+  .compact-row-button > :nth-child(9) { grid-area: strength; }
+  .compact-row-button > :nth-child(10) { grid-area: candidate; justify-self: end; }
 
   .result-grid { grid-template-columns: 1fr; }
 }
