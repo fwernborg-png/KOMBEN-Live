@@ -289,7 +289,7 @@ type RaceOddsCollectionMeta = {
   usedOddsPointTimestampMs: number | null;
 };
 
-const API = "https://www.atg.se/services/racinginfo/v1/api";
+const API = "https://dd-ld-varde-place-live-worker.fredde-platsmodell-live.workers.dev/atg";
 const REFRESH_SECONDS = 60;
 const GALLOP_CACHE_STORAGE_KEY = "komben-live-gallop-cache-v1";
 const FETCH_TIMEOUT_MS = 12000;

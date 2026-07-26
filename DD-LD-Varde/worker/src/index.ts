@@ -1353,6 +1353,58 @@ async function runCron(env: Env) {
   }
 }
 
+
+const ATG_PROXY_PREFIX = "/atg";
+const ATG_PROXY_BASE_URL = "https://www.atg.se/services/racinginfo/v1/api";
+
+function withCors(headers?: HeadersInit) {
+  const result = new Headers(headers);
+  result.set("Access-Control-Allow-Origin", "*");
+  result.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  result.set("Access-Control-Allow-Headers", "Content-Type");
+  return result;
+}
+
+async function proxyAtgRequest(request: Request, url: URL): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: withCors(),
+    });
+  }
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: withCors({ "Content-Type": "text/plain; charset=utf-8" }),
+    });
+  }
+
+  const suffix = url.pathname.slice(ATG_PROXY_PREFIX.length);
+  if (!suffix.startsWith("/")) {
+    return new Response("Not found", {
+      status: 404,
+      headers: withCors(),
+    });
+  }
+
+  const target = new URL(`${ATG_PROXY_BASE_URL}${suffix}`);
+  target.search = url.search;
+
+  const upstream = await fetch(target.toString(), {
+    method: request.method,
+    headers: {
+      Accept: request.headers.get("Accept") ?? "application/json",
+    },
+  });
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: withCors(upstream.headers),
+  });
+}
+
 export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runCron(env));
@@ -1360,6 +1412,13 @@ export default {
 
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (
+      url.pathname === ATG_PROXY_PREFIX ||
+      url.pathname.startsWith(`${ATG_PROXY_PREFIX}/`)
+    ) {
+      return proxyAtgRequest(request, url);
+    }
 
     if (url.pathname === "/health") {
       return Response.json({ ok: true });
