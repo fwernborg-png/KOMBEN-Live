@@ -1,0 +1,9 @@
+name = "dd-ld-varde-place-live-worker"
+main = "worker/src/index.ts"
+compatibility_date = "2026-07-26"
+
+[triggers]
+crons = ["* * * * *"]
+
+[limits]
+subrequests = 10000
