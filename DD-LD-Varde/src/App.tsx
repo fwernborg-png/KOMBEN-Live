@@ -1,6 +1,42 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "./lib/supabase";
+import { PLACE_RULE_CONFIG_V1, getRaceLockTimeMs } from "./placeModel/config";
+import { applySettledResult, computePlaceStats, orenToSek, sekToOren } from "./placeModel/economy";
+import { buildPlaceBetsCsv, buildPlaceEvaluationsCsv } from "./placeModel/csv";
+import { evaluatePlaceModelAtLock } from "./placeModel/engine";
+import { deriveLiveSignalState } from "./placeModel/liveStatus";
+import {
+  calculateOddsDropPercent,
+  formatDropPercent,
+  hasT60Coverage,
+  isValidRawWinOdds,
+  pickFirstOddsRawInCollectionWindow,
+} from "./placeModel/oddsLive";
+import {
+  fetchHorseGallopPercent,
+  GALLOP_CACHE_TTL_MS,
+  horseIdsNeedingGallopRefresh,
+  markStaleGallopEntries,
+  resolveRunnerGallop,
+  type GallopCacheEntry,
+  type GallopSource,
+  upsertGallopCacheEntry,
+  validateGallopCoverageAtLock,
+} from "./gallop";
+import {
+  loadPlaceBetsByDate,
+  loadPlaceEvaluationsByDate,
+  saveAuditLog,
+  upsertPlaceBet,
+  upsertPlaceEvaluation,
+} from "./placeModel/repository";
+import type {
+  PlaceAuditLogEntry,
+  PlaceBet,
+  PlaceEvaluation,
+  PlaceRunnerInput,
+} from "./placeModel/types";
 
 type Track = {
   id: number;
@@ -25,6 +61,7 @@ type RunnerStats = {
 
 type Runner = {
   number: number;
+  horseId: number | null;
   name: string;
   driver: string;
   odds: number | null;
@@ -125,9 +162,13 @@ const SIGNALS_STORAGE_KEY = "komben-live-signals-v1";
 const ODDS_STORAGE_KEY = "komben-live-odds-history-v1";
 const AUTO_SELECTIONS_STORAGE_KEY = "komben-live-auto-selections-v1";
 const TRACK_RACE_SELECTIONS_STORAGE_KEY = "komben-live-track-race-selections-v1";
+const PLACE_EVALUATIONS_CACHE_KEY = "komben-live-place-evaluations-cache-v1";
+const PLACE_BETS_CACHE_KEY = "komben-live-place-bets-cache-v1";
 const ALL_RACES_REFRESH_SECONDS = 60;
 const MAX_HISTORY_POINTS = 720;
 const TVILLING_STAKE = 100;
+const SHOW_LEGACY_KOMB_UI = false;
+const ACTIVE_PLACE_UI_ONLY = true;
 
 type AutoSelection = {
   raceId: string;
@@ -151,6 +192,7 @@ type TrendRunner = Runner & {
   firstOdds: number | null;
   previousOdds: number | null;
   changePercent: number | null;
+  dropPercent: number | null;
   latestAbsoluteChange: number | null;
   direction: "down" | "up" | "same";
   recentOdds: number[];
@@ -161,6 +203,9 @@ type TrendRunner = Runner & {
   modelQualified?: boolean;
   modelBreakdown?: ModelBreakdown;
   modelReasons?: string[];
+  gallopSource?: GallopSource | null;
+  gallopUpdatedAtMs?: number | null;
+  gallopIsFresh?: boolean;
 };
 
 type StablePressureAnalysis = {
@@ -235,8 +280,18 @@ type RaceInsights = {
   biggestDrop: TrendRunner | null;
 };
 
+type RaceOddsCollectionMeta = {
+  plannedLockTimeMs: number | null;
+  lastFetchStartedAtMs: number | null;
+  lastFetchFinishedAtMs: number | null;
+  lastOddsPointTimestampMs: number | null;
+  actualSignalLockTimeMs: number | null;
+  usedOddsPointTimestampMs: number | null;
+};
+
 const API = "https://www.atg.se/services/racinginfo/v1/api";
 const REFRESH_SECONDS = 60;
+const GALLOP_CACHE_STORAGE_KEY = "komben-live-gallop-cache-v1";
 const FETCH_TIMEOUT_MS = 12000;
 const FETCH_RETRY_ATTEMPTS = 1;
 const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
@@ -337,6 +392,11 @@ function formatClockTime(timestamp: number) {
   });
 }
 
+function formatClockTimeMaybe(timestamp: number | null) {
+  if (timestamp === null) return "–";
+  return formatClockTime(timestamp);
+}
+
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
 }
@@ -346,13 +406,23 @@ function asString(value: unknown) {
 }
 
 function asNumber(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, "").replace(",", ".");
+    if (!normalized) return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function percentValue(value: unknown) {
   const parsed = asNumber(value);
   if (parsed === null) return null;
-  return parsed > 0 && parsed <= 1 ? parsed * 100 : parsed;
+  if (parsed > 0 && parsed <= 1) return parsed * 100;
+  // Some payloads provide percentage in basis points, e.g. 1249 = 12.49%.
+  if (parsed > 100) return parsed / 100;
+  return parsed;
 }
 
 function firstNumeric(value: unknown, paths: string[][], parser: (raw: unknown) => number | null = asNumber) {
@@ -368,6 +438,25 @@ function firstNumeric(value: unknown, paths: string[][], parser: (raw: unknown) 
     const parsed = parser(current);
     if (parsed !== null) return parsed;
   }
+  return null;
+}
+
+function latestYearNumeric(
+  yearsValue: unknown,
+  paths: string[][],
+  parser: (raw: unknown) => number | null = asNumber,
+) {
+  if (!isRecord(yearsValue)) return null;
+
+  const yearEntries = Object.entries(yearsValue)
+    .filter(([key, value]) => /^\d{4}$/.test(key) && isRecord(value))
+    .sort((a, b) => Number(b[0]) - Number(a[0]));
+
+  for (const [, yearRecord] of yearEntries) {
+    const parsed = firstNumeric(yearRecord, paths, parser);
+    if (parsed !== null) return parsed;
+  }
+
   return null;
 }
 
@@ -683,6 +772,39 @@ function checkpointOdds(
   );
 
   return point?.odds ?? null;
+}
+
+function oddsHistoryCoverageAtLock(args: {
+  race: Race;
+  trendRunners: TrendRunner[];
+  oddsHistory: OddsHistory;
+}) {
+  const { race, trendRunners, oddsHistory } = args;
+  if (!race.startTime) {
+    return { complete: false, missingRunnerNumbers: trendRunners.map((runner) => runner.number) };
+  }
+
+  const startMs = new Date(race.startTime).getTime();
+  if (!Number.isFinite(startMs)) {
+    return { complete: false, missingRunnerNumbers: trendRunners.map((runner) => runner.number) };
+  }
+
+  const missingRunnerNumbers = trendRunners
+    .filter((runner) => !runner.scratched)
+    .filter((runner) => {
+      const history = historyInsideLastHour(
+        oddsHistory[runnerKey(race.id, runner.number)] ?? [],
+        race.startTime,
+      ).filter((point) => isValidRawWinOdds(point.odds));
+
+      return !hasT60Coverage({ history, raceStartMs: startMs });
+    })
+    .map((runner) => runner.number);
+
+  return {
+    complete: missingRunnerNumbers.length === 0,
+    missingRunnerNumbers,
+  };
 }
 
 
@@ -1042,14 +1164,88 @@ function buildRaceInsights(runners: TrendRunner[]) {
     .filter((runner) => byRunner[runner.number]?.consistency !== null)
     .sort((a, b) => (byRunner[a.number]?.consistency ?? Number.POSITIVE_INFINITY) - (byRunner[b.number]?.consistency ?? Number.POSITIVE_INFINITY))[0] ?? null;
   const biggestDrop = [...activeRunners]
-    .filter((runner) => runner.changePercent !== null)
-    .sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0))[0] ?? null;
+    .filter((runner) => runner.dropPercent !== null)
+    .sort((a, b) => (b.dropPercent ?? Number.NEGATIVE_INFINITY) - (a.dropPercent ?? Number.NEGATIVE_INFINITY))[0] ?? null;
 
   return {
     byRunner,
     smoothest,
     biggestDrop,
   } satisfies RaceInsights;
+}
+
+function downloadTextFile(filename: string, content: string, mime = "text/csv;charset=utf-8") {
+  if (typeof window === "undefined") return;
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function raceToPlaceRaceInput(args: {
+  race: Race;
+  track: Track;
+  date: string;
+}) {
+  const { race, track, date } = args;
+  return {
+    raceId: race.id,
+    date,
+    trackId: track.id,
+    trackName: track.name,
+    raceNumber: race.raceNumber,
+    plannedStartTime: race.startTime ?? new Date().toISOString(),
+    raceStatus: race.status,
+    isMonte: race.isMonte,
+    startMethod: /auto/i.test(race.status ?? "") ? "AUTO" : /volt/i.test(race.status ?? "") ? "VOLT" : "UNKNOWN",
+    distanceMeters: null,
+    starters: race.runners.filter((runner) => !runner.scratched).length,
+  };
+}
+
+function trendRunnersToPlaceRunnerInputs(args: {
+  race: Race;
+  trendRunners: TrendRunner[];
+  raceInsights: RaceInsights;
+  oddsHistory: OddsHistory;
+}): PlaceRunnerInput[] {
+  const { race, trendRunners, raceInsights, oddsHistory } = args;
+
+  return trendRunners.map((runner) => {
+    const runnerInfo = raceInsights.byRunner[runner.number];
+    const indicatorsGreen = (runnerInfo?.indicators ?? [])
+      .filter((indicator) => indicator.positive)
+      .map((indicator) => indicator.shortLabel);
+
+    const oddsPoints = historyInsideLastHour(
+      oddsHistory[runnerKey(race.id, runner.number)] ?? [],
+      race.startTime,
+    )
+      .map((point) => ({
+        odds: point.odds / 100,
+        timestamp: point.timestamp,
+      }))
+      .filter((point) => Number.isFinite(point.odds) && point.odds > 0 && Math.abs(point.odds - 99.99) > 0.001);
+
+    return {
+      number: runner.number,
+        horseId: runner.horseId,
+      name: runner.name,
+      startLane: null,
+      scratched: runner.scratched,
+      currentWinOddsDecimal: runner.odds ? runner.odds / 100 : null,
+      indicatorsGreen,
+      strength: runnerInfo?.strength ?? 0,
+        gallopPercent: runner.stats.gallopPercent,
+        gallopSource: runner.gallopSource ?? null,
+        gallopUpdatedAtMs: runner.gallopUpdatedAtMs ?? null,
+        gallopIsFresh: runner.gallopIsFresh ?? false,
+      oddsHistory: oddsPoints,
+    };
+  });
 }
 
 function sparklinePoints(values: number[], width = 96, height = 24) {
@@ -1079,7 +1275,16 @@ function parseDriver(start: UnknownRecord) {
 }
 
 function extractRunnerStats(start: UnknownRecord): RunnerStats {
+  const horse = getRecord(start, "horse");
   const driver = getRecord(start, "driver");
+  const horseStatistics = getRecord(horse, "statistics");
+  const horseLife = getRecord(horseStatistics, "life");
+  const horseYears = getRecord(horseStatistics, "years");
+  const driverStatistics = getRecord(driver, "statistics");
+  const driverYears = getRecord(driverStatistics, "years");
+
+  const horseYearWinPercent = latestYearNumeric(horseYears, [["winPercentage"], ["winPercent"]], percentValue);
+  const driverYearWinPercent = latestYearNumeric(driverYears, [["winPercentage"], ["winPercent"]], percentValue);
 
   // Null means the current ATG payload did not expose the field for this runner.
   // The UI still renders a gray indicator so later feed mappings can slot in safely.
@@ -1089,8 +1294,11 @@ function extractRunnerStats(start: UnknownRecord): RunnerStats {
       ["moneyPerStart"],
       ["statistics", "earningsPerStart"],
       ["statistics", "moneyPerStart"],
+      ["horse", "statistics", "life", "earningsPerStart"],
+      ["horse", "statistics", "life", "moneyPerStart"],
       ["horse", "statistics", "earningsPerStart"],
       ["horse", "statistics", "moneyPerStart"],
+      ["horse", "life", "earningsPerStart"],
       ["career", "earningsPerStart"],
       ["horse", "career", "earningsPerStart"],
     ]),
@@ -1099,32 +1307,41 @@ function extractRunnerStats(start: UnknownRecord): RunnerStats {
       ["winPercentage"],
       ["statistics", "winPercent"],
       ["statistics", "winPercentage"],
+      ["horse", "statistics", "life", "winPercent"],
+      ["horse", "statistics", "life", "winPercentage"],
       ["horse", "statistics", "winPercent"],
       ["horse", "statistics", "winPercentage"],
       ["career", "winPercent"],
       ["career", "winPercentage"],
-    ], percentValue),
-    driverWinPercent: firstNumeric(driver ?? start, [
-      ["winPercent"],
-      ["winPercentage"],
-      ["statistics", "winPercent"],
-      ["statistics", "winPercentage"],
-      ["career", "winPercentage"],
-    ], percentValue),
+    ], percentValue) ??
+      firstNumeric(horseLife, [["winPercent"], ["winPercentage"]], percentValue) ??
+      horseYearWinPercent,
+    driverWinPercent:
+      firstNumeric(driver ?? start, [
+        ["winPercent"],
+        ["winPercentage"],
+        ["statistics", "winPercent"],
+        ["statistics", "winPercentage"],
+        ["career", "winPercentage"],
+      ], percentValue) ?? driverYearWinPercent,
     startPoints: firstNumeric(start, [
       ["startPoints"],
       ["startPoang"],
       ["statistics", "startPoints"],
       ["statistics", "startPoang"],
+      ["horse", "statistics", "life", "startPoints"],
+      ["horse", "statistics", "life", "startPoang"],
       ["horse", "statistics", "startPoints"],
       ["horse", "statistics", "startPoang"],
-    ]),
+    ]) ?? firstNumeric(horseLife, [["startPoints"], ["startPoang"]]),
     gallopPercent: firstNumeric(start, [
       ["gallopPercent"],
       ["galoppPercent"],
       ["gallopRate"],
       ["statistics", "gallopPercent"],
       ["statistics", "galoppPercent"],
+      ["horse", "statistics", "life", "gallopPercent"],
+      ["horse", "statistics", "life", "galoppPercent"],
       ["horse", "statistics", "gallopPercent"],
       ["horse", "statistics", "galoppPercent"],
       ["career", "gallopPercent"],
@@ -1136,6 +1353,7 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
   if (!isRecord(value)) return null;
 
   const horse = getRecord(value, "horse") ?? value;
+  const horseId = asNumber(horse.id) ?? asNumber(value.horseId);
   const number =
     asNumber(value.number) ??
     asNumber(value.startNumber) ??
@@ -1171,6 +1389,7 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
 
   return {
     number,
+    horseId,
     name,
     driver: parseDriver(value),
     odds,
@@ -1201,10 +1420,11 @@ function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRu
   return race.runners.map((runner) => {
     const storedHistory = oddsHistory[runnerKey(race.id, runner.number)] ?? [];
     const history = historyInsideLastHour(storedHistory, race.startTime);
-    const firstOdds = checkpointOdds(history, race.startTime, 60);
+    const firstOdds = pickFirstOddsRawInCollectionWindow(history);
     const previousOdds = history.length >= 2 ? history[history.length - 2].odds : runner.odds;
     const currentOdds = runner.odds;
     const changePercent = percentChange(firstOdds, currentOdds);
+    const dropPercent = calculateOddsDropPercent(firstOdds, currentOdds);
     const latestAbsoluteChange = absoluteOddsChange(previousOdds, currentOdds);
     let direction: TrendRunner["direction"] = "same";
     if (previousOdds && currentOdds) {
@@ -1216,12 +1436,42 @@ function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRu
       firstOdds,
       previousOdds,
       changePercent,
+      dropPercent,
       latestAbsoluteChange,
       direction,
       recentOdds: history.slice(-5).map((point) => point.odds),
       historyOdds: history.map((point) => point.odds),
       samples: history.length,
       momentum: momentumLabel(history),
+    };
+  });
+}
+
+function applyGallopOverlayToTrendRunners(args: {
+  trendRunners: TrendRunner[];
+  gallopCacheByHorseId: Record<number, GallopCacheEntry>;
+  nowMs: number;
+}): TrendRunner[] {
+  const { trendRunners, gallopCacheByHorseId, nowMs } = args;
+
+  return trendRunners.map((runner) => {
+    const resolved = resolveRunnerGallop({
+      raceGallopPercent: runner.stats.gallopPercent,
+      horseId: runner.horseId,
+      cache: gallopCacheByHorseId,
+      nowMs,
+      ttlMs: GALLOP_CACHE_TTL_MS,
+    });
+
+    return {
+      ...runner,
+      stats: {
+        ...runner.stats,
+        gallopPercent: resolved.gallopPercent,
+      },
+      gallopSource: resolved.source,
+      gallopUpdatedAtMs: resolved.fetchedAtMs,
+      gallopIsFresh: !resolved.stale,
     };
   });
 }
@@ -1488,6 +1738,17 @@ export default function App() {
   const [oddsHistory, setOddsHistory] = useState<OddsHistory>({});
   const [tvillingBets, setTvillingBets] = useState<TvillingBet[]>([]);
   const [signalRecords, setSignalRecords] = useState<SignalRecord[]>([]);
+  const [placeEvaluations, setPlaceEvaluations] = useState<PlaceEvaluation[]>([]);
+  const [placeBets, setPlaceBets] = useState<PlaceBet[]>([]);
+  const [placeAuditLog, setPlaceAuditLog] = useState<PlaceAuditLogEntry[]>([]);
+  const [placeJournalDateFilter, setPlaceJournalDateFilter] = useState("");
+  const [placeJournalTrackFilter, setPlaceJournalTrackFilter] = useState("");
+  const [placeJournalRuleFilter, setPlaceJournalRuleFilter] = useState(PLACE_RULE_CONFIG_V1.ruleVersion);
+  const [placeJournalStatusFilter, setPlaceJournalStatusFilter] = useState<"ALL" | "HIT" | "MISS" | "PENDING" | "VOID" | "SAKNAR_PLATSODDS">("ALL");
+  const [placeJournalExpandedBetId, setPlaceJournalExpandedBetId] = useState<string | null>(null);
+  const [manualFinishInputByBet, setManualFinishInputByBet] = useState<Record<string, string>>({});
+  const [manualPlaceOddsInputByBet, setManualPlaceOddsInputByBet] = useState<Record<string, string>>({});
+  const [placeDbError, setPlaceDbError] = useState("");
   const [lockedSelection, setLockedSelection] = useState<{
     a1: TrendRunner;
     a2: TrendRunner;
@@ -1498,6 +1759,8 @@ export default function App() {
   const [allRacesUpdated, setAllRacesUpdated] = useState("");
   const [backgroundCollecting, setBackgroundCollecting] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [raceOddsCollectionMeta, setRaceOddsCollectionMeta] = useState<Record<string, RaceOddsCollectionMeta>>({});
+  const [gallopCacheByHorseId, setGallopCacheByHorseId] = useState<Record<number, GallopCacheEntry>>({});
   const [autoSelections, setAutoSelections] = useState<AutoSelection[]>([]);
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
   const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
@@ -1522,6 +1785,10 @@ export default function App() {
   const selectedRaceRequestRef = useRef(0);
   const selectedRaceAbortRef = useRef<AbortController | null>(null);
   const loadingOddsRef = useRef(false);
+  const gallopFetchInFlightRef = useRef<Set<number>>(new Set());
+  const gallopCacheRef = useRef<Record<number, GallopCacheEntry>>({});
+  const appBootMsRef = useRef(Date.now());
+  const placeLoadStartedRef = useRef(false);
 
   const selectedTrack = useMemo(
     () => tracks.find((track) => String(track.id) === trackId),
@@ -1550,6 +1817,15 @@ export default function App() {
 
   const raceNumber = selectedRace ? String(selectedRace.raceNumber) : "";
 
+    const selectedTrackHorseIds = useMemo(() => {
+      const ids = races
+        .flatMap((race) => race.runners)
+        .filter((runner) => !runner.scratched)
+        .map((runner) => runner.horseId)
+        .filter((horseId): horseId is number => horseId !== null && horseId > 0);
+      return [...new Set(ids)];
+    }, [races]);
+
   useEffect(() => {
     if (!selectedTrack || !selectedRace) return;
     const normalizedRaceId = String(selectedRace.id);
@@ -1575,6 +1851,50 @@ export default function App() {
     () => (selectedTrack ? meetingRacesByTrack[selectedTrack.id] ?? [] : []),
     [selectedTrack, meetingRacesByTrack],
   );
+
+  useEffect(() => {
+    const allRaceIds: string[] = [];
+    const lockByRaceId: Record<string, number> = {};
+
+    for (const trackRaces of Object.values(racesByTrack)) {
+      for (const race of trackRaces) {
+        if (!race.startTime) continue;
+        const lockTimeMs = getRaceLockTimeMs(race.startTime, PLACE_RULE_CONFIG_V1);
+        if (!Number.isFinite(lockTimeMs)) continue;
+        allRaceIds.push(race.id);
+        lockByRaceId[race.id] = lockTimeMs;
+      }
+    }
+
+    if (!allRaceIds.length) return;
+
+    setRaceOddsCollectionMeta((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const raceId of allRaceIds) {
+        const existing = next[raceId] ?? {
+          plannedLockTimeMs: null,
+          lastFetchStartedAtMs: null,
+          lastFetchFinishedAtMs: null,
+          lastOddsPointTimestampMs: null,
+          actualSignalLockTimeMs: null,
+          usedOddsPointTimestampMs: null,
+        };
+
+        const planned = lockByRaceId[raceId] ?? null;
+        if (existing.plannedLockTimeMs !== planned) {
+          changed = true;
+          next[raceId] = {
+            ...existing,
+            plannedLockTimeMs: planned,
+          };
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [racesByTrack]);
 
   const countdown = useMemo(() => {
     if (!selectedRace?.startTime) {
@@ -1633,8 +1953,13 @@ export default function App() {
 
   const trendRunners = useMemo<TrendRunner[]>(() => {
     if (!selectedRace) return [];
-    return buildTrendRunnersForRace(selectedRace, oddsHistory);
-  }, [selectedRace, oddsHistory]);
+      const base = buildTrendRunnersForRace(selectedRace, oddsHistory);
+      return applyGallopOverlayToTrendRunners({
+        trendRunners: base,
+        gallopCacheByHorseId,
+        nowMs,
+      });
+    }, [selectedRace, oddsHistory, gallopCacheByHorseId, nowMs]);
 
   const raceInsights = useMemo(() => buildRaceInsights(trendRunners), [trendRunners]);
 
@@ -1662,6 +1987,135 @@ export default function App() {
       console.error("Kunde inte spara oddshistorik", error);
     }
   }, [oddsHistory]);
+
+    useEffect(() => {
+      gallopCacheRef.current = gallopCacheByHorseId;
+    }, [gallopCacheByHorseId]);
+
+    useEffect(() => {
+      try {
+        const stored = window.localStorage.getItem(GALLOP_CACHE_STORAGE_KEY);
+        if (!stored) return;
+
+        const parsed = JSON.parse(stored) as Record<string, Partial<GallopCacheEntry>>;
+        if (!parsed || typeof parsed !== "object") return;
+
+        const hydrated: Record<number, GallopCacheEntry> = {};
+        for (const [horseIdText, entry] of Object.entries(parsed)) {
+          const horseId = Number(horseIdText);
+          if (!Number.isFinite(horseId) || horseId <= 0 || !entry) continue;
+
+          hydrated[horseId] = {
+            horseId,
+            gallopPercent: typeof entry.gallopPercent === "number" && Number.isFinite(entry.gallopPercent)
+              ? entry.gallopPercent
+              : null,
+            fetchedAtMs: typeof entry.fetchedAtMs === "number" && Number.isFinite(entry.fetchedAtMs)
+              ? entry.fetchedAtMs
+              : 0,
+            source: entry.source === "ATG_RACE_START" ? "ATG_RACE_START" : "ATG_HORSE_RESULTS",
+            stale: true,
+            lastError: typeof entry.lastError === "string" ? entry.lastError : null,
+          };
+        }
+
+        if (Object.keys(hydrated).length) {
+          setGallopCacheByHorseId(markStaleGallopEntries({
+            current: hydrated,
+            nowMs: Date.now(),
+            ttlMs: GALLOP_CACHE_TTL_MS,
+          }));
+        }
+      } catch (error) {
+        console.error("Kunde inte läsa sparad gallop-cache", error);
+      }
+    }, []);
+
+    useEffect(() => {
+      try {
+        const normalized = markStaleGallopEntries({
+          current: gallopCacheByHorseId,
+          nowMs,
+          ttlMs: GALLOP_CACHE_TTL_MS,
+        });
+
+        if (normalized !== gallopCacheByHorseId) {
+          setGallopCacheByHorseId(normalized);
+          return;
+        }
+
+        window.localStorage.setItem(GALLOP_CACHE_STORAGE_KEY, JSON.stringify(normalized));
+      } catch (error) {
+        console.error("Kunde inte spara gallop-cache", error);
+      }
+    }, [gallopCacheByHorseId, nowMs]);
+
+    useEffect(() => {
+      if (!selectedTrackHorseIds.length) return;
+
+      const controller = new AbortController();
+      const inFlight = gallopFetchInFlightRef.current;
+
+      const refreshGallop = async () => {
+        const missingHorseIds = horseIdsNeedingGallopRefresh({
+          horseIds: selectedTrackHorseIds,
+          cache: gallopCacheRef.current,
+          nowMs: Date.now(),
+          inFlight,
+          ttlMs: GALLOP_CACHE_TTL_MS,
+        });
+
+        if (!missingHorseIds.length) return;
+
+        for (const horseId of missingHorseIds) {
+          inFlight.add(horseId);
+        }
+
+        const fetchedAtMs = Date.now();
+        const results = await Promise.all(
+          missingHorseIds.map(async (horseId) => {
+            const gallopPercent = await fetchHorseGallopPercent({
+              horseId,
+              apiBaseUrl: API,
+              signal: controller.signal,
+            });
+            return { horseId, gallopPercent };
+          }),
+        );
+
+        setGallopCacheByHorseId((current) => {
+          let next = { ...current };
+          for (const { horseId, gallopPercent } of results) {
+            next = upsertGallopCacheEntry({
+              current: next,
+              horseId,
+              gallopPercent,
+              fetchedAtMs,
+              source: "ATG_HORSE_RESULTS",
+            });
+          }
+          return next;
+        });
+
+        for (const horseId of missingHorseIds) {
+          inFlight.delete(horseId);
+        }
+      };
+
+      void refreshGallop();
+      const timer = window.setInterval(() => {
+        void refreshGallop();
+      }, REFRESH_SECONDS * 1000);
+
+      return () => {
+        controller.abort();
+        window.clearInterval(timer);
+        for (const horseId of selectedTrackHorseIds) {
+          inFlight.delete(horseId);
+        }
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [trackId, date, selectedTrackHorseIds.join("|")]);
 
   useEffect(() => {
     try {
@@ -1716,6 +2170,80 @@ export default function App() {
       console.error("Kunde inte spara signaljournalen", error);
     }
   }, [signalRecords]);
+
+  useEffect(() => {
+    if (placeLoadStartedRef.current) return;
+    placeLoadStartedRef.current = true;
+
+    try {
+      const cachedEvaluationsRaw = window.localStorage.getItem(PLACE_EVALUATIONS_CACHE_KEY);
+      if (cachedEvaluationsRaw) {
+        const parsed = JSON.parse(cachedEvaluationsRaw) as PlaceEvaluation[];
+        if (Array.isArray(parsed)) {
+          setPlaceEvaluations(parsed);
+        }
+      }
+    } catch (error) {
+      console.error("Kunde inte lasa cache for lopputvarderingar", error);
+    }
+
+    try {
+      const cachedBetsRaw = window.localStorage.getItem(PLACE_BETS_CACHE_KEY);
+      if (cachedBetsRaw) {
+        const parsed = JSON.parse(cachedBetsRaw) as PlaceBet[];
+        if (Array.isArray(parsed)) {
+          setPlaceBets(parsed);
+        }
+      }
+    } catch (error) {
+      console.error("Kunde inte lasa cache for platsspel", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPlaceJournal() {
+      try {
+        const [evaluations, bets] = await Promise.all([
+          loadPlaceEvaluationsByDate(date),
+          loadPlaceBetsByDate(date),
+        ]);
+
+        if (cancelled) return;
+        setPlaceEvaluations(evaluations);
+        setPlaceBets(bets);
+        setPlaceDbError("");
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : "Okant databasfel";
+        setPlaceDbError(message);
+        console.error("Kunde inte lasa platsjournal fran Supabase", error);
+      }
+    }
+
+    void loadPlaceJournal();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [date]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PLACE_EVALUATIONS_CACHE_KEY, JSON.stringify(placeEvaluations));
+    } catch (error) {
+      console.error("Kunde inte skriva cache for lopputvarderingar", error);
+    }
+  }, [placeEvaluations]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PLACE_BETS_CACHE_KEY, JSON.stringify(placeBets));
+    } catch (error) {
+      console.error("Kunde inte skriva cache for platsspel", error);
+    }
+  }, [placeBets]);
 
   useEffect(() => {
     try {
@@ -1777,6 +2305,37 @@ export default function App() {
 
   
   const candidates = useMemo(() => rankCandidates(trendRunners), [trendRunners]);
+
+  const selectedRacePlacePreview = useMemo(() => {
+    if (!selectedTrack || !selectedRace || !selectedRace.startTime) return null;
+
+    const placeRace = raceToPlaceRaceInput({ race: selectedRace, track: selectedTrack, date });
+    const placeRunners = trendRunnersToPlaceRunnerInputs({
+      race: selectedRace,
+      trendRunners,
+      raceInsights,
+      oddsHistory,
+    });
+
+    const oddsCoverage = oddsHistoryCoverageAtLock({
+      race: selectedRace,
+      trendRunners,
+      oddsHistory,
+    });
+
+    const lockTimeMs = getRaceLockTimeMs(selectedRace.startTime, PLACE_RULE_CONFIG_V1);
+
+    return evaluatePlaceModelAtLock({
+      race: placeRace,
+      runners: placeRunners,
+      nowMs,
+      config: PLACE_RULE_CONFIG_V1,
+      alreadyLockedForVersion: false,
+      appStartedAfterLock: nowMs >= lockTimeMs,
+      hasCompleteOddsHistory: oddsCoverage.complete,
+      incompleteOddsHistoryRunnerNumbers: oddsCoverage.missingRunnerNumbers,
+    });
+  }, [selectedTrack, selectedRace, date, trendRunners, raceInsights, oddsHistory, nowMs]);
 
   const stablePressureCandidate = useMemo<StablePressureCandidate | null>(() => {
     if (!selectedRace) return null;
@@ -1852,15 +2411,15 @@ export default function App() {
     const a2Change = candidates[1].changePercent ?? 0;
 
     if (favChange > 4 && a1Change < -5 && a2Change < -5) {
-      return "Favoriten försvagas samtidigt som både A1 och A2 sjunker tydligt. Intressant loppbild.";
+      return "Favoriten försvagas samtidigt som båda kandidaterna sjunker tydligt. Intressant loppbild.";
     }
 
     if (favChange < -5 && (a1Change > -3 || a2Change > -3)) {
-      return "Favoriten stärks tydligt. A1/A2-rörelsen bör värderas försiktigare.";
+      return "Favoriten stärks tydligt. Kandidatrörelsen bör värderas försiktigare.";
     }
 
     if (Math.abs(favChange) < 3 && a1Change < -8 && a2Change < -8) {
-      return "Favoriten är stabil medan A1 och A2 får tydliga oddssänkningar.";
+      return "Favoriten är stabil medan kandidaterna får tydliga oddssänkningar.";
     }
 
     if (favChange > 5) {
@@ -1871,7 +2430,7 @@ export default function App() {
       return "Favoriten sjunker och stärks i marknaden.";
     }
 
-    return "Favoriten är relativt stabil. A1 och A2 bedöms främst på sina egna trender.";
+    return "Favoriten är relativt stabil. Kandidaterna bedöms främst på sina egna trender.";
   }, [favoriteRunner, candidates]);
 
 
@@ -1881,6 +2440,135 @@ export default function App() {
       .filter((record) => record.date === date && record.trackId === selectedTrack.id)
       .sort((a, b) => a.raceNumber - b.raceNumber);
   }, [signalRecords, selectedTrack, date]);
+
+  const placeStats = useMemo(() => computePlaceStats(placeBets), [placeBets]);
+
+  const placeJournalRows = useMemo(() => {
+    return placeBets
+      .filter((bet) => !placeJournalDateFilter || bet.date === placeJournalDateFilter)
+      .filter((bet) => !placeJournalTrackFilter || bet.trackName === placeJournalTrackFilter)
+      .filter((bet) => !placeJournalRuleFilter || bet.ruleVersion === placeJournalRuleFilter)
+      .filter((bet) => {
+        if (placeJournalStatusFilter === "ALL") return true;
+        if (placeJournalStatusFilter === "SAKNAR_PLATSODDS") return bet.resultStatus === "SAKNAR_PLATSODDS";
+        return bet.resultOutcome === placeJournalStatusFilter;
+      })
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+        if (a.trackName !== b.trackName) return a.trackName.localeCompare(b.trackName);
+        return b.raceNumber - a.raceNumber;
+      });
+  }, [
+    placeBets,
+    placeJournalDateFilter,
+    placeJournalTrackFilter,
+    placeJournalRuleFilter,
+    placeJournalStatusFilter,
+  ]);
+
+  const placeStreaks = useMemo(() => {
+    const settled = [...placeBets]
+      .filter((bet) => bet.resultOutcome === "HIT" || bet.resultOutcome === "MISS")
+      .sort((a, b) => {
+        const aMs = new Date(a.plannedStartTime).getTime();
+        const bMs = new Date(b.plannedStartTime).getTime();
+        return aMs - bMs;
+      });
+
+    let currentHitStreak = 0;
+    let currentLossStreak = 0;
+    let longestHitStreak = 0;
+    let longestLossStreak = 0;
+
+    for (const bet of settled) {
+      if (bet.resultOutcome === "HIT") {
+        currentHitStreak += 1;
+        currentLossStreak = 0;
+        longestHitStreak = Math.max(longestHitStreak, currentHitStreak);
+      } else {
+        currentLossStreak += 1;
+        currentHitStreak = 0;
+        longestLossStreak = Math.max(longestLossStreak, currentLossStreak);
+      }
+    }
+
+    return {
+      currentHitStreak,
+      currentLossStreak,
+      longestHitStreak,
+      longestLossStreak,
+    };
+  }, [placeBets]);
+
+  const placeBetsByRaceKey = useMemo(() => {
+    const map = new Map<string, PlaceBet>();
+    for (const bet of placeBets) {
+      map.set(`${bet.raceId}:${bet.ruleVersion}`, bet);
+    }
+    return map;
+  }, [placeBets]);
+
+  const placeEvaluationsByRaceKey = useMemo(() => {
+    const map = new Map<string, PlaceEvaluation>();
+    for (const evaluation of placeEvaluations) {
+      map.set(`${evaluation.raceId}:${evaluation.ruleVersion}`, evaluation);
+    }
+    return map;
+  }, [placeEvaluations]);
+
+  const selectedRaceLockedEvaluation = useMemo(() => {
+    if (!selectedRace) return null;
+    return placeEvaluationsByRaceKey.get(`${selectedRace.id}:${PLACE_RULE_CONFIG_V1.ruleVersion}`) ?? null;
+  }, [selectedRace, placeEvaluationsByRaceKey]);
+
+  const selectedRacePlaceBet = useMemo(() => {
+    if (!selectedRace) return null;
+    return placeBetsByRaceKey.get(`${selectedRace.id}:${PLACE_RULE_CONFIG_V1.ruleVersion}`) ?? null;
+  }, [selectedRace, placeBetsByRaceKey]);
+
+  const selectedRaceLockTimeMs = useMemo(() => {
+    if (!selectedRace?.startTime) return null;
+    const lockTime = getRaceLockTimeMs(selectedRace.startTime, PLACE_RULE_CONFIG_V1);
+    return Number.isFinite(lockTime) ? lockTime : null;
+  }, [selectedRace]);
+
+  const selectedRaceLockTiming = useMemo(() => {
+    const snapshot = selectedRaceLockedEvaluation?.snapshot;
+    const lockTiming = (snapshot?.lockTiming as Record<string, unknown> | undefined) ?? undefined;
+    if (!lockTiming) return null;
+
+    const asMs = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+
+    return {
+      plannedLockTimeMs: asMs(lockTiming.plannedLockTimeMs),
+      lastFetchStartedAtMs: asMs(lockTiming.lastFetchStartedAtMs),
+      lastFetchFinishedAtMs: asMs(lockTiming.lastFetchFinishedAtMs),
+      actualSignalLockTimeMs: asMs(lockTiming.actualSignalLockTimeMs),
+      usedOddsPointTimestampMs: asMs(lockTiming.usedOddsPointTimestampMs),
+    };
+  }, [selectedRaceLockedEvaluation]);
+
+  const selectedRaceSignalState = useMemo(() => {
+    return deriveLiveSignalState({
+      nowMs,
+      lockTimeMs: selectedRaceLockTimeMs,
+      preview: selectedRacePlacePreview,
+      lockedEvaluation: selectedRaceLockedEvaluation,
+      lockedBet: selectedRacePlaceBet,
+    });
+  }, [
+    nowMs,
+    selectedRaceLockTimeMs,
+    selectedRacePlacePreview,
+    selectedRaceLockedEvaluation,
+    selectedRacePlaceBet,
+  ]);
+
+  const selectedSignalRunner = useMemo(() => {
+    const highlighted = selectedRaceSignalState.highlightedRunnerNumber;
+    if (highlighted === null) return null;
+    return trendRunners.find((runner) => runner.number === highlighted) ?? null;
+  }, [selectedRaceSignalState, trendRunners]);
 
   const eveningSignalTotals = useMemo(() => {
     const played = eveningSignals.filter((record) => record.stake > 0);
@@ -1956,7 +2644,7 @@ export default function App() {
     if (!selectedRace || !displayedPair.a1 || !displayedPair.a2) {
       return {
         rawOdds: null as number | null,
-        message: "Väntar på två kandidater (A1 och A2).",
+        message: "Väntar på två kandidater.",
       };
     }
 
@@ -2045,9 +2733,12 @@ export default function App() {
   }, [selectedRace, trendRunners, oddsHistory]);
 
   const minutesToLock = useMemo(() => {
-    if (countdown.totalSeconds === null) return null;
-    return Math.max(0, Math.floor((countdown.totalSeconds - 60) / 60));
-  }, [countdown.totalSeconds]);
+    if (selectedRaceLockTimeMs === null) return null;
+    const diffSeconds = Math.floor((selectedRaceLockTimeMs - nowMs) / 1000);
+    if (diffSeconds <= 0) return 0;
+    if (diffSeconds < 60) return 0;
+    return Math.ceil(diffSeconds / 60);
+  }, [selectedRaceLockTimeMs, nowMs]);
 
   const trackAlerts = useMemo(() => {
     const next: Record<number, string | null> = {};
@@ -2059,7 +2750,7 @@ export default function App() {
         const diff = new Date(race.startTime).getTime() - nowMs;
         return diff > 0 && diff <= 10 * 60_000;
       });
-      next[track.id] = hasReadyCandidate ? "A1/A2 redo" : hasStartingSoon ? "Snart start" : null;
+      next[track.id] = hasReadyCandidate ? "Platskandidat redo" : hasStartingSoon ? "Snart start" : null;
     }
     return next;
   }, [tracks, racesByTrack, oddsHistory, nowMs]);
@@ -2070,13 +2761,11 @@ export default function App() {
       return trackRaces.map((race) => {
         const runners = buildTrendRunnersForRace(race, oddsHistory);
         const insights = buildRaceInsights(runners);
-        const ranked = rankCandidates(runners);
         const startMs = race.startTime ? new Date(race.startTime).getTime() : Number.NaN;
         const secondsLeft = Number.isNaN(startMs) ? null : Math.floor((startMs - nowMs) / 1000);
         return {
           track,
           race,
-          ranked,
           insights,
           secondsLeft,
           insufficientData: runners.filter((runner) => runner.samples >= 3).length < 2,
@@ -2104,7 +2793,7 @@ export default function App() {
 
   function saveResult() {
     if (!selectedTrack || !selectedRace || !lockedSelection) {
-      setError("Lås A1 och A2 innan resultatet sparas.");
+      setError("Lås kandidaterna innan resultatet sparas.");
       return;
     }
 
@@ -2259,6 +2948,31 @@ export default function App() {
 
   async function refreshTvillingMarkets(track: Track, raceNumbers: number[], raceList?: Race[]) {
     await refreshPairMarkets(track, raceNumbers, fetchTvillingMarket, setTvillingMarkets, raceList);
+  }
+
+  function patchRaceOddsMeta(
+    raceIds: string[],
+    patch: Partial<RaceOddsCollectionMeta>,
+  ) {
+    if (!raceIds.length) return;
+    setRaceOddsCollectionMeta((current) => {
+      const next = { ...current };
+      for (const raceId of raceIds) {
+        const existing = next[raceId] ?? {
+          plannedLockTimeMs: null,
+          lastFetchStartedAtMs: null,
+          lastFetchFinishedAtMs: null,
+          lastOddsPointTimestampMs: null,
+          actualSignalLockTimeMs: null,
+          usedOddsPointTimestampMs: null,
+        };
+        next[raceId] = {
+          ...existing,
+          ...patch,
+        };
+      }
+      return next;
+    });
   }
 
 
@@ -2614,6 +3328,15 @@ export default function App() {
         }))
         .filter((entry) => entry.raceNumbers.length > 0);
 
+      const startedRaceIds = racesPerTrack
+        .flatMap((entry) => entry.races)
+        .filter((race) => shouldCollectOdds(race.startTime, timestamp))
+        .map((race) => race.id);
+
+      patchRaceOddsMeta(startedRaceIds, {
+        lastFetchStartedAtMs: timestamp,
+      });
+
       if (!eligibleByTrack.length) {
         setAllRacesUpdated(new Date().toLocaleTimeString("sv-SE"));
         setUpdated(new Date().toLocaleTimeString("sv-SE"));
@@ -2631,23 +3354,25 @@ export default function App() {
         }),
       );
 
+      const oddsPointTimestamp = Date.now();
+
       setOddsHistory((current) => {
         const next = { ...current };
 
         for (const trackUpdate of refreshedByTrack) {
           for (const race of trackUpdate.refreshedRaces) {
-            if (!shouldCollectOdds(race.startTime, timestamp)) continue;
+            if (!shouldCollectOdds(race.startTime, oddsPointTimestamp)) continue;
             for (const runner of race.runners) {
               if (runner.odds === null || runner.odds <= 0) continue;
 
               const key = runnerKey(race.id, runner.number);
               const history = next[key] ?? [];
-              next[key] = appendMinuteSnapshot(history, runner.odds, timestamp);
+              next[key] = appendMinuteSnapshot(history, runner.odds, oddsPointTimestamp);
 
               if (runner.placeOdds !== null && runner.placeOdds > 0) {
                 const placeKey = placeRunnerKey(race.id, runner.number);
                 const placeHistory = next[placeKey] ?? [];
-                next[placeKey] = appendMinuteSnapshot(placeHistory, runner.placeOdds, timestamp);
+                next[placeKey] = appendMinuteSnapshot(placeHistory, runner.placeOdds, oddsPointTimestamp);
               }
             }
           }
@@ -2668,6 +3393,15 @@ export default function App() {
           next[trackUpdate.trackId] = merged;
         }
         return next;
+      });
+
+      const completedRaceIds = refreshedByTrack
+        .flatMap((trackUpdate) => trackUpdate.refreshedRaces)
+        .map((race) => race.id);
+
+      patchRaceOddsMeta(completedRaceIds, {
+        lastFetchFinishedAtMs: oddsPointTimestamp,
+        lastOddsPointTimestampMs: oddsPointTimestamp,
       });
 
       setAllRacesUpdated(new Date().toLocaleTimeString("sv-SE"));
@@ -2693,6 +3427,10 @@ export default function App() {
     const requestId = selectedRaceRequestRef.current + 1;
     selectedRaceRequestRef.current = requestId;
     const raceKeyAtStart = `${selectedTrack.id}:${selectedRace.id}`;
+
+    patchRaceOddsMeta([selectedRace.id], {
+      lastFetchStartedAtMs: Date.now(),
+    });
 
     loadingOddsRef.current = true;
     setLoadingOdds(true);
@@ -2747,6 +3485,11 @@ export default function App() {
           }
 
           return next;
+        });
+
+        patchRaceOddsMeta([refreshed.id], {
+          lastFetchFinishedAtMs: snapshotTime,
+          lastOddsPointTimestampMs: snapshotTime,
         });
       }
 
@@ -2905,6 +3648,320 @@ export default function App() {
     return () => window.clearInterval(collector);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tracks.length, Object.keys(racesByTrack).length, date]);
+
+  useEffect(() => {
+    if (!selectedTrack || !races.length) return;
+
+    const evaluationsToPersist: PlaceEvaluation[] = [];
+    const betsToPersist: PlaceBet[] = [];
+
+    for (const race of races) {
+      if (!race.startTime) continue;
+
+      const lockTimeMs = getRaceLockTimeMs(race.startTime, PLACE_RULE_CONFIG_V1);
+      if (!Number.isFinite(lockTimeMs)) continue;
+      if (nowMs < lockTimeMs) continue;
+
+      const lockMeta = raceOddsCollectionMeta[race.id];
+      const lockGraceMs = 90_000;
+      const fetchFinishedAtMs = lockMeta?.lastFetchFinishedAtMs ?? null;
+      const usedOddsPointTimestampMs = lockMeta?.lastOddsPointTimestampMs ?? null;
+      const waitForLockFetch =
+        (fetchFinishedAtMs === null || fetchFinishedAtMs < lockTimeMs) &&
+        nowMs <= lockTimeMs + lockGraceMs;
+
+      // Wait briefly after planned lock if the T-1 fetch has not completed yet.
+      if (waitForLockFetch) continue;
+
+      const hasFreshCurrentOddsPoint =
+        usedOddsPointTimestampMs !== null &&
+        Math.abs(lockTimeMs - usedOddsPointTimestampMs) <= lockGraceMs &&
+        fetchFinishedAtMs !== null &&
+        fetchFinishedAtMs >= lockTimeMs;
+
+      const raceKey = `${race.id}:${PLACE_RULE_CONFIG_V1.ruleVersion}`;
+      if (placeEvaluationsByRaceKey.has(raceKey)) continue;
+
+        const trendForRace = applyGallopOverlayToTrendRunners({
+          trendRunners: buildTrendRunnersForRace(race, oddsHistory),
+          gallopCacheByHorseId,
+          nowMs,
+        });
+      const insightsForRace = buildRaceInsights(trendForRace);
+      const placeRace = raceToPlaceRaceInput({ race, track: selectedTrack, date });
+        const gallopCoverage = validateGallopCoverageAtLock({
+          activeRunners: trendForRace
+            .filter((runner) => !runner.scratched)
+            .map((runner) => ({
+              number: runner.number,
+              horseId: runner.horseId,
+              raceGallopPercent: runner.stats.gallopPercent,
+            })),
+          cache: gallopCacheByHorseId,
+          nowMs,
+          ttlMs: GALLOP_CACHE_TTL_MS,
+        });
+      const placeRunners = trendRunnersToPlaceRunnerInputs({
+        race,
+        trendRunners: trendForRace,
+        raceInsights: insightsForRace,
+        oddsHistory,
+      });
+
+      const oddsCoverage = oddsHistoryCoverageAtLock({
+        race,
+        trendRunners: trendForRace,
+        oddsHistory,
+      });
+
+      const evaluation = evaluatePlaceModelAtLock({
+        race: placeRace,
+        runners: placeRunners,
+        nowMs,
+        config: PLACE_RULE_CONFIG_V1,
+        alreadyLockedForVersion: false,
+        appStartedAfterLock: appBootMsRef.current > lockTimeMs,
+        hasCompleteIndicatorData: gallopCoverage.complete,
+        incompleteIndicatorRunnerNumbers: gallopCoverage.missingRunnerNumbers,
+        hasCompleteOddsHistory: oddsCoverage.complete,
+        incompleteOddsHistoryRunnerNumbers: oddsCoverage.missingRunnerNumbers,
+        hasFreshCurrentOddsPoint,
+      });
+
+      const evaluationWithTiming: PlaceEvaluation = {
+        ...evaluation,
+        snapshot: {
+          ...evaluation.snapshot,
+          lockTiming: {
+            plannedLockTimeMs: lockTimeMs,
+            lastFetchStartedAtMs: lockMeta?.lastFetchStartedAtMs ?? null,
+            lastFetchFinishedAtMs: fetchFinishedAtMs,
+            actualSignalLockTimeMs: nowMs,
+            usedOddsPointTimestampMs,
+          },
+        },
+      };
+
+      evaluationsToPersist.push(evaluationWithTiming);
+
+      const existingBet = placeBetsByRaceKey.get(raceKey);
+      if (!existingBet && evaluationWithTiming.decision === "PLAY" && evaluationWithTiming.smoothest) {
+        const smoothest = evaluationWithTiming.smoothest;
+        const stakeOren = sekToOren(PLACE_RULE_CONFIG_V1.defaultStakeSEK);
+        const bet: PlaceBet = {
+          betId: `${race.id}:${PLACE_RULE_CONFIG_V1.ruleVersion}:model`,
+          raceId: race.id,
+          ruleVersion: PLACE_RULE_CONFIG_V1.ruleVersion,
+          configSnapshot: PLACE_RULE_CONFIG_V1,
+          date,
+          trackId: selectedTrack.id,
+          trackName: selectedTrack.name,
+          raceNumber: race.raceNumber,
+          plannedStartTime: race.startTime,
+          lockTime: evaluationWithTiming.lockedAt,
+          horseNumber: smoothest.runnerNumber,
+          horseName: smoothest.runnerName,
+          startLane: smoothest.startLane,
+          startMethod: placeRace.startMethod,
+          distanceMeters: placeRace.distanceMeters,
+          starters: placeRace.starters,
+          startOdds: smoothest.startOdds,
+          currentWinOdds: smoothest.currentWinOdds,
+          oddsDropPercent: smoothest.oddsDropPercent,
+          cvRaw: smoothest.cvRaw,
+          cvDisplay: smoothest.cvDisplay,
+          strength: smoothest.strength,
+          indicatorsGreen: smoothest.indicatorsGreen,
+          validOddsPoints: smoothest.validOddsPoints,
+          stakeOren,
+          resultOutcome: "PENDING",
+          resultStatus: "PENDING",
+          finishPositionOfficial: null,
+          placeOddsDecimal: null,
+          returnOren: null,
+          netOren: null,
+          roiPct: null,
+          automaticModelBet: true,
+          userActuallyPlayed: false,
+          resultSource: null,
+          resultUpdatedAt: null,
+          placeOddsEntryMethod: null,
+          createdAt: new Date(nowMs).toISOString(),
+          updatedAt: new Date(nowMs).toISOString(),
+        };
+        betsToPersist.push(bet);
+      }
+    }
+
+    if (!evaluationsToPersist.length && !betsToPersist.length) return;
+
+    setPlaceEvaluations((current) => {
+      const map = new Map(current.map((item) => [`${item.raceId}:${item.ruleVersion}`, item]));
+      for (const evaluation of evaluationsToPersist) {
+        map.set(`${evaluation.raceId}:${evaluation.ruleVersion}`, evaluation);
+      }
+      return [...map.values()].sort((a, b) => a.race.raceNumber - b.race.raceNumber);
+    });
+
+    setRaceOddsCollectionMeta((current) => {
+      const next = { ...current };
+      for (const evaluation of evaluationsToPersist) {
+        const lockTiming = (evaluation.snapshot.lockTiming as Record<string, unknown> | undefined) ?? undefined;
+        const existing = next[evaluation.raceId] ?? {
+          plannedLockTimeMs: evaluation.lockTimeMs,
+          lastFetchStartedAtMs: null,
+          lastFetchFinishedAtMs: null,
+          lastOddsPointTimestampMs: null,
+          actualSignalLockTimeMs: null,
+          usedOddsPointTimestampMs: null,
+        };
+
+        next[evaluation.raceId] = {
+          ...existing,
+          actualSignalLockTimeMs: Number(lockTiming?.actualSignalLockTimeMs ?? nowMs),
+          usedOddsPointTimestampMs:
+            typeof lockTiming?.usedOddsPointTimestampMs === "number"
+              ? lockTiming.usedOddsPointTimestampMs
+              : existing.usedOddsPointTimestampMs,
+        };
+      }
+      return next;
+    });
+
+    if (betsToPersist.length) {
+      setPlaceBets((current) => {
+        const map = new Map(current.map((item) => [`${item.raceId}:${item.ruleVersion}`, item]));
+        for (const bet of betsToPersist) {
+          map.set(`${bet.raceId}:${bet.ruleVersion}`, bet);
+        }
+        return [...map.values()].sort((a, b) => a.raceNumber - b.raceNumber);
+      });
+    }
+
+    void (async () => {
+      try {
+        await Promise.all([
+          ...evaluationsToPersist.map((item) => upsertPlaceEvaluation(item)),
+          ...betsToPersist.map((item) => upsertPlaceBet(item)),
+        ]);
+        setPlaceDbError("");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Okant databasfel";
+        setPlaceDbError(message);
+        console.error("Kunde inte spara platsmodell-data", error);
+      }
+    })();
+  }, [
+    selectedTrack,
+    races,
+    oddsHistory,
+    gallopCacheByHorseId,
+    raceOddsCollectionMeta,
+    nowMs,
+    date,
+    placeEvaluationsByRaceKey,
+    placeBetsByRaceKey,
+  ]);
+
+  useEffect(() => {
+    if (!placeBets.length || !races.length) return;
+
+    const raceMap = new Map(races.map((race) => [race.id, race]));
+    const updates: PlaceBet[] = [];
+
+    for (const bet of placeBets) {
+      const race = raceMap.get(bet.raceId);
+      if (!race) continue;
+
+      const nowIso = new Date(nowMs).toISOString();
+      const isCancelled = /install|inst[äa]lld|inst[äa]llt|cancel/i.test(race.status ?? "");
+      const runner = race.runners.find((item) => item.number === bet.horseNumber);
+
+      if (isCancelled && bet.resultOutcome !== "VOID") {
+        updates.push({
+          ...bet,
+          resultOutcome: "VOID",
+          resultStatus: "VOID",
+          resultSource: "ATG",
+          resultUpdatedAt: nowIso,
+          updatedAt: nowIso,
+        });
+        continue;
+      }
+
+      if (runner?.scratched && bet.resultOutcome !== "VOID") {
+        updates.push({
+          ...bet,
+          resultOutcome: "VOID",
+          resultStatus: "VOID",
+          resultSource: "ATG",
+          resultUpdatedAt: nowIso,
+          updatedAt: nowIso,
+        });
+        continue;
+      }
+
+      if (!race.finishOrder.length) continue;
+
+      const finishPosition = race.finishOrder.indexOf(bet.horseNumber) + 1;
+      if (finishPosition <= 0) continue;
+
+      const autoPlaceOdds = runner?.placeOdds ? runner.placeOdds / 100 : null;
+      const placeOdds = bet.placeOddsDecimal ?? autoPlaceOdds;
+      const settlement = applySettledResult({
+        stakeOren: bet.stakeOren,
+        finishPosition,
+        maxHitPosition: PLACE_RULE_CONFIG_V1.hitMaxOfficialFinishPosition,
+        placeOddsDecimal: placeOdds,
+      });
+
+      const changed =
+        bet.finishPositionOfficial !== finishPosition ||
+        bet.resultOutcome !== settlement.resultOutcome ||
+        bet.resultStatus !== settlement.resultStatus ||
+        bet.returnOren !== settlement.returnOren ||
+        bet.netOren !== settlement.netOren ||
+        bet.roiPct !== settlement.roiPct ||
+        bet.placeOddsDecimal !== placeOdds;
+
+      if (!changed) continue;
+
+      updates.push({
+        ...bet,
+        finishPositionOfficial: finishPosition,
+        placeOddsDecimal: placeOdds,
+        returnOren: settlement.returnOren,
+        netOren: settlement.netOren,
+        roiPct: settlement.roiPct,
+        resultOutcome: settlement.resultOutcome,
+        resultStatus: settlement.resultStatus,
+        resultSource: "ATG",
+        placeOddsEntryMethod: bet.placeOddsDecimal !== null ? bet.placeOddsEntryMethod : autoPlaceOdds !== null ? "AUTO" : null,
+        resultUpdatedAt: nowIso,
+        updatedAt: nowIso,
+      });
+    }
+
+    if (!updates.length) return;
+
+    setPlaceBets((current) => {
+      const byId = new Map(current.map((item) => [item.betId, item]));
+      for (const update of updates) {
+        byId.set(update.betId, update);
+      }
+      return [...byId.values()].sort((a, b) => a.raceNumber - b.raceNumber);
+    });
+
+    void (async () => {
+      try {
+        await Promise.all(updates.map((item) => upsertPlaceBet(item)));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Okant databasfel";
+        setPlaceDbError(message);
+        console.error("Kunde inte uppdatera platsresultat", error);
+      }
+    })();
+  }, [placeBets, races, nowMs]);
 
   useEffect(() => {
     if (!selectedTrack || !races.length) return;
@@ -3222,38 +4279,141 @@ export default function App() {
     await refreshSelectedRace();
   }
 
+  async function updateBetManualResult(betId: string) {
+    const bet = placeBets.find((item) => item.betId === betId);
+    if (!bet) return;
+
+    const finishRaw = manualFinishInputByBet[betId] ?? "";
+    const placeOddsRaw = manualPlaceOddsInputByBet[betId] ?? "";
+
+    const finishPosition = finishRaw.trim() ? Number(finishRaw) : bet.finishPositionOfficial;
+    const placeOddsDecimal = placeOddsRaw.trim()
+      ? Number(placeOddsRaw.replace(",", "."))
+      : bet.placeOddsDecimal;
+
+    if (finishPosition !== null && finishPosition !== undefined && (!Number.isFinite(finishPosition) || finishPosition <= 0)) {
+      setError("Ogiltig slutplacering.");
+      return;
+    }
+
+    if (placeOddsDecimal !== null && placeOddsDecimal !== undefined && (!Number.isFinite(placeOddsDecimal) || placeOddsDecimal <= 0)) {
+      setError("Ogiltigt platsodds.");
+      return;
+    }
+
+    const resolvedFinish = finishPosition ?? 0;
+    const settlement = applySettledResult({
+      stakeOren: bet.stakeOren,
+      finishPosition: resolvedFinish,
+      maxHitPosition: PLACE_RULE_CONFIG_V1.hitMaxOfficialFinishPosition,
+      placeOddsDecimal: placeOddsDecimal ?? null,
+    });
+
+    const nowIso = new Date().toISOString();
+    const updated: PlaceBet = {
+      ...bet,
+      finishPositionOfficial: finishPosition ?? null,
+      placeOddsDecimal: placeOddsDecimal ?? null,
+      returnOren: settlement.returnOren,
+      netOren: settlement.netOren,
+      roiPct: settlement.roiPct,
+      resultOutcome: settlement.resultOutcome,
+      resultStatus: settlement.resultStatus,
+      placeOddsEntryMethod: placeOddsRaw.trim() ? "MANUAL" : bet.placeOddsEntryMethod,
+      resultSource: "MANUAL",
+      resultUpdatedAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const auditEntries: PlaceAuditLogEntry[] = [];
+    if (String(bet.finishPositionOfficial ?? "") !== String(updated.finishPositionOfficial ?? "")) {
+      auditEntries.push({
+        id: crypto.randomUUID(),
+        betId,
+        field: "finishPositionOfficial",
+        previousValue: bet.finishPositionOfficial == null ? null : String(bet.finishPositionOfficial),
+        newValue: updated.finishPositionOfficial == null ? null : String(updated.finishPositionOfficial),
+        changedAt: nowIso,
+      });
+    }
+    if (String(bet.placeOddsDecimal ?? "") !== String(updated.placeOddsDecimal ?? "")) {
+      auditEntries.push({
+        id: crypto.randomUUID(),
+        betId,
+        field: "placeOddsDecimal",
+        previousValue: bet.placeOddsDecimal == null ? null : String(bet.placeOddsDecimal),
+        newValue: updated.placeOddsDecimal == null ? null : String(updated.placeOddsDecimal),
+        changedAt: nowIso,
+      });
+    }
+
+    setPlaceBets((current) => current.map((item) => (item.betId === betId ? updated : item)));
+    setPlaceAuditLog((current) => [...auditEntries, ...current]);
+
+    try {
+      await upsertPlaceBet(updated);
+      await Promise.all(auditEntries.map((entry) => saveAuditLog(entry)));
+      setPlaceDbError("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Okant databasfel";
+      setPlaceDbError(message);
+      console.error("Kunde inte spara manuell platskorrektion", error);
+    }
+  }
+
+  function exportPlaceCsv() {
+    const evalCsv = buildPlaceEvaluationsCsv(placeEvaluations);
+    const betCsv = buildPlaceBetsCsv(placeBets);
+    const merged = [evalCsv, betCsv].filter(Boolean).join("\n\n");
+    downloadTextFile(`komben-place-journal-${date}.csv`, merged);
+  }
+
   function runnerStrength(runner: TrendRunner) {
     return raceInsights.byRunner[runner.number]?.strength ?? 0;
   }
 
-  function renderStrengthDots(strength: number) {
-    return Array.from({ length: 6 }, (_, index) => (
+  function indicatorForRunner(runner: TrendRunner, key: StatKey) {
+    const indicators = raceInsights.byRunner[runner.number]?.indicators ?? [];
+    return indicators.find((indicator) => indicator.key === key) ?? null;
+  }
+
+  function indicatorStateClass(runner: TrendRunner, key: StatKey) {
+    const indicator = indicatorForRunner(runner, key);
+    if (!indicator || indicator.value === null) return "is-missing";
+    if (indicator.positive) return "is-positive";
+    return "is-neutral";
+  }
+
+  function renderStrengthDots(runner: TrendRunner) {
+    return STAT_DEFINITIONS.map((definition) => (
       <span
-        key={`strength-${index}`}
-        className={`strength-dot ${index < strength ? "is-on" : ""}`}
+        key={`strength-${runner.number}-${definition.key}`}
+        className={`strength-dot ${indicatorStateClass(runner, definition.key)}`}
       />
     ));
   }
 
-  function renderIndicators(runner: TrendRunner) {
-    const indicators = raceInsights.byRunner[runner.number]?.indicators ?? [];
+  function renderIndicatorDotMatrix(runner: TrendRunner) {
     return (
-      <div className="indicator-stack">
+      <div className="indicator-matrix" aria-label={`Indikatorstatus för ${runner.name}`}>
         <div className="indicator-label-row">
           {STAT_DEFINITIONS.map((definition) => (
-            <span key={definition.key}>{definition.shortLabel}</span>
+            <span key={`${runner.number}-label-${definition.key}`}>{definition.shortLabel}</span>
           ))}
         </div>
         <div className="indicator-dot-row">
-          {indicators.map((indicator) => (
-            <button
-              key={`${runner.number}-${indicator.key}`}
-              type="button"
-              title={indicator.tooltip}
-              className={`indicator-dot ${indicator.positive ? "is-positive" : ""}`}
-              onClick={() => setExpandedRunnerKey((current) => current === `${selectedRace?.id}-${runner.number}` ? null : `${selectedRace?.id}-${runner.number}`)}
-            />
-          ))}
+          {STAT_DEFINITIONS.map((definition) => {
+            const indicator = indicatorForRunner(runner, definition.key);
+            const stateClass = indicatorStateClass(runner, definition.key);
+            return (
+              <span
+                key={`${runner.number}-dot-${definition.key}`}
+                className={`indicator-dot ${stateClass}`}
+                title={indicator?.tooltip ?? `${definition.label}: saknas`}
+                aria-label={indicator?.tooltip ?? `${definition.label}: saknas`}
+              />
+            );
+          })}
         </div>
       </div>
     );
@@ -3274,7 +4434,7 @@ export default function App() {
         </div>
 
         <div className="overview-grid">
-          {overviewRows.map(({ track, race, ranked, insights, secondsLeft, insufficientData }) => (
+          {overviewRows.map(({ track, race, insights, secondsLeft, insufficientData }) => (
             <button
               key={`${track.id}-${race.id}`}
               type="button"
@@ -3290,8 +4450,8 @@ export default function App() {
                 <span>{race.status || "Vantar"}</span>
               </div>
               <div className="overview-card-body">
-                <span>A1: {ranked[0] ? `${ranked[0].number}. ${ranked[0].name}` : "For lite data"}</span>
-                <span>A2: {ranked[1] ? `${ranked[1].number}. ${ranked[1].name}` : "Ingen tillrackligt tydlig A2"}</span>
+                <span>Prel. platskandidat: {insights.smoothest ? `${insights.smoothest.number}. ${insights.smoothest.name}` : "For lite data"}</span>
+                <span>Regelstatus: BEVAKAR/INVANTAR LASTID</span>
                 <span>Jamnast: {insights.smoothest ? `${insights.smoothest.number}. ${insights.smoothest.name}` : "Saknas"}</span>
                 <span>Mest sankta: {insights.biggestDrop ? `${insights.biggestDrop.number}. ${insights.biggestDrop.name}` : "Saknas"}</span>
                 {insufficientData && <span className="muted-badge">Otillracklig data</span>}
@@ -3335,9 +4495,9 @@ export default function App() {
                 </div>
               </div>
               <div className="race-hero-side">
-                <strong>A1/A2 låses vid 1:00</strong>
-                <span>Modell: Trendranking + Momentum</span>
-                <span>Första uppclock: {formatTime(firstOddsRegisteredAt ?? undefined)} · Nu: {formatClockTime(nowMs)} · {minutesToLock === null ? "-" : `${minutesToLock} min kvar`}</span>
+                <strong>Platssignal låses 1 min före start</strong>
+                <span>Regelversion: {PLACE_RULE_CONFIG_V1.ruleVersion}</span>
+                <span>Första mätning: {formatTime(firstOddsRegisteredAt ?? undefined)} · Nu: {formatClockTime(nowMs)} · {minutesToLock === null ? "-" : `${minutesToLock} min kvar`}</span>
               </div>
             </div>
 
@@ -3386,8 +4546,8 @@ export default function App() {
               <div className="race-status-grid">
                 <div><span>Start</span><strong>{formatTime(selectedRace?.startTime)}</strong></div>
                 <div><span>Nedrakning</span><strong>{countdown.label}</strong></div>
-                <div><span>Status</span><strong>{selectedRace?.status || "Vantar"}</strong></div>
-                <div><span>Forsta odds</span><strong>{formatTime(firstOddsRegisteredAt ?? undefined)}</strong></div>
+                <div><span>Status</span><strong>{selectedRaceSignalState.statusText}</strong></div>
+                <div><span>Forsta odds</span><strong>{selectedSignalRunner ? formatOdds(selectedSignalRunner.firstOdds) : "–"}</strong></div>
                 <div><span>Lasning om</span><strong>{minutesToLock === null ? "-" : `${minutesToLock} min`}</strong></div>
                 <div><span>Live</span><strong>{updated || "-"}</strong></div>
               </div>
@@ -3398,22 +4558,27 @@ export default function App() {
                 <div className="race-layout">
                   <div className="race-main-panel">
                     <div className="compact-table-header compact-grid-row">
-                      <span>Nr</span>
-                      <span>Hast / kusk</span>
-                      <span>V-odds</span>
-                      <span>Sankning %</span>
-                      <span>Trend 60 min</span>
-                      <span>Jamnhet CV %</span>
-                      <span>Statistik indikatorer</span>
-                      <span>Styrka</span>
-                      <span>Mark.</span>
+                      <span>NR</span>
+                      <span>HAST / KUSK</span>
+                      <span>FORSTA ODDS</span>
+                      <span>V-ODDS</span>
+                      <span>SANKNING %</span>
+                      <span>TREND 60 MIN</span>
+                      <span>JAMNHET CV %</span>
+                      <span>STATISTIKINDIKATORER</span>
+                      <span>STYRKA</span>
+                      <span>MARKERING</span>
                     </div>
 
                     <div className="compact-table-body">
                       {trendRunners.map((runner) => {
                         const rowKey = `${selectedRace.id}-${runner.number}`;
-                        const isA1 = candidates[0]?.number === runner.number;
-                        const isA2 = candidates[1]?.number === runner.number;
+                        const isWatched = selectedRaceSignalState.mode === "PRELIM_WATCH" && selectedRaceSignalState.highlightedRunnerNumber === runner.number;
+                        const isLockedPlay = selectedRaceSignalState.mode === "LOCKED_PLAY" && selectedRaceSignalState.highlightedRunnerNumber === runner.number;
+                        const isEvaluated =
+                          !isWatched &&
+                          !isLockedPlay &&
+                          selectedRaceSignalState.evaluatedRunnerNumber === runner.number;
                         const runnerInfo = raceInsights.byRunner[runner.number];
                         const isExpanded = expandedRunnerKey === rowKey;
                         const consistency = runnerInfo?.consistency;
@@ -3421,7 +4586,7 @@ export default function App() {
                         return (
                           <div
                             key={rowKey}
-                            className={`compact-row ${isA1 ? "is-a1" : ""} ${isA2 ? "is-a2" : ""} ${runner.scratched ? "is-scratched" : ""}`}
+                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""}`}
                           >
                             <div
                               role="button"
@@ -3435,42 +4600,45 @@ export default function App() {
                                 }
                               }}
                             >
-                              <span className="number-pill">{runner.number}</span>
+                              <span className={`number-pill ${isWatched || isLockedPlay ? "is-highlight" : ""}`}>{runner.number}</span>
                               <span className="runner-name-cell">
                                 <span className="runner-title-line">
-                                  {(isA1 || isA2) ? <span className={`inline-tag ${isA1 ? "a1" : "a2"}`}>{isA1 ? "A1" : "A2"}</span> : null}
+                                  {isWatched ? <span className="inline-tag watch">BEVAKAS</span> : null}
+                                  {isLockedPlay ? <span className="inline-tag a1">PLATSSPEL</span> : null}
                                   <strong>{runner.name}</strong>
                                 </span>
                                 <small>{runner.driver}</small>
                               </span>
+                              <span>{formatOdds(runner.firstOdds)}</span>
                               <span>{formatOdds(runner.odds)}</span>
-                              <span className={`change-value ${runner.changePercent === null ? "is-neutral" : runner.changePercent < -0.05 ? "is-down" : runner.changePercent > 0.05 ? "is-up" : "is-neutral"}`}>
-                                {formatPercent(runner.changePercent)}
+                              <span className={`change-value ${runner.dropPercent === null ? "is-neutral" : runner.dropPercent > 0.05 ? "is-down" : runner.dropPercent < -0.05 ? "is-up" : "is-neutral"}`}>
+                                {formatDropPercent(runner.dropPercent)}
                               </span>
                               <span className="sparkline-cell">
                                 <svg viewBox="0 0 96 24" className="sparkline-svg" aria-hidden="true">
                                   <path d={sparklinePoints(runner.historyOdds)} fill="none" stroke={runner.changePercent !== null && runner.changePercent < 0 ? "#55e89a" : runner.changePercent !== null && runner.changePercent > 0 ? "#ff9a5a" : "#9db3a8"} strokeWidth="1.5" strokeLinecap="round" />
                                 </svg>
                               </span>
-                              <span>{consistency == null ? "-" : consistency.toFixed(2).replace(".", ",")}</span>
-                              <span>{renderIndicators(runner)}</span>
+                              <span>{consistency == null ? "–" : consistency.toFixed(2).replace(".", ",")}</span>
+                              <span>{renderIndicatorDotMatrix(runner)}</span>
                               <span className="strength-cell" title={`Styrka: ${runnerStrength(runner)} av 6 positiva indikatorer`}>
                                 <strong>{runnerStrength(runner)}/6</strong>
-                                <span className="strength-dots">{renderStrengthDots(runnerStrength(runner))}</span>
+                                <span className="strength-dots">{renderStrengthDots(runner)}</span>
                               </span>
                               <span className="candidate-cell">
-                                {isA1 ? <span className="candidate-badge a1">A1</span> : null}
-                                {isA2 ? <span className="candidate-badge a2">A2</span> : null}
+                                {isWatched ? <span className="candidate-badge a1">BEVAKAS</span> : null}
+                                {isLockedPlay ? <span className="candidate-badge a1">PLATSSPEL</span> : null}
+                                {isLockedPlay ? <span className="candidate-badge play-now">SPELA DENNA</span> : null}
                                 {raceInsights.smoothest?.number === runner.number ? <span className="comment-mark smoothest">J</span> : null}
                                 {raceInsights.biggestDrop?.number === runner.number ? <span className="comment-mark drop">S</span> : null}
-                                {!isA1 && !isA2 ? <span className="candidate-badge neutral">-</span> : null}
+                                {!isWatched && !isLockedPlay ? <span className="candidate-badge neutral">-</span> : null}
                               </span>
                             </div>
 
                             {isExpanded ? (
                               <div className="expanded-row">
                                 <div className="expanded-grid">
-                                  <span>Vinnare 60m till nu: {formatOdds(runner.firstOdds)} till {formatOdds(runner.odds)}</span>
+                                  <span>Första till nu: {formatOdds(runner.firstOdds)} till {formatOdds(runner.odds)}</span>
                                   <span>Momentum: {momentumDisplay(runner.momentum)}</span>
                                   <span>Jamnhet: {consistency == null ? "Saknas" : consistency.toFixed(2).replace(".", ",")}</span>
                                   <span>Oddsmodell: {runner.modelScore ?? "Saknas"}</span>
@@ -3491,31 +4659,81 @@ export default function App() {
                   </div>
 
                   <aside className="race-side-panel">
-                    <section className="side-card">
-                      <div className="side-card-title">A1 & A2 just nu</div>
+                    <section className={`side-card signal-card ${selectedRaceSignalState.mode === "PRELIM_WATCH" ? "is-watched" : ""} ${selectedRaceSignalState.mode === "LOCKED_PLAY" ? "is-locked-play" : ""}`}>
+                      <div className="side-card-title">{selectedRaceSignalState.title}</div>
                       <div className="candidate-summary">
-                        <span>A1</span>
-                        <strong>{displayedPair.a1 ? `${displayedPair.a1.number}. ${displayedPair.a1.name}` : "Ingen kandidat"}</strong>
-                        <small>{displayedPair.a1 ? `${formatOdds(displayedPair.a1.odds)} · ${formatPercent(displayedPair.a1.changePercent)} · ${runnerStrength(displayedPair.a1)}/6` : "-"}</small>
+                        <span>Status</span>
+                        <strong>{selectedRaceSignalState.statusText}</strong>
+                        <small>
+                          {selectedSignalRunner
+                            ? `${selectedSignalRunner.number}. ${selectedSignalRunner.name} · ${selectedSignalRunner.driver}`
+                            : selectedRaceSignalState.evaluatedRunnerNumber
+                              ? `${selectedRaceSignalState.evaluatedRunnerNumber}. Utvarderad`
+                              : "Ingen giltig kandidat"}
+                        </small>
                       </div>
+                      {selectedRaceSignalState.mode === "LOCKED_PLAY" ? (
+                        <div className="play-now-banner" role="status" aria-live="polite">
+                          SPELA DENNA
+                        </div>
+                      ) : null}
                       <div className="candidate-summary a2">
-                        <span>A2</span>
-                        <strong>{displayedPair.a2 ? `${displayedPair.a2.number}. ${displayedPair.a2.name}` : "Ingen tillrackligt tydlig A2"}</strong>
-                        <small>{displayedPair.a2 ? `${formatOdds(displayedPair.a2.odds)} · ${formatPercent(displayedPair.a2.changePercent)} · ${runnerStrength(displayedPair.a2)}/6` : "Modellen tvingar inte fram A2"}</small>
+                        <span>Regelutfall</span>
+                        <div className="rule-check-list">
+                          {(selectedRaceLockedEvaluation ?? selectedRacePlacePreview)?.checks?.length
+                            ? (selectedRaceLockedEvaluation ?? selectedRacePlacePreview)?.checks.map((check) => (
+                              <span key={check.key} className={check.passed ? "is-pass" : "is-fail"}>
+                                {check.passed ? "✓" : "✕"} {check.message}
+                              </span>
+                            ))
+                            : <span className="muted">Inga regelavvikelser</span>}
+                        </div>
                       </div>
-                      <div className="odds-highlight-card">
-                        <span>KOMBODDS</span>
-                        <strong>{currentTvilling.rawOdds ? formatOdds(currentTvilling.rawOdds) : "-"}</strong>
-                        <small>{currentTvilling.rawOdds ? "Beraknat kombodds A1-A2" : currentTvilling.message}</small>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={lockCurrentSelection}
-                        disabled={!candidates[0] || !candidates[1]}
-                        style={{ ...s.button, marginBottom: 0, background: "#ff6b00", color: "#fff", opacity: !candidates[0] || !candidates[1] ? 0.45 : 1 }}
-                      >
-                        {lockedSelection ? `A1/A2 låst ${lockedSelection.lockedAt}` : "Lås A1 & A2"}
-                      </button>
+
+                      {selectedRaceLockTiming ? (
+                        <div className="candidate-summary">
+                          <span>Låstider</span>
+                          <small>Planerad låstid: {formatClockTimeMaybe(selectedRaceLockTiming.plannedLockTimeMs)}</small>
+                          <small>Sista hämtning start: {formatClockTimeMaybe(selectedRaceLockTiming.lastFetchStartedAtMs)}</small>
+                          <small>Sista hämtning klar: {formatClockTimeMaybe(selectedRaceLockTiming.lastFetchFinishedAtMs)}</small>
+                          <small>Faktisk signallåsning: {formatClockTimeMaybe(selectedRaceLockTiming.actualSignalLockTimeMs)}</small>
+                          <small>Använd oddspunkt: {formatClockTimeMaybe(selectedRaceLockTiming.usedOddsPointTimestampMs)}</small>
+                        </div>
+                      ) : null}
+
+                      {(selectedRacePlaceBet || selectedRacePlacePreview?.smoothest) ? (
+                        <div className="odds-highlight-card">
+                          <span>SIGNALDATA</span>
+                          <strong>
+                            {(selectedRacePlaceBet?.horseNumber ?? selectedRacePlacePreview?.smoothest?.runnerNumber) ?? "-"}. {(selectedRacePlaceBet?.horseName ?? selectedRacePlacePreview?.smoothest?.runnerName) ?? "Ingen"}
+                          </strong>
+                          <small>
+                            Kusk {selectedSignalRunner?.driver ?? "-"} · Status {selectedRaceSignalState.statusText}
+                          </small>
+                          <small>
+                            Första {(selectedRacePlaceBet?.startOdds ?? selectedRacePlacePreview?.smoothest?.startOdds)?.toFixed(2).replace(".", ",") ?? "-"}
+                            · Nu {(selectedRacePlaceBet?.currentWinOdds ?? selectedRacePlacePreview?.smoothest?.currentWinOdds)?.toFixed(2).replace(".", ",") ?? "-"}
+                            · Sänkning {(selectedRacePlaceBet?.oddsDropPercent ?? selectedRacePlacePreview?.smoothest?.oddsDropPercent) != null ? `${(selectedRacePlaceBet?.oddsDropPercent ?? selectedRacePlacePreview?.smoothest?.oddsDropPercent ?? 0).toFixed(1).replace(".", ",")} %` : "-"}
+                          </small>
+                          <small>
+                            CV {(selectedRacePlaceBet?.cvDisplay ?? selectedRacePlacePreview?.smoothest?.cvDisplay)?.toFixed(2).replace(".", ",") ?? "-"}
+                            · Styrka {(selectedRacePlaceBet?.strength ?? selectedRacePlacePreview?.smoothest?.strength) ?? "-"}/6
+                            · Matningar {(selectedRacePlaceBet?.validOddsPoints ?? selectedRacePlacePreview?.smoothest?.validOddsPoints) ?? "-"}
+                          </small>
+                          {selectedSignalRunner ? <div>{renderIndicatorDotMatrix(selectedSignalRunner)}</div> : null}
+                        </div>
+                      ) : null}
+
+                      {SHOW_LEGACY_KOMB_UI ? (
+                        <button
+                          type="button"
+                          onClick={lockCurrentSelection}
+                          disabled={!candidates[0] || !candidates[1]}
+                          style={{ ...s.button, marginBottom: 0, background: "#ff6b00", color: "#fff", opacity: !candidates[0] || !candidates[1] ? 0.45 : 1 }}
+                        >
+                          {lockedSelection ? `Kandidater låsta ${lockedSelection.lockedAt}` : "Lås kandidater"}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => void refreshSelectedRace()}
@@ -3529,13 +4747,13 @@ export default function App() {
                     <section className="side-card">
                       <div className="side-card-title">Jamnaste hast</div>
                       <strong>{raceInsights.smoothest ? `${raceInsights.smoothest.number}. ${raceInsights.smoothest.name}` : "Saknas"}</strong>
-                      <small>{raceInsights.smoothest ? `${(raceInsights.byRunner[raceInsights.smoothest.number]?.consistency ?? 0).toFixed(2).replace(".", ",")} · ${formatPercent(raceInsights.smoothest.changePercent)}` : "For lite oddshistorik"}</small>
+                      <small>{raceInsights.smoothest ? `${(raceInsights.byRunner[raceInsights.smoothest.number]?.consistency ?? 0).toFixed(2).replace(".", ",")} · ${formatDropPercent(raceInsights.smoothest.dropPercent)}` : "For lite oddshistorik"}</small>
                     </section>
 
                     <section className="side-card">
                       <div className="side-card-title">Mest sankta</div>
                       <strong>{raceInsights.biggestDrop ? `${raceInsights.biggestDrop.number}. ${raceInsights.biggestDrop.name}` : "Saknas"}</strong>
-                      <small>{raceInsights.biggestDrop ? `${formatOdds(raceInsights.biggestDrop.firstOdds)} till ${formatOdds(raceInsights.biggestDrop.odds)} · ${formatPercent(raceInsights.biggestDrop.changePercent)}` : "Ingen trend an"}</small>
+                      <small>{raceInsights.biggestDrop ? `${formatOdds(raceInsights.biggestDrop.firstOdds)} till ${formatOdds(raceInsights.biggestDrop.odds)} · ${formatDropPercent(raceInsights.biggestDrop.dropPercent)}` : "Ingen trend an"}</small>
                     </section>
 
                     <section className="side-card legend-card">
@@ -3543,7 +4761,7 @@ export default function App() {
                       {STAT_DEFINITIONS.map((definition) => (
                         <span key={definition.key}>{definition.shortLabel}: {definition.label}</span>
                       ))}
-                      <small>Grönt = topp 4 i loppet. G rankas med lägst värde som bäst.</small>
+                      <small>Grön plutt = topp 4. Grå plutt = giltigt värde men ej topp 4. Mörk plutt = data saknas. G rankas med lägst värde som bäst.</small>
                     </section>
                   </aside>
                 </div>
@@ -3552,45 +4770,32 @@ export default function App() {
                   <div className="panel-header-row">
                     <div>
                       <p style={s.kicker}>RESULTAT</p>
-                      <h3 className="minor-heading">Ratta lopp och journal</h3>
+                      <h3 className="minor-heading">Platssignal och utfall</h3>
                     </div>
                     <span className="panel-meta-chip">Nasta liveuppdatering om {secondsToRefresh}s</span>
                   </div>
 
-                  {lockedSelection ? (
+                  {selectedRaceLockedEvaluation ? (
                     <>
                       <div className="locked-strip">
-                        <strong>A1 {lockedSelection.a1.number}. {lockedSelection.a1.name}</strong>
-                        <strong>A2 {lockedSelection.a2.number}. {lockedSelection.a2.name}</strong>
-                        <span>Last {lockedSelection.lockedAt}</span>
-                      </div>
-                      <div className="result-grid">
-                        <label style={s.label}>
-                          1:a i mal
-                          <select value={firstNumber} onChange={(event) => setFirstNumber(event.target.value)} style={s.input}>
-                            <option value="">Valj vinnare</option>
-                            {selectedRace.runners.filter((runner) => !runner.scratched).map((runner) => (
-                              <option key={`first-${runner.number}`} value={runner.number}>{runner.number}. {runner.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label style={s.label}>
-                          2:a i mal
-                          <select value={secondNumber} onChange={(event) => setSecondNumber(event.target.value)} style={s.input}>
-                            <option value="">Valj tvaa</option>
-                            {selectedRace.runners.filter((runner) => !runner.scratched).map((runner) => (
-                              <option key={`second-${runner.number}`} value={runner.number}>{runner.number}. {runner.name}</option>
-                            ))}
-                          </select>
-                        </label>
+                        <strong>Beslut: {selectedRaceLockedEvaluation.decision}</strong>
+                        <strong>{selectedRaceLockedEvaluation.smoothest ? `${selectedRaceLockedEvaluation.smoothest.runnerNumber}. ${selectedRaceLockedEvaluation.smoothest.runnerName}` : "Ingen signal"}</strong>
+                        <span>Låst {new Date(selectedRaceLockedEvaluation.lockedAt).toLocaleTimeString("sv-SE")}</span>
                       </div>
                       <div className="result-footer-row">
-                        <div className="side-inline-value">Tvilling: {currentTvilling.rawOdds ? formatOdds(currentTvilling.rawOdds) : currentTvilling.message}</div>
-                        <button type="button" onClick={saveResult} style={{ ...s.button, width: "auto", paddingInline: 20, marginBottom: 0 }}>Spara lopp</button>
+                        <div className="side-inline-value">
+                          {selectedRacePlaceBet
+                            ? `Status ${selectedRacePlaceBet.resultOutcome} · Placering ${selectedRacePlaceBet.finishPositionOfficial ?? "-"} · Platsodds ${selectedRacePlaceBet.placeOddsDecimal?.toFixed(2).replace(".", ",") ?? "-"}`
+                            : (selectedRaceLockedEvaluation.reasons[0] ?? "Inget platsspel")}
+                        </div>
                       </div>
                     </>
                   ) : (
-                    <p style={s.muted}>Las A1 och A2 fore start. Resultatkontrollen och journalen ar oforandrade.</p>
+                    <p style={s.muted}>
+                      {selectedRaceSignalState.mode === "PRELIM_WATCH"
+                        ? "Preliminär platskandidat visas fram till låstid (T-1). Ingen post räknas som spel före låsning."
+                        : selectedRaceSignalState.title}
+                    </p>
                   )}
                 </section>
               </>
@@ -3615,42 +4820,110 @@ export default function App() {
         <div className="panel-header-row">
           <div>
             <p style={s.kicker}>SPELJOURNAL</p>
-            <h2 style={s.raceTitle}>Tvillinghistorik</h2>
+            <h2 style={s.raceTitle}>Platsjournal</h2>
           </div>
           <div className="panel-meta-row">
-            <span>{tvillingBets.length} lopp</span>
-            <span>{journalTotals.hits} traffar</span>
+            <span>{placeBets.length} modellspel</span>
+            <span>{placeEvaluations.length} lopputvarderingar</span>
           </div>
         </div>
-        <div className="mini-stats-grid">
-          <div className="mini-stat-card"><span>Insats</span><strong>{journalTotals.stake.toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>Ater</span><strong>{journalTotals.returnAmount.toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>Netto</span><strong>{journalTotals.net >= 0 ? "+" : ""}{journalTotals.net.toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>ROI</span><strong>{journalTotals.roi.toFixed(1).replace(".", ",")} %</strong></div>
+
+        {placeDbError ? <div style={s.error}>{placeDbError}</div> : null}
+
+        <div className="controls" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10, marginBottom: 12 }}>
+          <label style={s.label}>
+            Datum
+            <input type="date" value={placeJournalDateFilter} onChange={(event) => setPlaceJournalDateFilter(event.target.value)} style={s.input} />
+          </label>
+          <label style={s.label}>
+            Bana
+            <select value={placeJournalTrackFilter} onChange={(event) => setPlaceJournalTrackFilter(event.target.value)} style={s.input}>
+              <option value="">Alla</option>
+              {[...new Set(placeBets.map((bet) => bet.trackName))].sort().map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </label>
+          <label style={s.label}>
+            Regelversion
+            <select value={placeJournalRuleFilter} onChange={(event) => setPlaceJournalRuleFilter(event.target.value)} style={s.input}>
+              <option value="">Alla</option>
+              {[...new Set(placeBets.map((bet) => bet.ruleVersion))].sort().map((rule) => (
+                <option key={rule} value={rule}>{rule}</option>
+              ))}
+            </select>
+          </label>
+          <label style={s.label}>
+            Status
+            <select value={placeJournalStatusFilter} onChange={(event) => setPlaceJournalStatusFilter(event.target.value as "ALL" | "HIT" | "MISS" | "PENDING" | "VOID" | "SAKNAR_PLATSODDS")} style={s.input}>
+              <option value="ALL">Alla</option>
+              <option value="HIT">Traff</option>
+              <option value="MISS">Miss</option>
+              <option value="PENDING">Pending</option>
+              <option value="VOID">Void</option>
+              <option value="SAKNAR_PLATSODDS">Saknar platsodds</option>
+            </select>
+          </label>
+          <div style={{ display: "flex", alignItems: "end" }}>
+            <button type="button" onClick={exportPlaceCsv} style={{ ...s.button, marginBottom: 0 }}>Exportera CSV</button>
+          </div>
         </div>
+
+        <div className="mini-stats-grid">
+          <div className="mini-stat-card"><span>Traff%</span><strong>{placeStats.hitRate.toFixed(1).replace(".", ",")} %</strong></div>
+          <div className="mini-stat-card"><span>Insats</span><strong>{orenToSek(placeStats.totalStakeOren).toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Ater</span><strong>{orenToSek(placeStats.totalReturnOren).toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Netto</span><strong>{placeStats.totalNetOren >= 0 ? "+" : ""}{orenToSek(placeStats.totalNetOren).toFixed(0)} kr</strong></div>
+        </div>
+
         <div className="history-list-compact">
-          {tvillingBets.length ? tvillingBets.map((bet) => (
-            <article key={bet.id} className="history-row-card">
+          {placeJournalRows.length ? placeJournalRows.map((bet) => (
+            <article key={bet.betId} className="history-row-card">
               <div>
                 <strong>{bet.date} · {bet.trackName} · Lopp {bet.raceNumber}</strong>
-                <span>A1 {bet.a1Number}. {bet.a1Name} · A2 {bet.a2Number}. {bet.a2Name}</span>
-                <span>Resultat {bet.firstNumber}-{bet.secondNumber} · {bet.hit ? "Traff" : "Miss"} · Kombodds {bet.tvillingOdds?.toFixed(2).replace(".", ",") ?? "-"}</span>
-                <span>Insats {bet.stake} kr · Ater {bet.returnAmount.toFixed(0)} kr · Netto {bet.net >= 0 ? "+" : ""}{bet.net.toFixed(0)} kr</span>
-                {bet.needsTvillingOdds ? (
+                <span>Hast {bet.horseNumber}. {bet.horseName} · Styrka {bet.strength}/6 · CV {bet.cvDisplay.toFixed(2).replace(".", ",")}</span>
+                <span>Startodds {bet.startOdds.toFixed(2).replace(".", ",")} · Vinnarodds lasning {bet.currentWinOdds.toFixed(2).replace(".", ",")} · Sankning {bet.oddsDropPercent.toFixed(1).replace(".", ",")} %</span>
+                <span>Platsodds {bet.placeOddsDecimal?.toFixed(2).replace(".", ",") ?? "-"} · Placering {bet.finishPositionOfficial ?? "-"} · Utfall {bet.resultOutcome}</span>
+                <span>Insats {orenToSek(bet.stakeOren).toFixed(0)} kr · Ater {bet.returnOren == null ? "-" : `${orenToSek(bet.returnOren).toFixed(0)} kr`} · Netto {bet.netOren == null ? "-" : `${bet.netOren >= 0 ? "+" : ""}${orenToSek(bet.netOren).toFixed(0)} kr`}</span>
+
+                {bet.resultStatus === "SAKNAR_PLATSODDS" || bet.resultOutcome === "PENDING" ? (
                   <div className="pending-row-inline">
                     <input
-                      value={pendingTvillingOddsInputs[bet.id] ?? ""}
-                      onChange={(event) => setPendingTvillingOddsInputs((current) => ({ ...current, [bet.id]: event.target.value }))}
-                      placeholder="Ange tvillingodds"
+                      value={manualFinishInputByBet[bet.betId] ?? ""}
+                      onChange={(event) => setManualFinishInputByBet((current) => ({ ...current, [bet.betId]: event.target.value }))}
+                      placeholder="Slutplacering"
                       style={s.pendingOddsInput}
                     />
-                    <button type="button" onClick={() => finalizeTvillingOdds(bet.id)} style={s.pendingOddsButton}>Rakna klart</button>
+                    <input
+                      value={manualPlaceOddsInputByBet[bet.betId] ?? ""}
+                      onChange={(event) => setManualPlaceOddsInputByBet((current) => ({ ...current, [bet.betId]: event.target.value }))}
+                      placeholder="Platsodds"
+                      style={s.pendingOddsInput}
+                    />
+                    <button type="button" onClick={() => void updateBetManualResult(bet.betId)} style={s.pendingOddsButton}>Spara manuellt</button>
                   </div>
                 ) : null}
+
+                <button type="button" className="delete-lite" onClick={() => setPlaceJournalExpandedBetId((current) => current === bet.betId ? null : bet.betId)}>
+                  {placeJournalExpandedBetId === bet.betId ? "Dolj snapshot" : "Visa snapshot"}
+                </button>
+
+                {placeJournalExpandedBetId === bet.betId ? (
+                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12 }}>
+                    {JSON.stringify(
+                      {
+                        bet,
+                        evaluation: placeEvaluationsByRaceKey.get(`${bet.raceId}:${bet.ruleVersion}`) ?? null,
+                        audit: placeAuditLog.filter((entry) => entry.betId === bet.betId),
+                      },
+                      null,
+                      2,
+                    )}
+                  </pre>
+                ) : null}
               </div>
-              <button type="button" onClick={() => deleteTvillingBet(bet.id)} className="delete-lite">Ta bort</button>
             </article>
-          )) : <p style={s.muted}>Inga tvillingspel ar sparade an.</p>}
+          )) : <p style={s.muted}>Inga platsspel matchar filtreringen.</p>}
         </div>
       </section>
     );
@@ -3662,39 +4935,47 @@ export default function App() {
         <div className="panel-header-row">
           <div>
             <p style={s.kicker}>STATISTIK</p>
-            <h2 style={s.raceTitle}>Total utfall</h2>
+            <h2 style={s.raceTitle}>Platsmodell V1.0</h2>
           </div>
           <div className="panel-meta-row">
             <span>Databas {dbStatus.startsWith("✅") ? "ansluten" : dbStatus}</span>
+            <span>{PLACE_RULE_CONFIG_V1.ruleVersion}</span>
           </div>
         </div>
         <div className="mini-stats-grid">
-          <div className="mini-stat-card"><span>Genomforda lopp</span><strong>{tvillingBets.length}</strong></div>
-          <div className="mini-stat-card"><span>Traffar</span><strong>{journalTotals.hits}</strong></div>
-          <div className="mini-stat-card"><span>Insats</span><strong>{journalTotals.stake.toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>Aterbetalning</span><strong>{journalTotals.returnAmount.toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>Netto</span><strong>{journalTotals.net >= 0 ? "+" : ""}{journalTotals.net.toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>ROI</span><strong>{journalTotals.roi.toFixed(1).replace(".", ",")} %</strong></div>
-          <div className="mini-stat-card"><span>Vantar pa odds</span><strong>{tvillingBets.filter((bet) => bet.needsTvillingOdds).length}</strong></div>
-          <div className="mini-stat-card"><span>Signaler ikvall</span><strong>{eveningSignalTotals.signals}</strong></div>
+          <div className="mini-stat-card"><span>Lasta modellspel</span><strong>{placeBets.length}</strong></div>
+          <div className="mini-stat-card"><span>Pending</span><strong>{placeStats.pending}</strong></div>
+          <div className="mini-stat-card"><span>Faststallda</span><strong>{placeStats.settled}</strong></div>
+          <div className="mini-stat-card"><span>Void</span><strong>{placeStats.voids}</strong></div>
+          <div className="mini-stat-card"><span>Traffar</span><strong>{placeStats.hits}</strong></div>
+          <div className="mini-stat-card"><span>Missar</span><strong>{placeStats.misses}</strong></div>
+          <div className="mini-stat-card"><span>Traffprocent</span><strong>{placeStats.hitRate.toFixed(1).replace(".", ",")} %</strong></div>
+          <div className="mini-stat-card"><span>Total insats</span><strong>{orenToSek(placeStats.totalStakeOren).toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Total aterbetalning</span><strong>{orenToSek(placeStats.totalReturnOren).toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Netto</span><strong>{placeStats.totalNetOren >= 0 ? "+" : ""}{orenToSek(placeStats.totalNetOren).toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>ROI</span><strong>{placeStats.roiPct.toFixed(1).replace(".", ",")} %</strong></div>
+          <div className="mini-stat-card"><span>Snitt platsodds</span><strong>{placeStats.avgPlaceOdds?.toFixed(2).replace(".", ",") ?? "-"}</strong></div>
+          <div className="mini-stat-card"><span>Snitt vinnarodds</span><strong>{placeStats.avgWinOddsAtLock?.toFixed(2).replace(".", ",") ?? "-"}</strong></div>
+          <div className="mini-stat-card"><span>Traffsvit nu/langst</span><strong>{placeStreaks.currentHitStreak}/{placeStreaks.longestHitStreak}</strong></div>
+          <div className="mini-stat-card"><span>Forlustsvit nu/langst</span><strong>{placeStreaks.currentLossStreak}/{placeStreaks.longestLossStreak}</strong></div>
         </div>
       </section>
     );
   }
 
-  if (activeTab) {
+  if (ACTIVE_PLACE_UI_ONLY) {
     return (
       <main style={s.page}>
         <section style={{ ...s.card, maxWidth: 1480, padding: 18 }}>
           <div className="top-nav-shell">
             <div className="app-headline">
               <div>
-                <p style={s.kicker}>KOMBEN LIVE</p>
-                <h1 className="app-title-compact">Tvilling Live</h1>
+                <p style={s.kicker}>PLATSMODELL LIVE</p>
+                <h1 className="app-title-compact">Platsmodell Live</h1>
               </div>
               <div className="top-status-group">
                 <span className="live-pill">LIVE</span>
-                <span className="top-status-text">Svenska banor · lokal uppdatering var 60s</span>
+                <span className="top-status-text">Svenska banor · klientinsamling var 60s (kräver öppen app)</span>
               </div>
             </div>
 
@@ -4338,7 +5619,7 @@ export default function App() {
               >
                 {lockedSelection
                   ? `Låst ${lockedSelection.lockedAt}`
-                  : "Lås A1 och A2"}
+                  : "Lås kandidater"}
               </button>
             </div>
 
@@ -4376,7 +5657,7 @@ export default function App() {
                 <strong style={s.comboName}>
                   {displayedPair.a1 && displayedPair.a2
                     ? `${Math.min(displayedPair.a1.number, displayedPair.a2.number)}-${Math.max(displayedPair.a1.number, displayedPair.a2.number)} · ${displayedPair.a1.name} / ${displayedPair.a2.name}`
-                    : "Väntar på A1 och A2"}
+                    : "Väntar på kandidater"}
                 </strong>
                 <span style={s.comboTrend}>
                   {currentTvilling.rawOdds ? `Odds ${formatOdds(currentTvilling.rawOdds)}` : currentTvilling.message}
@@ -4830,21 +6111,21 @@ const s: Record<string, CSSProperties> = {
   input: {
     width: "100%",
     colorScheme: "dark",
-    minHeight: 48,
+    minHeight: 42,
     boxSizing: "border-box",
     padding: "0 12px",
     border: "1px solid #334155",
-    borderRadius: 12,
+    borderRadius: 10,
     background: "#0f172a",
     color: "#f8fafc",
     fontSize: 16,
   },
   button: {
     width: "100%",
-    minHeight: 48,
+    minHeight: 42,
     marginBottom: 16,
     border: 0,
-    borderRadius: 12,
+    borderRadius: 10,
     background: "#15803d",
     color: "#ffffff",
     fontWeight: 900,

@@ -4,10 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "dev": "npm --prefix DD-LD-Varde run dev --",
+    "build": "npm --prefix DD-LD-Varde run build",
+    "lint": "npm --prefix DD-LD-Varde run lint",
+    "preview": "npm --prefix DD-LD-Varde run preview",
+    "test": "npm --prefix DD-LD-Varde run test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
