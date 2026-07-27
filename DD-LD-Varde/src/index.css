@@ -47,9 +47,17 @@ button { cursor: pointer; }
   display: none;
 }
 
-.top-nav-shell .top-status-text,
 .top-nav-shell .toolbar-health {
   display: none;
+}
+
+.top-nav-shell .top-status-text {
+  display: inline;
+  max-width: min(52vw, 460px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
 }
 
 .top-nav-shell .live-pill {
