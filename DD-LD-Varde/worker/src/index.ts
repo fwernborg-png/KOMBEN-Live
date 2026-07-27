@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { normalizeAtgStartTime, parseAtgStartTimeMs } from "./atgTime";
 import { PLACE_RULE_CONFIG_V1 } from "../../src/placeModel/config";
 import { evaluatePlaceModelAtLock } from "../../src/placeModel/engine";
 import { fetchHorseGallopPercent } from "../../src/gallop";
@@ -300,7 +301,9 @@ function parseMeetingRaceRefs(trackValue: unknown): MeetingRaceRef[] {
       if (!raceNumber) return null;
 
       const raceId = asString(rec.id) || asString(rec.raceId) || null;
-      const startTime = asString(rec.startTime) || asString(rec.scheduledStartTime) || undefined;
+      const startTime = normalizeAtgStartTime(
+        asString(rec.startTime) || asString(rec.scheduledStartTime) || undefined,
+      );
 
       return {
         raceNumber,
@@ -527,7 +530,12 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
   return {
     raceNumber,
     id: asString(rec.id) || `race-${requestedRaceNumber}`,
-    startTime: asString(rawRace.startTime) || asString(rawRace.scheduledStartTime) || asString(rec.startTime) || undefined,
+    startTime: normalizeAtgStartTime(
+      asString(rawRace.startTime) ||
+        asString(rawRace.scheduledStartTime) ||
+        asString(rec.startTime) ||
+        undefined,
+    ),
     status: asString(rec.status) || asString(rawRace.status),
     runners,
     isMonte: /mont[eé]/i.test(raceText),
@@ -537,7 +545,7 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
 
 function raceCollectionWindow(startTime?: string) {
   if (!startTime) return null;
-  const startMs = new Date(startTime).getTime();
+  const startMs = parseAtgStartTimeMs(startTime);
   if (!Number.isFinite(startMs)) return null;
   return {
     startMs,
