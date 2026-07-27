@@ -1,0 +1,28 @@
+{
+  "name": "Platsjägaren",
+  "short_name": "Platsjägaren",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#041639",
+  "theme_color": "#041639",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
