@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { normalizeAtgStartTime, parseAtgStartTimeMs } from "./atgTime";
+import { parsePushSubscription } from "./pushSubscription";
 import { PLACE_RULE_CONFIG_V1 } from "../../src/placeModel/config";
 import { evaluatePlaceModelAtLock } from "../../src/placeModel/engine";
 import { fetchHorseGallopPercent } from "../../src/gallop";
@@ -13,6 +14,9 @@ type Env = {
   RACE_DATE_OVERRIDE?: string;
   LOCK_GRACE_SECONDS?: string;
   BET_SETTLEMENT_LOOKBACK_DAYS?: string;
+  VAPID_SUBJECT?: string;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
 };
 
 type Track = {
@@ -1368,12 +1372,14 @@ async function runCron(env: Env) {
 
 const ATG_PROXY_PREFIX = "/atg";
 const PLACE_HISTORY_PATH = "/api/place-live/history";
+const PUSH_PUBLIC_KEY_PATH = "/api/push/public-key";
+const PUSH_SUBSCRIBE_PATH = "/api/push/subscribe";
 const ATG_PROXY_BASE_URL = "https://www.atg.se/services/racinginfo/v1/api";
 
 function withCors(headers?: HeadersInit) {
   const result = new Headers(headers);
   result.set("Access-Control-Allow-Origin", "*");
-  result.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  result.set("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS");
   result.set("Access-Control-Allow-Headers", "Content-Type");
   return result;
 }
@@ -1426,6 +1432,108 @@ function jsonWithCors(payload: unknown, status = 200) {
       "Cache-Control": "no-store",
     }),
   });
+}
+
+async function getPushPublicKey(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: withCors(),
+    });
+  }
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return jsonWithCors({ ok: false, error: "Method not allowed" }, 405);
+  }
+
+  const publicKey = env.VAPID_PUBLIC_KEY?.trim();
+
+  if (!publicKey) {
+    return jsonWithCors(
+      { ok: false, error: "Push notifications are not configured" },
+      503,
+    );
+  }
+
+  if (request.method === "HEAD") {
+    return new Response(null, {
+      status: 200,
+      headers: withCors({ "Cache-Control": "no-store" }),
+    });
+  }
+
+  return jsonWithCors({
+    ok: true,
+    publicKey,
+  });
+}
+
+async function savePushSubscription(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: withCors(),
+    });
+  }
+
+  if (request.method !== "POST") {
+    return jsonWithCors({ ok: false, error: "Method not allowed" }, 405);
+  }
+
+  try {
+    const subscription = parsePushSubscription(await request.json());
+
+    if (!subscription) {
+      return jsonWithCors(
+        { ok: false, error: "Invalid push subscription" },
+        400,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const supabase = createSupabaseClient(env);
+
+    const { error } = await supabase
+      .from("place_push_subscriptions")
+      .upsert(
+        {
+          endpoint: subscription.endpoint,
+          expiration_time: subscription.expirationTime,
+          p256dh: subscription.keys.p256dh,
+          auth: subscription.keys.auth,
+          user_agent: request.headers.get("User-Agent"),
+          active: true,
+          failure_count: 0,
+          updated_at: now,
+        },
+        {
+          onConflict: "endpoint",
+        },
+      );
+
+    if (error) {
+      throw new Error(`Could not save push subscription: ${error.message}`);
+    }
+
+    return jsonWithCors({
+      ok: true,
+      subscribed: true,
+    });
+  } catch (error) {
+    return jsonWithCors(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
 }
 
 async function getPlaceOddsHistory(
@@ -1563,6 +1671,14 @@ export default {
       url.pathname.startsWith(`${ATG_PROXY_PREFIX}/`)
     ) {
       return proxyAtgRequest(request, url);
+    }
+
+    if (url.pathname === PUSH_PUBLIC_KEY_PATH) {
+      return getPushPublicKey(request, env);
+    }
+
+    if (url.pathname === PUSH_SUBSCRIBE_PATH) {
+      return savePushSubscription(request, env);
     }
 
     if (url.pathname === PLACE_HISTORY_PATH) {
