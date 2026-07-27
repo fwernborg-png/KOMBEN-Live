@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "./lib/supabase";
 import { PLACE_RULE_CONFIG_V1, getRaceLockTimeMs } from "./placeModel/config";
@@ -87,6 +87,30 @@ type OddsPoint = {
 };
 
 type OddsHistory = Record<string, OddsPoint[]>;
+
+type ServerOddsPoint = {
+  runnerNumber: number;
+  market: "WIN" | "PLACE";
+  oddsDecimal: number;
+  pointTs: string;
+};
+
+type ServerOddsHistoryResponse = {
+  ok: boolean;
+  count: number;
+  firstPointTs: string | null;
+  lastPointTs: string | null;
+  points: ServerOddsPoint[];
+  error?: string;
+};
+
+type ServerHistorySyncState = {
+  status: "idle" | "loading" | "synced" | "error";
+  count: number;
+  firstPointTs: string | null;
+  lastPointTs: string | null;
+  syncedAtMs: number | null;
+};
 
 type TvillingBet = {
   id: string;
@@ -289,7 +313,10 @@ type RaceOddsCollectionMeta = {
   usedOddsPointTimestampMs: number | null;
 };
 
-const API = "https://dd-ld-varde-place-live-worker.fredde-platsmodell-live.workers.dev/atg";
+const WORKER_API =
+  "https://dd-ld-varde-place-live-worker.fredde-platsmodell-live.workers.dev";
+const API = `${WORKER_API}/atg`;
+const PLACE_HISTORY_API = `${WORKER_API}/api/place-live/history`;
 const REFRESH_SECONDS = 60;
 const GALLOP_CACHE_STORAGE_KEY = "komben-live-gallop-cache-v1";
 const FETCH_TIMEOUT_MS = 12000;
@@ -669,6 +696,28 @@ function appendMinuteSnapshot(
   // En datapunkt per minut, även när oddset står still. Det gör jämnheten mätbar.
   if (last && timestamp - last.timestamp < 55_000) return history;
   return [...history, { odds, timestamp }].slice(-MAX_HISTORY_POINTS);
+}
+
+function mergeOddsPointsByMinute(
+  existing: OddsPoint[],
+  serverPoints: OddsPoint[],
+) {
+  const byMinute = new Map<number, OddsPoint>();
+
+  for (const point of existing) {
+    const minute = Math.floor(point.timestamp / 60_000) * 60_000;
+    byMinute.set(minute, point);
+  }
+
+  // Serverhistoriken är sanningskälla och ersätter lokal data för samma minut.
+  for (const point of serverPoints) {
+    const minute = Math.floor(point.timestamp / 60_000) * 60_000;
+    byMinute.set(minute, point);
+  }
+
+  return [...byMinute.values()]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-MAX_HISTORY_POINTS);
 }
 
 function raceCollectionWindow(startTime?: string) {
@@ -1736,6 +1785,14 @@ export default function App() {
   const [updated, setUpdated] = useState("");
   const [secondsToRefresh, setSecondsToRefresh] = useState(REFRESH_SECONDS);
   const [oddsHistory, setOddsHistory] = useState<OddsHistory>({});
+  const [serverHistorySync, setServerHistorySync] =
+    useState<ServerHistorySyncState>({
+      status: "idle",
+      count: 0,
+      firstPointTs: null,
+      lastPointTs: null,
+      syncedAtMs: null,
+    });
   const [tvillingBets, setTvillingBets] = useState<TvillingBet[]>([]);
   const [signalRecords, setSignalRecords] = useState<SignalRecord[]>([]);
   const [placeEvaluations, setPlaceEvaluations] = useState<PlaceEvaluation[]>([]);
@@ -3169,6 +3226,33 @@ export default function App() {
     return null;
   }
 
+  const fetchServerOddsHistory = useCallback(async (
+    track: Track,
+    race: Race,
+    signal?: AbortSignal,
+  ): Promise<ServerOddsHistoryResponse | null> => {
+    const params = new URLSearchParams({
+      date,
+      trackId: String(track.id),
+      raceNumber: String(race.raceNumber),
+    });
+
+    const response = await fetch(
+      `${PLACE_HISTORY_API}?${params.toString()}`,
+      {
+        cache: "no-store",
+        signal,
+      },
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as ServerOddsHistoryResponse;
+    return data.ok ? data : null;
+  }, [date]);
+
   function buildPlaceholderRace(track: Track, raceNumberValue: number, startTime?: string): Race {
     return {
       raceNumber: raceNumberValue,
@@ -3535,6 +3619,92 @@ export default function App() {
     void loadTracks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!selectedTrack || !selectedRace) {
+      setServerHistorySync({
+        status: "idle",
+        count: 0,
+        firstPointTs: null,
+        lastPointTs: null,
+        syncedAtMs: null,
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    setServerHistorySync((current) => ({
+      ...current,
+      status: "loading",
+    }));
+
+    void fetchServerOddsHistory(
+      selectedTrack,
+      selectedRace,
+      controller.signal,
+    )
+      .then((serverHistory) => {
+        if (!serverHistory || controller.signal.aborted) return;
+
+        const grouped = new Map<string, OddsPoint[]>();
+
+        for (const point of serverHistory.points) {
+          const timestamp = Date.parse(point.pointTs);
+          if (
+            !Number.isFinite(timestamp) ||
+            !Number.isFinite(point.oddsDecimal) ||
+            point.oddsDecimal <= 0
+          ) {
+            continue;
+          }
+
+          const key =
+            point.market === "PLACE"
+              ? placeRunnerKey(selectedRace.id, point.runnerNumber)
+              : runnerKey(selectedRace.id, point.runnerNumber);
+
+          const points = grouped.get(key) ?? [];
+          points.push({
+            odds: Math.round(point.oddsDecimal * 100),
+            timestamp,
+          });
+          grouped.set(key, points);
+        }
+
+        setOddsHistory((current) => {
+          const next = { ...current };
+
+          for (const [key, serverPoints] of grouped) {
+            next[key] = mergeOddsPointsByMinute(
+              next[key] ?? [],
+              serverPoints,
+            );
+          }
+
+          return next;
+        });
+
+        setServerHistorySync({
+          status: "synced",
+          count: serverHistory.count,
+          firstPointTs: serverHistory.firstPointTs,
+          lastPointTs: serverHistory.lastPointTs,
+          syncedAtMs: Date.now(),
+        });
+      })
+      .catch((error) => {
+        if (!isAbortError(error)) {
+          console.error("Kunde inte läsa serverhistoriken", error);
+          setServerHistorySync((current) => ({
+            ...current,
+            status: "error",
+          }));
+        }
+      });
+
+    return () => controller.abort();
+  }, [selectedTrack, selectedRace, updated, fetchServerOddsHistory]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -4975,7 +5145,15 @@ export default function App() {
               </div>
               <div className="top-status-group">
                 <span className="live-pill">LIVE</span>
-                <span className="top-status-text">Svenska banor · klientinsamling var 60s (kräver öppen app)</span>
+                <span className="top-status-text">
+                {serverHistorySync.status === "synced"
+                  ? `Serverhistorik synkad · ${serverHistorySync.count} punkter`
+                  : serverHistorySync.status === "loading"
+                    ? "Serverhistorik hämtas..."
+                    : serverHistorySync.status === "error"
+                      ? "Serverhistoriken kunde inte synkas"
+                      : "Serverhistorik väntar"}
+              </span>
               </div>
             </div>
 
