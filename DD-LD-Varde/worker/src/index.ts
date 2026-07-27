@@ -236,6 +236,34 @@ async function fetchWithTimeout(args: {
   }
 }
 
+function createSupabaseClient(env: Env) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false },
+    global: {
+      fetch: (input, init) =>
+        fetchWithTimeout({
+          url: input,
+          description: "Supabase request",
+          timeoutMs: DEFAULT_SUPABASE_TIMEOUT_MS,
+          signal: init?.signal,
+          init,
+          parseResponse: async (response) => {
+            const body = await response.arrayBuffer();
+            return new Response(body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            });
+          },
+        }),
+    },
+  });
+}
+
 function toIsoMinute(ms: number) {
   const bucket = Math.floor(ms / 60_000) * 60_000;
   return new Date(bucket).toISOString();
@@ -754,31 +782,7 @@ async function runCron(env: Env) {
     runController.abort(new Error(`Cron run timed out after ${DEFAULT_RUN_TIMEOUT_MS}ms`));
   }, DEFAULT_RUN_TIMEOUT_MS);
 
-  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
-  }
-
-  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false },
-    global: {
-      fetch: (input, init) =>
-        fetchWithTimeout({
-          url: input,
-          description: "Supabase request",
-          timeoutMs: DEFAULT_SUPABASE_TIMEOUT_MS,
-          signal: init?.signal,
-          init,
-          parseResponse: async (response) => {
-            const body = await response.arrayBuffer();
-            return new Response(body, {
-              status: response.status,
-              statusText: response.statusText,
-              headers: response.headers,
-            });
-          },
-        }),
-    },
-  });
+  const supabase = createSupabaseClient(env);
 
   const staleRunningThresholdIso = new Date(startMs - STALE_RUNNING_MAX_AGE_MS).toISOString();
   const { error: staleRunCleanupError } = await supabase
@@ -1363,6 +1367,7 @@ async function runCron(env: Env) {
 
 
 const ATG_PROXY_PREFIX = "/atg";
+const PLACE_HISTORY_PATH = "/api/place-live/history";
 const ATG_PROXY_BASE_URL = "https://www.atg.se/services/racinginfo/v1/api";
 
 function withCors(headers?: HeadersInit) {
@@ -1413,6 +1418,138 @@ async function proxyAtgRequest(request: Request, url: URL): Promise<Response> {
   });
 }
 
+function jsonWithCors(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: withCors({
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    }),
+  });
+}
+
+async function getPlaceOddsHistory(
+  request: Request,
+  url: URL,
+  env: Env,
+): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: withCors(),
+    });
+  }
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: withCors({ "Content-Type": "text/plain; charset=utf-8" }),
+    });
+  }
+
+  const raceDate = url.searchParams.get("date")?.trim() ?? "";
+  const trackId = Number(url.searchParams.get("trackId"));
+  const raceNumber = Number(url.searchParams.get("raceNumber"));
+  const since = url.searchParams.get("since")?.trim() || null;
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(raceDate) ||
+    !Number.isInteger(trackId) ||
+    trackId <= 0 ||
+    !Number.isInteger(raceNumber) ||
+    raceNumber <= 0
+  ) {
+    return jsonWithCors(
+      {
+        ok: false,
+        error: "date, trackId and raceNumber are required",
+      },
+      400,
+    );
+  }
+
+  if (since !== null && !Number.isFinite(Date.parse(since))) {
+    return jsonWithCors(
+      {
+        ok: false,
+        error: "since must be a valid ISO timestamp",
+      },
+      400,
+    );
+  }
+
+  try {
+    const supabase = createSupabaseClient(env);
+
+    let query = supabase
+      .from("place_live_odds_points")
+      .select(
+        "race_id,race_date,track_id,track_name,race_number,runner_number,horse_id,horse_name,market,odds_decimal,point_ts",
+      )
+      .eq("race_date", raceDate)
+      .eq("track_id", trackId)
+      .eq("race_number", raceNumber)
+      .order("point_ts", { ascending: true })
+      .order("runner_number", { ascending: true })
+      .limit(5000);
+
+    if (since !== null) {
+      query = query.gt("point_ts", since);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Could not load place odds history: ${error.message}`);
+    }
+
+    const points = (data ?? []).map((row) => ({
+      raceId: row.race_id,
+      raceDate: row.race_date,
+      trackId: row.track_id,
+      trackName: row.track_name,
+      raceNumber: row.race_number,
+      runnerNumber: row.runner_number,
+      horseId: row.horse_id,
+      horseName: row.horse_name,
+      market: row.market,
+      oddsDecimal: Number(row.odds_decimal),
+      pointTs: row.point_ts,
+    }));
+
+    const payload = {
+      ok: true,
+      raceDate,
+      trackId,
+      raceNumber,
+      count: points.length,
+      firstPointTs: points.at(0)?.pointTs ?? null,
+      lastPointTs: points.at(-1)?.pointTs ?? null,
+      points,
+    };
+
+    if (request.method === "HEAD") {
+      return new Response(null, {
+        status: 200,
+        headers: withCors({
+          "Cache-Control": "no-store",
+          "X-Odds-Point-Count": String(points.length),
+        }),
+      });
+    }
+
+    return jsonWithCors(payload);
+  } catch (error) {
+    return jsonWithCors(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+}
+
 export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runCron(env));
@@ -1426,6 +1563,10 @@ export default {
       url.pathname.startsWith(`${ATG_PROXY_PREFIX}/`)
     ) {
       return proxyAtgRequest(request, url);
+    }
+
+    if (url.pathname === PLACE_HISTORY_PATH) {
+      return getPlaceOddsHistory(request, url, env);
     }
 
     if (url.pathname === "/health") {
