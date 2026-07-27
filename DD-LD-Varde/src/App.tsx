@@ -4970,8 +4970,8 @@ export default function App() {
           <div className="top-nav-shell">
             <div className="app-headline">
               <div>
-                <p style={s.kicker}>PLATSMODELL LIVE</p>
-                <h1 className="app-title-compact">Platsmodell Live</h1>
+                <p style={s.kicker}>PLATSJÄGAREN</p>
+                <h1 className="app-title-compact">Platsjägaren</h1>
               </div>
               <div className="top-status-group">
                 <span className="live-pill">LIVE</span>
