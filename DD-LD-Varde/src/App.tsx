@@ -5262,6 +5262,38 @@ export default function App() {
                 <h1 className="app-title-compact">Platsjägaren</h1>
               </div>
               <div className="top-status-group">
+                <button
+                  type="button"
+                  onClick={activatePushNotifications}
+                  disabled={
+                    pushUiState === "subscribing" ||
+                    pushUiState === "subscribed" ||
+                    pushUiState === "unsupported"
+                  }
+                  title={pushMessage || undefined}
+                  style={{
+                    border: "1px solid rgba(255,255,255,0.25)",
+                    borderRadius: 999,
+                    padding: "8px 12px",
+                    background:
+                      pushUiState === "subscribed"
+                        ? "#166534"
+                        : "rgba(255,255,255,0.08)",
+                    color: "#fff",
+                    fontWeight: 700,
+                  }}
+                >
+                  {pushUiState === "subscribing"
+                    ? "Aktiverar..."
+                    : pushUiState === "subscribed"
+                      ? "🔔 Notiser aktiva"
+                      : pushUiState === "denied"
+                        ? "🔕 Notiser blockerade"
+                        : pushUiState === "unsupported"
+                          ? "Notiser stöds inte"
+                          : "🔔 Aktivera notiser"}
+                </button>
+
                 <span className="live-pill">LIVE</span>
                 <span className="top-status-text">
                 {serverHistorySync.status === "synced"
@@ -5344,37 +5376,6 @@ export default function App() {
             <h1 style={s.title}>🏇 Tvilling Live</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button
-              type="button"
-              onClick={activatePushNotifications}
-              disabled={
-                pushUiState === "subscribing" ||
-                pushUiState === "subscribed" ||
-                pushUiState === "unsupported"
-              }
-              title={pushMessage || undefined}
-              style={{
-                border: "1px solid rgba(255,255,255,0.25)",
-                borderRadius: 999,
-                padding: "8px 12px",
-                background:
-                  pushUiState === "subscribed"
-                    ? "#166534"
-                    : "rgba(255,255,255,0.08)",
-                color: "#fff",
-                fontWeight: 700,
-              }}
-            >
-              {pushUiState === "subscribing"
-                ? "Aktiverar..."
-                : pushUiState === "subscribed"
-                  ? "🔔 Notiser aktiva"
-                  : pushUiState === "denied"
-                    ? "🔕 Notiser blockerade"
-                    : pushUiState === "unsupported"
-                      ? "Notiser stöds inte"
-                      : "🔔 Aktivera notiser"}
-            </button>
 
             <span style={s.live}>LIVE</span>
           </div>
