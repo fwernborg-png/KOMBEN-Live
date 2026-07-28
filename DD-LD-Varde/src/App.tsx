@@ -1965,6 +1965,78 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restorePushSubscriptionState() {
+      if (
+        !("serviceWorker" in navigator) ||
+        !("PushManager" in window) ||
+        !("Notification" in window)
+      ) {
+        return;
+      }
+
+      if (Notification.permission === "denied") {
+        setPushUiState("denied");
+        setPushMessage("Notiser är blockerade i webbläsarens inställningar.");
+        return;
+      }
+
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+
+        if (cancelled) return;
+
+        if (!subscription || Notification.permission !== "granted") {
+          setPushUiState("idle");
+          setPushMessage("");
+          return;
+        }
+
+        const saveResponse = await fetch(PUSH_SUBSCRIBE_API, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(subscription.toJSON()),
+        });
+
+        const savePayload = (await saveResponse.json()) as {
+          ok?: boolean;
+          error?: string;
+        };
+
+        if (!saveResponse.ok || !savePayload.ok) {
+          throw new Error(
+            savePayload.error || "Kunde inte återställa pushprenumerationen.",
+          );
+        }
+
+        if (!cancelled) {
+          setPushUiState("subscribed");
+          setPushMessage("Notiser är aktiverade.");
+        }
+      } catch (pushError) {
+        if (!cancelled) {
+          setPushUiState("error");
+          setPushMessage(
+            pushError instanceof Error
+              ? pushError.message
+              : "Kunde inte kontrollera notiserna.",
+          );
+        }
+      }
+    }
+
+    void restorePushSubscriptionState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const selectedTrack = useMemo(
     () => tracks.find((track) => String(track.id) === trackId),
     [tracks, trackId],
