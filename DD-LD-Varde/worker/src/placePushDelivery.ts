@@ -30,6 +30,8 @@ const EMPTY_RESULT: PlaceT3DeliveryResult = {
   failed: 0,
 };
 
+const CLAIM_STALE_AFTER_MS = 90_000;
+
 export async function deliverPlaceT3Notification(args: {
   supabase: SupabaseClient;
   vapid: {
@@ -75,7 +77,7 @@ export async function deliverPlaceT3Notification(args: {
 
   const { data: existingLog, error: existingLogError } = await supabase
     .from("place_push_notification_log")
-    .select("status")
+    .select("status,claimed_at,updated_at")
     .eq("notification_key", notificationKey)
     .maybeSingle();
 
@@ -86,7 +88,22 @@ export async function deliverPlaceT3Notification(args: {
   }
 
   if (existingLog) {
-    return EMPTY_RESULT;
+    const claimedAtMs =
+      typeof existingLog.claimed_at === "string"
+        ? Date.parse(existingLog.claimed_at)
+        : Number.NaN;
+    const nowMs = Date.parse(nowIso);
+    const staleClaim =
+      existingLog.status === "CLAIMED" &&
+      (!Number.isFinite(claimedAtMs) ||
+        !Number.isFinite(nowMs) ||
+        nowMs - claimedAtMs >= CLAIM_STALE_AFTER_MS);
+    const retryable =
+      existingLog.status === "FAILED" || staleClaim;
+
+    if (!retryable) {
+      return EMPTY_RESULT;
+    }
   }
 
   const { data: subscriptions, error: subscriptionsError } = await supabase
@@ -107,39 +124,67 @@ export async function deliverPlaceT3Notification(args: {
     return EMPTY_RESULT;
   }
 
-  const { error: claimError } = await supabase
-    .from("place_push_notification_log")
-    .insert({
-      notification_key: notificationKey,
-      notification_type: "PLACE_T3",
-      rule_version: PLACE_ALERT_CONFIG_V1.ruleVersion,
-      race_id: raceId,
-      race_date: raceDate,
-      track_id: trackId,
-      track_name: trackName,
-      race_number: raceNumber,
-      planned_start_time: plannedStartTime,
-      candidate_number: candidate.runnerNumber,
-      candidate_name: candidate.runnerName,
-      candidate_win_odds: candidate.currentWinOdds,
-      candidate_strength: candidate.strength,
-      status: "CLAIMED",
-      subscriptions_attempted: 0,
-      subscriptions_sent: 0,
-      subscriptions_failed: 0,
-      payload_json: notification,
-      claimed_at: nowIso,
-      updated_at: nowIso,
-    });
+  const claimPayload = {
+    notification_key: notificationKey,
+    notification_type: "PLACE_T3",
+    rule_version: PLACE_ALERT_CONFIG_V1.ruleVersion,
+    race_id: raceId,
+    race_date: raceDate,
+    track_id: trackId,
+    track_name: trackName,
+    race_number: raceNumber,
+    planned_start_time: plannedStartTime,
+    candidate_number: candidate.runnerNumber,
+    candidate_name: candidate.runnerName,
+    candidate_win_odds: candidate.currentWinOdds,
+    candidate_strength: candidate.strength,
+    status: "CLAIMED",
+    subscriptions_attempted: 0,
+    subscriptions_sent: 0,
+    subscriptions_failed: 0,
+    payload_json: notification,
+    claimed_at: nowIso,
+    sent_at: null,
+    updated_at: nowIso,
+  };
 
-  if (claimError) {
-    if (claimError.code === "23505") {
+  if (existingLog) {
+    if (typeof existingLog.updated_at !== "string") {
       return EMPTY_RESULT;
     }
 
-    throw new Error(
-      `Could not claim notification ${notificationKey}: ${claimError.message}`,
-    );
+    const { data: claimedLog, error: reclaimError } = await supabase
+      .from("place_push_notification_log")
+      .update(claimPayload)
+      .eq("notification_key", notificationKey)
+      .eq("status", existingLog.status)
+      .eq("updated_at", existingLog.updated_at)
+      .select("notification_key")
+      .maybeSingle();
+
+    if (reclaimError) {
+      throw new Error(
+        `Could not reclaim notification ${notificationKey}: ${reclaimError.message}`,
+      );
+    }
+
+    if (!claimedLog) {
+      return EMPTY_RESULT;
+    }
+  } else {
+    const { error: claimError } = await supabase
+      .from("place_push_notification_log")
+      .insert(claimPayload);
+
+    if (claimError) {
+      if (claimError.code === "23505") {
+        return EMPTY_RESULT;
+      }
+
+      throw new Error(
+        `Could not claim notification ${notificationKey}: ${claimError.message}`,
+      );
+    }
   }
 
   let sent = 0;
