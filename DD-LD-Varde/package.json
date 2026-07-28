@@ -14,6 +14,7 @@
     "worker:trigger": "curl -sS \"http://127.0.0.1:8787/__scheduled\""
   },
   "dependencies": {
+    "@block65/webcrypto-web-push": "^1.0.2",
     "@supabase/supabase-js": "^2.110.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
