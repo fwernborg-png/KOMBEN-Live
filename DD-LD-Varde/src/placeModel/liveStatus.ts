@@ -25,6 +25,17 @@ export function deriveLiveSignalState(args: {
   const { nowMs, lockTimeMs, preview, lockedEvaluation, lockedBet } = args;
   const lockPassed = lockTimeMs !== null && Number.isFinite(lockTimeMs) && nowMs >= lockTimeMs;
 
+  if (lockedBet) {
+    return {
+      mode: "LOCKED_PLAY",
+      title: "BÄSTA PLATSHÄST",
+      statusText: "LÅST PLATSSPEL",
+      highlightedRunnerNumber: lockedBet.horseNumber,
+      evaluatedRunnerNumber:
+        lockedEvaluation?.smoothest?.runnerNumber ?? lockedBet.horseNumber,
+    };
+  }
+
   if (lockedEvaluation) {
     const evaluatedRunnerNumber = lockedEvaluation.smoothest?.runnerNumber ?? null;
     if (lockedEvaluation.decision === "PLAY") {
@@ -32,7 +43,7 @@ export function deriveLiveSignalState(args: {
         mode: "LOCKED_PLAY",
         title: "BÄSTA PLATSHÄST",
         statusText: "LÅST PLATSSPEL",
-        highlightedRunnerNumber: lockedBet?.horseNumber ?? evaluatedRunnerNumber,
+        highlightedRunnerNumber: evaluatedRunnerNumber,
         evaluatedRunnerNumber,
       };
     }

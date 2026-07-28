@@ -153,7 +153,7 @@ export async function upsertPlaceEvaluation(evaluation: PlaceEvaluation) {
       created_at: evaluation.createdAt,
       updated_at: evaluation.updatedAt,
     },
-    { onConflict: "race_id,rule_version" },
+    { onConflict: "race_id,rule_version", ignoreDuplicates: true },
   );
 
   if (error) {
@@ -224,6 +224,17 @@ export async function upsertPlaceBet(bet: PlaceBet) {
 
   if (error) {
     throw new Error(`Kunde inte spara platsspel: ${error.message}`);
+  }
+}
+
+export async function deletePlaceBet(betId: string) {
+  const { error } = await supabase
+    .from("place_model_bets")
+    .delete()
+    .eq("bet_id", betId);
+
+  if (error) {
+    throw new Error(`Kunde inte ta bort platsspel: ${error.message}`);
   }
 }
 

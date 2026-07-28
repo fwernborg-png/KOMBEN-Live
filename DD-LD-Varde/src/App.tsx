@@ -25,6 +25,7 @@ import {
   validateGallopCoverageAtLock,
 } from "./gallop";
 import {
+  deletePlaceBet,
   loadPlaceBetsByDate,
   loadPlaceEvaluationsByDate,
   saveAuditLog,
@@ -1848,6 +1849,7 @@ export default function App() {
   const [signalRecords, setSignalRecords] = useState<SignalRecord[]>([]);
   const [placeEvaluations, setPlaceEvaluations] = useState<PlaceEvaluation[]>([]);
   const [placeBets, setPlaceBets] = useState<PlaceBet[]>([]);
+  const [placeJournalLoaded, setPlaceJournalLoaded] = useState(false);
   const [placeAuditLog, setPlaceAuditLog] = useState<PlaceAuditLogEntry[]>([]);
   const [placeJournalDateFilter, setPlaceJournalDateFilter] = useState("");
   const [placeJournalTrackFilter, setPlaceJournalTrackFilter] = useState("");
@@ -2468,6 +2470,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    setPlaceJournalLoaded(false);
 
     async function loadPlaceJournal() {
       try {
@@ -2479,6 +2482,7 @@ export default function App() {
         if (cancelled) return;
         setPlaceEvaluations(evaluations);
         setPlaceBets(bets);
+        setPlaceJournalLoaded(true);
         setPlaceDbError("");
       } catch (error) {
         if (cancelled) return;
@@ -4029,6 +4033,7 @@ export default function App() {
   }, [tracks.length, Object.keys(racesByTrack).length, date]);
 
   useEffect(() => {
+    if (!placeJournalLoaded) return;
     if (!selectedTrack || !races.length) return;
 
     const evaluationsToPersist: PlaceEvaluation[] = [];
@@ -4059,7 +4064,10 @@ export default function App() {
         fetchFinishedAtMs >= lockTimeMs;
 
       const raceKey = `${race.id}:${PLACE_RULE_CONFIG_V1.ruleVersion}`;
-      if (placeEvaluationsByRaceKey.has(raceKey)) continue;
+      if (
+        placeEvaluationsByRaceKey.has(raceKey) ||
+        placeBetsByRaceKey.has(raceKey)
+      ) continue;
 
         const trendForRace = applyGallopOverlayToTrendRunners({
           trendRunners: buildTrendRunnersForRace(race, oddsHistory),
@@ -4231,6 +4239,7 @@ export default function App() {
       }
     })();
   }, [
+    placeJournalLoaded,
     selectedTrack,
     races,
     oddsHistory,
@@ -4656,6 +4665,81 @@ export default function App() {
     }
 
     await refreshSelectedRace();
+  }
+
+  async function setBetPlayedStatus(betId: string, played: boolean) {
+    const bet = placeBets.find((item) => item.betId === betId);
+    if (!bet || bet.userActuallyPlayed === played) return;
+
+    const nowIso = new Date().toISOString();
+    const updated: PlaceBet = {
+      ...bet,
+      userActuallyPlayed: played,
+      updatedAt: nowIso,
+    };
+
+    const auditEntry: PlaceAuditLogEntry = {
+      id: crypto.randomUUID(),
+      betId,
+      field: "userActuallyPlayed",
+      previousValue: String(bet.userActuallyPlayed),
+      newValue: String(played),
+      changedAt: nowIso,
+    };
+
+    setPlaceBets((current) =>
+      current.map((item) => (item.betId === betId ? updated : item)),
+    );
+    setPlaceAuditLog((current) => [auditEntry, ...current]);
+
+    try {
+      await upsertPlaceBet(updated);
+      await saveAuditLog(auditEntry);
+      setPlaceDbError("");
+    } catch (error) {
+      setPlaceBets((current) =>
+        current.map((item) => (item.betId === betId ? bet : item)),
+      );
+      setPlaceAuditLog((current) =>
+        current.filter((entry) => entry.id !== auditEntry.id),
+      );
+      const message =
+        error instanceof Error ? error.message : "Okant databasfel";
+      setPlaceDbError(message);
+      console.error("Kunde inte ändra spelstatus", error);
+    }
+  }
+
+  async function removeRegisteredPlaceBet(betId: string) {
+    const bet = placeBets.find((item) => item.betId === betId);
+    if (!bet) return;
+
+    const confirmed = window.confirm(
+      `Ta bort ${bet.horseNumber}. ${bet.horseName} permanent? Använd endast detta för dubbletter eller felregistreringar.`,
+    );
+    if (!confirmed) return;
+
+    setPlaceBets((current) =>
+      current.filter((item) => item.betId !== betId),
+    );
+    setPlaceJournalExpandedBetId((current) =>
+      current === betId ? null : current,
+    );
+
+    try {
+      await deletePlaceBet(betId);
+      setPlaceDbError("");
+    } catch (error) {
+      setPlaceBets((current) =>
+        current.some((item) => item.betId === betId)
+          ? current
+          : [...current, bet].sort((a, b) => a.raceNumber - b.raceNumber),
+      );
+      const message =
+        error instanceof Error ? error.message : "Okant databasfel";
+      setPlaceDbError(message);
+      console.error("Kunde inte ta bort platsspel", error);
+    }
   }
 
   async function updateBetManualResult(betId: string) {
@@ -5264,6 +5348,39 @@ export default function App() {
                 <span>Startodds {bet.startOdds.toFixed(2).replace(".", ",")} · Vinnarodds lasning {bet.currentWinOdds.toFixed(2).replace(".", ",")} · Sankning {bet.oddsDropPercent.toFixed(1).replace(".", ",")} %</span>
                 <span>Platsodds {bet.placeOddsDecimal?.toFixed(2).replace(".", ",") ?? "-"} · Placering {bet.finishPositionOfficial ?? "-"} · Utfall {bet.resultOutcome}</span>
                 <span>Insats {orenToSek(bet.stakeOren).toFixed(0)} kr · Ater {bet.returnOren == null ? "-" : `${orenToSek(bet.returnOren).toFixed(0)} kr`} · Netto {bet.netOren == null ? "-" : `${bet.netOren >= 0 ? "+" : ""}${orenToSek(bet.netOren).toFixed(0)} kr`}</span>
+                  <span>
+                    Spelstatus: {bet.userActuallyPlayed
+                      ? "Spelad – räknas i insats och ROI"
+                      : "Ej spelad – räknas inte i insats och ROI"}
+                  </span>
+
+                  <div className="pending-row-inline">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void setBetPlayedStatus(
+                          bet.betId,
+                          !bet.userActuallyPlayed,
+                        )
+                      }
+                      style={s.pendingOddsButton}
+                    >
+                      {bet.userActuallyPlayed
+                        ? "Markera ej spelad"
+                        : "Markera som spelad"}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="delete-lite"
+                      onClick={() =>
+                        void removeRegisteredPlaceBet(bet.betId)
+                      }
+                    >
+                      Ta bort dubblett/fel
+                    </button>
+                  </div>
+
 
                 {bet.resultStatus === "SAKNAR_PLATSODDS" || bet.resultOutcome === "PENDING" ? (
                   <div className="pending-row-inline">
