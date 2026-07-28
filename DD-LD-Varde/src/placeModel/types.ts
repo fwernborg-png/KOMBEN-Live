@@ -143,7 +143,7 @@ export type PlaceBet = {
 export type PlaceAuditLogEntry = {
   id: string;
   betId: string;
-  field: "finishPositionOfficial" | "placeOddsDecimal" | "resultStatus";
+  field: "finishPositionOfficial" | "placeOddsDecimal" | "resultStatus" | "userActuallyPlayed";
   previousValue: string | null;
   newValue: string | null;
   changedAt: string;

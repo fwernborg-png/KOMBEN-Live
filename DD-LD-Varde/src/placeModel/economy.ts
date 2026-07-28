@@ -79,7 +79,13 @@ export function computePlaceStats(bets: PlaceBet[]) {
   const pending = bets.filter((bet) => bet.resultOutcome === "PENDING").length;
   const hitRate = hits + misses > 0 ? (hits / (hits + misses)) * 100 : 0;
 
-  const economicBets = bets.filter((bet) => bet.resultStatus === "RESULT_READY" && bet.returnOren !== null && bet.netOren !== null);
+  const economicBets = bets.filter(
+    (bet) =>
+      bet.userActuallyPlayed &&
+      bet.resultStatus === "RESULT_READY" &&
+      bet.returnOren !== null &&
+      bet.netOren !== null,
+  );
   const totalStakeOren = economicBets.reduce((sum, bet) => sum + bet.stakeOren, 0);
   const totalReturnOren = economicBets.reduce((sum, bet) => sum + (bet.returnOren ?? 0), 0);
   const totalNetOren = totalReturnOren - totalStakeOren;
