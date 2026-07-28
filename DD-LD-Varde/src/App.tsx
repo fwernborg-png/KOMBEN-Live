@@ -317,6 +317,29 @@ const WORKER_API =
   "https://dd-ld-varde-place-live-worker.fredde-platsmodell-live.workers.dev";
 const API = `${WORKER_API}/atg`;
 const PLACE_HISTORY_API = `${WORKER_API}/api/place-live/history`;
+const PUSH_PUBLIC_KEY_API = `${WORKER_API}/api/push/public-key`;
+const PUSH_SUBSCRIBE_API = `${WORKER_API}/api/push/subscribe`;
+type PushUiState =
+  | "unsupported"
+  | "idle"
+  | "subscribing"
+  | "subscribed"
+  | "denied"
+  | "error";
+
+function base64UrlToUint8Array(value: string): Uint8Array<ArrayBuffer> {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const decoded = window.atob(base64);
+  const bytes = new Uint8Array(decoded.length);
+
+  for (let index = 0; index < decoded.length; index += 1) {
+    bytes[index] = decoded.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
 const REFRESH_SECONDS = 60;
 const GALLOP_CACHE_STORAGE_KEY = "komben-live-gallop-cache-v1";
 const FETCH_TIMEOUT_MS = 12000;
@@ -1753,6 +1776,19 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
 
 export default function App() {
   const [dbStatus, setDbStatus] = useState("Testar...");
+  const [pushUiState, setPushUiState] = useState<PushUiState>(() => {
+    if (
+      typeof window === "undefined" ||
+      !("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      !("Notification" in window)
+    ) {
+      return "unsupported";
+    }
+
+    return Notification.permission === "denied" ? "denied" : "idle";
+  });
+  const [pushMessage, setPushMessage] = useState("");
   useEffect(() => {
   async function testConnection() {
     const { error } = await supabase
@@ -1846,6 +1882,88 @@ export default function App() {
   const gallopCacheRef = useRef<Record<number, GallopCacheEntry>>({});
   const appBootMsRef = useRef(Date.now());
   const placeLoadStartedRef = useRef(false);
+
+  const activatePushNotifications = useCallback(async () => {
+    if (
+      !("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      !("Notification" in window)
+    ) {
+      setPushUiState("unsupported");
+      setPushMessage("Den här enheten stöder inte pushnotiser.");
+      return;
+    }
+
+    setPushUiState("subscribing");
+    setPushMessage("");
+
+    try {
+      const permission = await Notification.requestPermission();
+
+      if (permission !== "granted") {
+        setPushUiState("denied");
+        setPushMessage("Notiser är blockerade i webbläsarens inställningar.");
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+
+      if (!subscription) {
+        const keyResponse = await fetch(PUSH_PUBLIC_KEY_API, {
+          cache: "no-store",
+        });
+
+        const keyPayload = (await keyResponse.json()) as {
+          ok?: boolean;
+          publicKey?: string;
+          error?: string;
+        };
+
+        if (!keyResponse.ok || !keyPayload.publicKey) {
+          throw new Error(
+            keyPayload.error || "Kunde inte hämta pushnyckeln.",
+          );
+        }
+
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: base64UrlToUint8Array(
+            keyPayload.publicKey,
+          ),
+        });
+      }
+
+      const saveResponse = await fetch(PUSH_SUBSCRIBE_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(subscription.toJSON()),
+      });
+
+      const savePayload = (await saveResponse.json()) as {
+        ok?: boolean;
+        error?: string;
+      };
+
+      if (!saveResponse.ok || !savePayload.ok) {
+        throw new Error(
+          savePayload.error || "Kunde inte spara pushprenumerationen.",
+        );
+      }
+
+      setPushUiState("subscribed");
+      setPushMessage("Notiser är aktiverade.");
+    } catch (pushError) {
+      setPushUiState("error");
+      setPushMessage(
+        pushError instanceof Error
+          ? pushError.message
+          : "Kunde inte aktivera notiser.",
+      );
+    }
+  }, []);
 
   const selectedTrack = useMemo(
     () => tracks.find((track) => String(track.id) === trackId),
@@ -5225,7 +5343,41 @@ export default function App() {
             <p style={s.kicker}>LIVEODDS FRÅN ATG</p>
             <h1 style={s.title}>🏇 Tvilling Live</h1>
           </div>
-          <span style={s.live}>LIVE</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              type="button"
+              onClick={activatePushNotifications}
+              disabled={
+                pushUiState === "subscribing" ||
+                pushUiState === "subscribed" ||
+                pushUiState === "unsupported"
+              }
+              title={pushMessage || undefined}
+              style={{
+                border: "1px solid rgba(255,255,255,0.25)",
+                borderRadius: 999,
+                padding: "8px 12px",
+                background:
+                  pushUiState === "subscribed"
+                    ? "#166534"
+                    : "rgba(255,255,255,0.08)",
+                color: "#fff",
+                fontWeight: 700,
+              }}
+            >
+              {pushUiState === "subscribing"
+                ? "Aktiverar..."
+                : pushUiState === "subscribed"
+                  ? "🔔 Notiser aktiva"
+                  : pushUiState === "denied"
+                    ? "🔕 Notiser blockerade"
+                    : pushUiState === "unsupported"
+                      ? "Notiser stöds inte"
+                      : "🔔 Aktivera notiser"}
+            </button>
+
+            <span style={s.live}>LIVE</span>
+          </div>
         </header>
 
         <div style={s.filterBanner}>
