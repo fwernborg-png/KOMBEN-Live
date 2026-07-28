@@ -1775,6 +1775,17 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
 }
 
 export default function App() {
+  const initialLinkParamsRef = useRef<URLSearchParams | null>(
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search),
+  );
+  const initialLinkDate = initialLinkParamsRef.current?.get("date") ?? "";
+  const initialLinkTrackId =
+    initialLinkParamsRef.current?.get("trackId") ?? "";
+  const initialLinkRaceNumber =
+    initialLinkParamsRef.current?.get("raceNumber") ?? "";
+
   const [dbStatus, setDbStatus] = useState("Testar...");
   const [pushUiState, setPushUiState] = useState<PushUiState>(() => {
     if (
@@ -1806,10 +1817,14 @@ export default function App() {
   testConnection();
 }, []);
   const [activeTab, setActiveTab] = useState<AppTab>("race");
-  const [date, setDate] = useState(today());
+  const [date, setDate] = useState(() =>
+    /^\d{4}-\d{2}-\d{2}$/.test(initialLinkDate)
+      ? initialLinkDate
+      : today(),
+  );
   const [tracks, setTracks] = useState<Track[]>([]);
   const [countryFilter, setCountryFilter] = useState<"SE" | "FR">("SE");
-  const [trackId, setTrackId] = useState("");
+  const [trackId, setTrackId] = useState(initialLinkTrackId);
   const [races, setRaces] = useState<Race[]>([]);
   const [racesByTrack, setRacesByTrack] = useState<RacesByTrack>({});
   const [meetingRacesByTrack, setMeetingRacesByTrack] = useState<MeetingRacesByTrack>({});
@@ -1872,7 +1887,11 @@ export default function App() {
   const [expandedRunnerKey, setExpandedRunnerKey] = useState<string | null>(null);
   const selectedRaceByTrackRef = useRef(selectedRaceByTrack);
   const latestRaceSelectionRef = useRef({ trackId, raceId: selectedRaceId });
-  const pendingRaceNumberByTrackRef = useRef<Record<string, string>>({});
+  const pendingRaceNumberByTrackRef = useRef<Record<string, string>>(
+    initialLinkTrackId && initialLinkRaceNumber
+      ? { [initialLinkTrackId]: initialLinkRaceNumber }
+      : {},
+  );
   const currentMeetingIdRef = useRef(trackId);
   const currentRaceIdRef = useRef(selectedRaceId);
   const selectedRaceRequestRef = useRef(0);
