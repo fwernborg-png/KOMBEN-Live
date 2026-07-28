@@ -1,6 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { normalizeAtgStartTime, parseAtgStartTimeMs } from "./atgTime";
 import { parsePushSubscription } from "./pushSubscription";
+import {
+  PLACE_ALERT_CONFIG_V1,
+  isInPlaceT3NotificationWindow,
+} from "./placeNotifications";
+import { deliverPlaceT3Notification } from "./placePushDelivery";
 import { PLACE_RULE_CONFIG_V1 } from "../../src/placeModel/config";
 import { evaluatePlaceModelAtLock } from "../../src/placeModel/engine";
 import { fetchHorseGallopPercent } from "../../src/gallop";
@@ -775,6 +780,296 @@ function toDecimalOdds(raw: number | null): number | null {
   return raw / 100;
 }
 
+type PlaceOddsContext = {
+  window: NonNullable<ReturnType<typeof raceCollectionWindow>>;
+  byRunner: Map<number, OddsPoint[]>;
+  latestPointMs: number | null;
+  trendLite: TrendRunnerLite[];
+};
+
+async function loadPlaceOddsContext(args: {
+  supabase: ReturnType<typeof createSupabaseClient>;
+  race: Race;
+  nowMs: number;
+}): Promise<PlaceOddsContext | null> {
+  const { supabase, race, nowMs } = args;
+  const window = raceCollectionWindow(race.startTime);
+
+  if (!window) {
+    return null;
+  }
+
+  const { data: oddsRows, error: oddsRowsError } = await supabase
+    .from("place_live_odds_points")
+    .select("race_id,runner_number,market,odds_decimal,point_ts")
+    .eq("race_id", race.id)
+    .eq("market", "WIN")
+    .gte("point_ts", new Date(window.collectionStartMs).toISOString())
+    .lte("point_ts", new Date(nowMs).toISOString())
+    .order("point_ts", { ascending: true });
+
+  if (oddsRowsError) {
+    throw new Error(
+      `Could not load odds history for race ${race.id}: ${oddsRowsError.message}`,
+    );
+  }
+
+  const byRunner = new Map<number, OddsPoint[]>();
+  let latestPointMs: number | null = null;
+
+  for (const row of (oddsRows ?? []) as LiveOddsPointRow[]) {
+    const pointMs = new Date(row.point_ts).getTime();
+
+    if (!Number.isFinite(pointMs)) {
+      continue;
+    }
+
+    latestPointMs =
+      latestPointMs === null
+        ? pointMs
+        : Math.max(latestPointMs, pointMs);
+
+    const history = byRunner.get(row.runner_number) ?? [];
+
+    history.push({
+      odds: Number(row.odds_decimal),
+      timestamp: pointMs,
+    });
+
+    byRunner.set(row.runner_number, history);
+  }
+
+  const trendLite: TrendRunnerLite[] = race.runners.map((runner) => {
+    const history = (byRunner.get(runner.number) ?? []).sort(
+      (a, b) => a.timestamp - b.timestamp,
+    );
+
+    const firstOddsRaw = history[0]
+      ? Math.round(history[0].odds * 100)
+      : null;
+
+    return {
+      number: runner.number,
+      horseId: runner.horseId,
+      name: runner.name,
+      scratched: runner.scratched,
+      oddsRaw: runner.oddsRaw,
+      stats: { ...runner.stats },
+      firstOddsRaw,
+      changePercent: percentChange(firstOddsRaw, runner.oddsRaw),
+    };
+  });
+
+  return {
+    window,
+    byRunner,
+    latestPointMs,
+    trendLite,
+  };
+}
+
+async function buildPlaceEvaluationForRace(args: {
+  supabase: ReturnType<typeof createSupabaseClient>;
+  apiBaseUrl: string;
+  raceDate: string;
+  nowMs: number;
+  lockGraceMs: number;
+  runController: AbortController;
+  track: Track;
+  race: Race;
+  config: PlaceEvaluation["configSnapshot"];
+}): Promise<PlaceEvaluationBuildResult | null> {
+  const {
+    supabase,
+    apiBaseUrl,
+    raceDate,
+    nowMs,
+    lockGraceMs,
+    runController,
+    track,
+    race,
+    config,
+  } = args;
+
+  const context = await loadPlaceOddsContext({
+    supabase,
+    race,
+    nowMs,
+  });
+
+  if (!context) {
+    return null;
+  }
+
+  const { window, byRunner, latestPointMs, trendLite } = context;
+
+  const lockTimeMs =
+    window.startMs - config.lockMinutesBeforeRace * 60_000;
+
+  if (!Number.isFinite(lockTimeMs) || nowMs < lockTimeMs) {
+    return null;
+  }
+
+  const gallopFetches = trendLite
+    .filter(
+      (runner) =>
+        !runner.scratched &&
+        runner.stats.gallopPercent === null &&
+        runner.horseId !== null,
+    )
+    .map(async (runner) => {
+      const gallopPercent = await fetchHorseGallopPercent({
+        horseId: runner.horseId as number,
+        apiBaseUrl,
+        signal: runController.signal,
+        fetchImpl: (input, init) =>
+          fetchWithTimeout({
+            url: String(input),
+            description: `Horse results ${runner.horseId}`,
+            signal: runController.signal,
+            init,
+          }),
+      });
+
+      return {
+        runnerNumber: runner.number,
+        gallopPercent,
+      };
+    });
+
+  const gallopResults = await Promise.allSettled(gallopFetches);
+
+  for (const settled of gallopResults) {
+    if (settled.status !== "fulfilled") {
+      continue;
+    }
+
+    const target = trendLite.find(
+      (runner) => runner.number === settled.value.runnerNumber,
+    );
+
+    if (target && settled.value.gallopPercent !== null) {
+      target.stats.gallopPercent = settled.value.gallopPercent;
+    }
+  }
+
+  const indicatorsByRunner = computeIndicatorsAndStrength({
+    runners: trendLite,
+  });
+
+  const placeRunners: PlaceRunnerInput[] = trendLite.map((runner) => {
+    const history = (byRunner.get(runner.number) ?? [])
+      .filter(
+        (point) =>
+          point.timestamp >= window.collectionStartMs &&
+          point.timestamp < window.startMs,
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const indicators = indicatorsByRunner.get(runner.number) ?? {
+      strength: 0,
+      indicatorsGreen: [],
+    };
+
+    return {
+      number: runner.number,
+      horseId: runner.horseId,
+      name: runner.name,
+      startLane: null,
+      scratched: runner.scratched,
+      currentWinOddsDecimal: toDecimalOdds(runner.oddsRaw),
+      indicatorsGreen: indicators.indicatorsGreen,
+      strength: indicators.strength,
+      gallopPercent: runner.stats.gallopPercent,
+      gallopSource:
+        runner.stats.gallopPercent === null
+          ? null
+          : "ATG_HORSE_RESULTS",
+      gallopUpdatedAtMs:
+        runner.stats.gallopPercent === null ? null : nowMs,
+      gallopIsFresh: runner.stats.gallopPercent !== null,
+      oddsHistory: history,
+    };
+  });
+
+  const missingOddsRunners = placeRunners
+    .filter((runner) => !runner.scratched)
+    .filter((runner) => {
+      if (!runner.oddsHistory.length) {
+        return true;
+      }
+
+      return (
+        runner.oddsHistory[0].timestamp >
+        window.collectionStartMs + 2 * 60_000
+      );
+    })
+    .map((runner) => runner.number);
+
+  const missingGallopRunners = placeRunners
+    .filter((runner) => !runner.scratched)
+    .filter((runner) => runner.gallopPercent === null)
+    .map((runner) => runner.number);
+
+  const hasFreshCurrentOddsPoint =
+    latestPointMs !== null &&
+    Math.abs(lockTimeMs - latestPointMs) <= lockGraceMs;
+
+  const evaluation = evaluatePlaceModelAtLock({
+    race: {
+      raceId: race.id,
+      date: raceDate,
+      trackId: track.id,
+      trackName: track.name,
+      raceNumber: race.raceNumber,
+      plannedStartTime:
+        race.startTime ?? new Date(window.startMs).toISOString(),
+      raceStatus: race.status,
+      isMonte: race.isMonte,
+      startMethod: /auto/i.test(race.status ?? "")
+        ? "AUTO"
+        : /volt/i.test(race.status ?? "")
+          ? "VOLT"
+          : "UNKNOWN",
+      distanceMeters: null,
+      starters: race.runners.filter((runner) => !runner.scratched).length,
+    },
+    runners: placeRunners,
+    nowMs,
+    config,
+    alreadyLockedForVersion: false,
+    appStartedAfterLock: false,
+    hasCompleteIndicatorData: missingGallopRunners.length === 0,
+    incompleteIndicatorRunnerNumbers: missingGallopRunners,
+    hasCompleteOddsHistory: missingOddsRunners.length === 0,
+    incompleteOddsHistoryRunnerNumbers: missingOddsRunners,
+    hasFreshCurrentOddsPoint,
+  });
+
+  return {
+    lockTimeMs,
+    latestPointMs,
+    evaluation: {
+      ...evaluation,
+      snapshot: {
+        ...evaluation.snapshot,
+        lockTiming: {
+          plannedLockTimeMs: lockTimeMs,
+          lastFetchFinishedAtMs: nowMs,
+          actualSignalLockTimeMs: nowMs,
+          usedOddsPointTimestampMs: latestPointMs,
+        },
+      },
+    },
+  };
+}
+
+type PlaceEvaluationBuildResult = {
+  evaluation: PlaceEvaluation;
+  lockTimeMs: number;
+  latestPointMs: number | null;
+};
+
 async function runCron(env: Env) {
   const startMs = Date.now();
   const nowIso = new Date(startMs).toISOString();
@@ -828,6 +1123,10 @@ async function runCron(env: Env) {
     oddsPointsInserted: 0,
     evaluationsCreated: 0,
     betsCreated: 0,
+    notificationsClaimed: 0,
+    notificationsSent: 0,
+    notificationSubscriptionsAttempted: 0,
+    notificationSubscriptionsFailed: 0,
     betsSettled: 0,
     betsVoided: 0,
     settlementSkipped: 0,
@@ -942,6 +1241,86 @@ async function runCron(env: Env) {
       }
 
       summary.oddsPointsInserted += rows.length;
+    }
+
+    const vapidSubject = env.VAPID_SUBJECT?.trim();
+    const vapidPublicKey = env.VAPID_PUBLIC_KEY?.trim();
+    const vapidPrivateKey = env.VAPID_PRIVATE_KEY?.trim();
+
+    const vapid =
+      vapidSubject && vapidPublicKey && vapidPrivateKey
+        ? {
+            subject: vapidSubject,
+            publicKey: vapidPublicKey,
+            privateKey: vapidPrivateKey,
+          }
+        : null;
+
+    if (vapid) {
+      for (const item of allRaces) {
+        throwIfRunTimedOut(startMs);
+
+        const { track, race } = item;
+        const plannedStartTime = race.startTime;
+
+        if (
+          !plannedStartTime ||
+          !isInPlaceT3NotificationWindow(plannedStartTime, startMs)
+        ) {
+          continue;
+        }
+
+        try {
+          const preliminary = await buildPlaceEvaluationForRace({
+            supabase,
+            apiBaseUrl,
+            raceDate,
+            nowMs: startMs,
+            lockGraceMs,
+            runController,
+            track,
+            race,
+            config: PLACE_ALERT_CONFIG_V1,
+          });
+
+          if (
+            !preliminary ||
+            preliminary.evaluation.decision !== "PLAY" ||
+            !preliminary.evaluation.smoothest
+          ) {
+            continue;
+          }
+
+          const delivery = await deliverPlaceT3Notification({
+            supabase,
+            vapid,
+            raceDate,
+            raceId: race.id,
+            trackId: track.id,
+            trackName: track.name,
+            raceNumber: race.raceNumber,
+            plannedStartTime,
+            candidate: preliminary.evaluation.smoothest,
+            nowIso,
+          });
+
+          if (delivery.claimed) {
+            summary.notificationsClaimed += 1;
+          }
+
+          summary.notificationsSent += delivery.sent;
+          summary.notificationSubscriptionsAttempted += delivery.attempted;
+          summary.notificationSubscriptionsFailed += delivery.failed;
+        } catch (notificationError) {
+          console.warn(
+            `T-3 notification failed for race ${race.id}: ${
+              notificationError instanceof Error
+                ? notificationError.message
+                : "Unknown error"
+            }`,
+          );
+        }
+      }
     }
 
     const { data: existingEvalRows, error: existingEvalError } = await supabase
