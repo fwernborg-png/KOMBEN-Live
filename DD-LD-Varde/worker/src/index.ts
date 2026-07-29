@@ -11,6 +11,14 @@ import { evaluatePlaceModelAtLock } from "../../src/placeModel/engine";
 import { fetchHorseGallopPercent } from "../../src/gallop";
 import { buildModelBetFromEvaluation, settleModelBet } from "../../src/placeModel/workflow";
 import type { OddsPoint, PlaceBet, PlaceEvaluation, PlaceRunnerInput } from "../../src/placeModel/types";
+import {
+  WIN_PLACE_RULE_CONFIG_V1,
+  getWinPlacePlannedLockTimeMs,
+  isInWinPlaceFinalSignalWindow,
+} from "../../src/winPlaceModel/config";
+import { evaluateWinPlaceModelAtLock } from "../../src/winPlaceModel/engine";
+import type { WinPlaceRunnerInput } from "../../src/winPlaceModel/types";
+import { buildWinPlaceBetRows } from "./winPlacePersistence";
 
 type Env = {
   SUPABASE_URL: string;
@@ -1123,6 +1131,8 @@ async function runCron(env: Env) {
     oddsPointsInserted: 0,
     evaluationsCreated: 0,
     betsCreated: 0,
+    winPlaceEvaluationsCreated: 0,
+    winPlaceBetsCreated: 0,
     notificationsClaimed: 0,
     notificationsSent: 0,
     notificationSubscriptionsAttempted: 0,
@@ -1321,6 +1331,237 @@ async function runCron(env: Env) {
           );
         }
       }
+    }
+
+    const {
+      data: existingWinPlaceEvalRows,
+      error: existingWinPlaceEvalError,
+    } = await supabase
+      .from("win_place_race_evaluations")
+      .select("race_id,rule_version")
+      .eq("rule_version", WIN_PLACE_RULE_CONFIG_V1.ruleVersion)
+      .eq("signal_phase", "LIVE")
+      .eq("race_json->>date", raceDate);
+
+    if (existingWinPlaceEvalError) {
+      throw new Error(
+        `Could not load existing win-place evaluations: ${existingWinPlaceEvalError.message}`,
+      );
+    }
+
+    const existingWinPlaceEvalKeys = new Set(
+      ((existingWinPlaceEvalRows ?? []) as ExistingEvalKeyRow[]).map(
+        (row) => raceRuleKey(row.race_id, row.rule_version),
+      ),
+    );
+
+    for (const item of allRaces) {
+      throwIfRunTimedOut(startMs);
+
+      const { track, race } = item;
+      const plannedStartTime = race.startTime;
+
+      if (
+        !plannedStartTime ||
+        !isInWinPlaceFinalSignalWindow(
+          plannedStartTime,
+          startMs,
+          WIN_PLACE_RULE_CONFIG_V1,
+        )
+      ) {
+        continue;
+      }
+
+      const winPlaceRaceKey = raceRuleKey(
+        race.id,
+        WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
+      );
+
+      if (existingWinPlaceEvalKeys.has(winPlaceRaceKey)) {
+        continue;
+      }
+
+      const context = await loadPlaceOddsContext({
+        supabase,
+        race,
+        nowMs: startMs,
+      });
+
+      if (!context) {
+        continue;
+      }
+
+      const {
+        window,
+        byRunner,
+        latestPointMs,
+        trendLite,
+      } = context;
+
+      const indicatorsByRunner = computeIndicatorsAndStrength({
+        runners: trendLite,
+      });
+
+      const winPlaceRunners: WinPlaceRunnerInput[] =
+        trendLite.map((runner) => {
+          const history = (byRunner.get(runner.number) ?? [])
+            .filter(
+              (point) =>
+                point.timestamp >= window.collectionStartMs &&
+                point.timestamp <= startMs,
+            )
+            .sort((a, b) => a.timestamp - b.timestamp);
+
+          const indicators =
+            indicatorsByRunner.get(runner.number) ?? {
+              strength: 0,
+              indicatorsGreen: [],
+            };
+
+          return {
+            number: runner.number,
+            horseId: runner.horseId,
+            name: runner.name,
+            startLane: null,
+            scratched: runner.scratched,
+            currentWinOddsDecimal: toDecimalOdds(
+              runner.oddsRaw,
+            ),
+            indicatorsGreen: indicators.indicatorsGreen,
+            strength: indicators.strength,
+            oddsHistory: history,
+          };
+        });
+
+      const incompleteOddsHistoryRunnerNumbers =
+        winPlaceRunners
+          .filter((runner) => !runner.scratched)
+          .filter((runner) => {
+            if (!runner.oddsHistory.length) {
+              return true;
+            }
+
+            return (
+              runner.oddsHistory[0].timestamp >
+              window.collectionStartMs + 2 * 60_000
+            );
+          })
+          .map((runner) => runner.number);
+
+      const plannedLockTimeMs =
+        getWinPlacePlannedLockTimeMs(
+          plannedStartTime,
+          WIN_PLACE_RULE_CONFIG_V1,
+        );
+
+      const hasFreshCurrentOddsPoint =
+        latestPointMs !== null &&
+        Math.abs(plannedLockTimeMs - latestPointMs) <=
+          lockGraceMs;
+
+      const evaluation = evaluateWinPlaceModelAtLock({
+        race: {
+          raceId: race.id,
+          date: raceDate,
+          trackId: track.id,
+          trackName: track.name,
+          raceNumber: race.raceNumber,
+          plannedStartTime,
+          raceStatus: race.status,
+          isMonte: race.isMonte,
+          startMethod: /auto/i.test(race.status ?? "")
+            ? "AUTO"
+            : /volt/i.test(race.status ?? "")
+              ? "VOLT"
+              : "UNKNOWN",
+          distanceMeters: null,
+          starters: race.runners.filter(
+            (runner) => !runner.scratched,
+          ).length,
+        },
+        runners: winPlaceRunners,
+        nowMs: startMs,
+        config: WIN_PLACE_RULE_CONFIG_V1,
+        hasCompleteOddsHistory:
+          incompleteOddsHistoryRunnerNumbers.length === 0,
+        hasFreshCurrentOddsPoint,
+      });
+
+      const evaluationWithTiming = {
+        ...evaluation,
+        snapshot: {
+          ...evaluation.snapshot,
+          incompleteOddsHistoryRunnerNumbers,
+          lockTiming: {
+            plannedLockTimeMs,
+            actualSignalLockTimeMs: startMs,
+            usedOddsPointTimestampMs: latestPointMs,
+          },
+        },
+      };
+
+      const betRows = buildWinPlaceBetRows({
+        evaluation: evaluationWithTiming,
+        nowIso,
+      });
+
+      if (betRows.length) {
+        const { error: winPlaceBetError } = await supabase
+          .from("win_place_model_bets")
+          .upsert(betRows, {
+            onConflict:
+              "race_id,rule_version,market,signal_phase",
+          });
+
+        if (winPlaceBetError) {
+          throw new Error(
+            `Could not upsert win-place bets for race ${race.id}: ${winPlaceBetError.message}`,
+          );
+        }
+
+        summary.winPlaceBetsCreated += betRows.length;
+      }
+
+      const { error: winPlaceEvalError } = await supabase
+        .from("win_place_race_evaluations")
+        .upsert(
+          {
+            race_id: evaluationWithTiming.raceId,
+            rule_version: evaluationWithTiming.ruleVersion,
+            decision: evaluationWithTiming.decision,
+            reasons: evaluationWithTiming.reasons,
+            race_json: evaluationWithTiming.race,
+            planned_lock_time_ms:
+              evaluationWithTiming.plannedLockTimeMs,
+            actual_lock_time_ms:
+              evaluationWithTiming.actualLockTimeMs,
+            locked_at: evaluationWithTiming.lockedAt,
+            seconds_before_start:
+              evaluationWithTiming.secondsBeforeStartAtLock,
+            config_snapshot:
+              evaluationWithTiming.configSnapshot,
+            checks_json: evaluationWithTiming.checks,
+            most_shortened_json:
+              evaluationWithTiming.mostShortened,
+            snapshot_json: evaluationWithTiming.snapshot,
+            signal_phase: "LIVE",
+            created_at: evaluationWithTiming.createdAt,
+            updated_at: evaluationWithTiming.updatedAt,
+          },
+          {
+            onConflict:
+              "race_id,rule_version,signal_phase",
+          },
+        );
+
+      if (winPlaceEvalError) {
+        throw new Error(
+          `Could not upsert win-place evaluation ${race.id}: ${winPlaceEvalError.message}`,
+        );
+      }
+
+      summary.winPlaceEvaluationsCreated += 1;
+      existingWinPlaceEvalKeys.add(winPlaceRaceKey);
     }
 
     const { data: existingEvalRows, error: existingEvalError } = await supabase
