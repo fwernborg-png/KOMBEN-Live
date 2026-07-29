@@ -30,8 +30,13 @@ import {
   type ParsedResearchStartMethod,
 } from "./researchRaceParser";
 import {
+  isResearchArchiveEnabled,
   mergeResearchProducts,
 } from "./researchWorkerIntegration";
+import {
+  archiveResearchRacesAtLock,
+  createSupabaseResearchArchiveAdapter,
+} from "./researchWorkerArchiveRun";
 
 type Env = {
   SUPABASE_URL: string;
@@ -40,6 +45,7 @@ type Env = {
   RACE_DATE_OVERRIDE?: string;
   LOCK_GRACE_SECONDS?: string;
   BET_SETTLEMENT_LOOKBACK_DAYS?: string;
+  RESEARCH_ARCHIVE_ENABLED?: string;
   VAPID_SUBJECT?: string;
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
@@ -1118,7 +1124,15 @@ async function runCron(env: Env) {
   const nowIso = new Date(startMs).toISOString();
   const lockGraceMs = Number(env.LOCK_GRACE_SECONDS ?? "90") * 1000;
   const apiBaseUrl = env.ATG_API_BASE_URL ?? "https://www.atg.se/services/racinginfo/v1/api";
-  const raceDate = env.RACE_DATE_OVERRIDE || getRaceDateInStockholm(startMs);
+  const raceDate =
+    env.RACE_DATE_OVERRIDE ||
+    getRaceDateInStockholm(startMs);
+
+  const researchArchiveEnabled =
+    isResearchArchiveEnabled(
+      env.RESEARCH_ARCHIVE_ENABLED,
+    );
+
   const runController = new AbortController();
   const runTimeoutHandle = setTimeout(() => {
     runController.abort(new Error(`Cron run timed out after ${DEFAULT_RUN_TIMEOUT_MS}ms`));
@@ -1164,6 +1178,16 @@ async function runCron(env: Env) {
     tracks: 0,
     racesFetched: 0,
     oddsPointsInserted: 0,
+
+    researchArchiveEnabled,
+    researchRacesEligible: 0,
+    researchRacesArchived: 0,
+    researchSnapshotsComplete: 0,
+    researchSnapshotsPartial: 0,
+    researchSnapshotsSkippedExisting: 0,
+    researchArchiveFailures: 0,
+    researchArchiveErrors: [] as string[],
+
     evaluationsCreated: 0,
     betsCreated: 0,
     winPlaceEvaluationsCreated: 0,
@@ -1293,6 +1317,43 @@ async function runCron(env: Env) {
 
       summary.oddsPointsInserted += rows.length;
     }
+
+    const researchArchiveSummary =
+      await archiveResearchRacesAtLock({
+        enabled:
+          researchArchiveEnabled,
+
+        raceDate,
+        nowMs: startMs,
+
+        races: allRaces,
+
+        adapter:
+          createSupabaseResearchArchiveAdapter(
+            supabase,
+          ),
+      });
+
+    summary.researchRacesEligible =
+      researchArchiveSummary.eligibleRaces;
+
+    summary.researchRacesArchived =
+      researchArchiveSummary.archivedRaces;
+
+    summary.researchSnapshotsComplete =
+      researchArchiveSummary.completeSnapshots;
+
+    summary.researchSnapshotsPartial =
+      researchArchiveSummary.partialSnapshots;
+
+    summary.researchSnapshotsSkippedExisting =
+      researchArchiveSummary.skippedExisting;
+
+    summary.researchArchiveFailures =
+      researchArchiveSummary.failedRaces;
+
+    summary.researchArchiveErrors =
+      researchArchiveSummary.errors;
 
     const vapidSubject = env.VAPID_SUBJECT?.trim();
     const vapidPublicKey = env.VAPID_PUBLIC_KEY?.trim();
