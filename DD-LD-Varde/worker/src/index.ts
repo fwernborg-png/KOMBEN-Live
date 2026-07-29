@@ -1,11 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { normalizeAtgStartTime, parseAtgStartTimeMs } from "./atgTime";
 import { parsePushSubscription } from "./pushSubscription";
-import {
-  PLACE_ALERT_CONFIG_V1,
-  isInPlaceT3NotificationWindow,
-} from "./placeNotifications";
-import { deliverPlaceT3Notification } from "./placePushDelivery";
+import { deliverFinalSignalNotification } from "./finalSignalPushDelivery";
 import { PLACE_RULE_CONFIG_V1 } from "../../src/placeModel/config";
 import { evaluatePlaceModelAtLock } from "../../src/placeModel/engine";
 import { fetchHorseGallopPercent } from "../../src/gallop";
@@ -17,7 +13,10 @@ import {
   isInWinPlaceFinalSignalWindow,
 } from "../../src/winPlaceModel/config";
 import { evaluateWinPlaceModelAtLock } from "../../src/winPlaceModel/engine";
-import type { WinPlaceRunnerInput } from "../../src/winPlaceModel/types";
+import type {
+  WinPlaceEvaluation,
+  WinPlaceRunnerInput,
+} from "../../src/winPlaceModel/types";
 import { buildWinPlaceBetRows } from "./winPlacePersistence";
 
 type Env = {
@@ -1266,72 +1265,8 @@ async function runCron(env: Env) {
           }
         : null;
 
-    if (vapid) {
-      for (const item of allRaces) {
-        throwIfRunTimedOut(startMs);
-
-        const { track, race } = item;
-        const plannedStartTime = race.startTime;
-
-        if (
-          !plannedStartTime ||
-          !isInPlaceT3NotificationWindow(plannedStartTime, startMs)
-        ) {
-          continue;
-        }
-
-        try {
-          const preliminary = await buildPlaceEvaluationForRace({
-            supabase,
-            apiBaseUrl,
-            raceDate,
-            nowMs: startMs,
-            lockGraceMs,
-            runController,
-            track,
-            race,
-            config: PLACE_ALERT_CONFIG_V1,
-          });
-
-          if (
-            !preliminary ||
-            preliminary.evaluation.decision !== "PLAY" ||
-            !preliminary.evaluation.smoothest
-          ) {
-            continue;
-          }
-
-          const delivery = await deliverPlaceT3Notification({
-            supabase,
-            vapid,
-            raceDate,
-            raceId: race.id,
-            trackId: track.id,
-            trackName: track.name,
-            raceNumber: race.raceNumber,
-            plannedStartTime,
-            candidate: preliminary.evaluation.smoothest,
-            nowIso,
-          });
-
-          if (delivery.claimed) {
-            summary.notificationsClaimed += 1;
-          }
-
-          summary.notificationsSent += delivery.sent;
-          summary.notificationSubscriptionsAttempted += delivery.attempted;
-          summary.notificationSubscriptionsFailed += delivery.failed;
-        } catch (notificationError) {
-          console.warn(
-            `T-3 notification failed for race ${race.id}: ${
-              notificationError instanceof Error
-                ? notificationError.message
-                : "Unknown error"
-            }`,
-          );
-        }
-      }
-    }
+    // Den gamla preliminära T-3-notisen är avstängd.
+    // En gemensam slutnotis skickas efter båda T-90-utvärderingarna.
 
     const {
       data: existingWinPlaceEvalRows,
@@ -1845,6 +1780,128 @@ async function runCron(env: Env) {
 
           summary.betsCreated += 1;
           existingBetByKey.set(raceKey, bet);
+        }
+      }
+    }
+
+    if (vapid) {
+      for (const item of allRaces) {
+        throwIfRunTimedOut(startMs);
+
+        const { track, race } = item;
+        const plannedStartTime = race.startTime;
+
+        if (
+          !plannedStartTime ||
+          !isInWinPlaceFinalSignalWindow(
+            plannedStartTime,
+            startMs,
+            WIN_PLACE_RULE_CONFIG_V1,
+          )
+        ) {
+          continue;
+        }
+
+        try {
+          const [
+            winPlaceResult,
+            placeResult,
+          ] = await Promise.all([
+            supabase
+              .from("win_place_race_evaluations")
+              .select("decision,most_shortened_json")
+              .eq("race_id", race.id)
+              .eq(
+                "rule_version",
+                WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
+              )
+              .eq("signal_phase", "LIVE")
+              .maybeSingle(),
+            supabase
+              .from("place_race_evaluations")
+              .select("decision,smoothest_json")
+              .eq("race_id", race.id)
+              .eq(
+                "rule_version",
+                PLACE_RULE_CONFIG_V1.ruleVersion,
+              )
+              .maybeSingle(),
+          ]);
+
+          if (winPlaceResult.error) {
+            throw new Error(
+              `Could not load final win-place signal: ${winPlaceResult.error.message}`,
+            );
+          }
+
+          if (placeResult.error) {
+            throw new Error(
+              `Could not load final place signal: ${placeResult.error.message}`,
+            );
+          }
+
+          const winPlaceRow = winPlaceResult.data as {
+            decision: string;
+            most_shortened_json:
+              | NonNullable<
+                  WinPlaceEvaluation["mostShortened"]
+                >
+              | null;
+          } | null;
+
+          const placeRow = placeResult.data as {
+            decision: string;
+            smoothest_json:
+              | NonNullable<PlaceEvaluation["smoothest"]>
+              | null;
+          } | null;
+
+          const winPlaceCandidate =
+            winPlaceRow?.decision === "PLAY"
+              ? winPlaceRow.most_shortened_json
+              : null;
+
+          const placeCandidate =
+            placeRow?.decision === "PLAY"
+              ? placeRow.smoothest_json
+              : null;
+
+          if (!winPlaceCandidate && !placeCandidate) {
+            continue;
+          }
+
+          const delivery =
+            await deliverFinalSignalNotification({
+              supabase,
+              vapid,
+              raceDate,
+              raceId: race.id,
+              trackId: track.id,
+              trackName: track.name,
+              raceNumber: race.raceNumber,
+              plannedStartTime,
+              winPlaceCandidate,
+              placeCandidate,
+              nowIso,
+            });
+
+          if (delivery.claimed) {
+            summary.notificationsClaimed += 1;
+          }
+
+          summary.notificationsSent += delivery.sent;
+          summary.notificationSubscriptionsAttempted +=
+            delivery.attempted;
+          summary.notificationSubscriptionsFailed +=
+            delivery.failed;
+        } catch (notificationError) {
+          console.warn(
+            `Final signal notification failed for race ${race.id}: ${
+              notificationError instanceof Error
+                ? notificationError.message
+                : "Unknown error"
+            }`,
+          );
         }
       }
     }
