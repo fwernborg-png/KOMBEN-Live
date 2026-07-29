@@ -18,6 +18,10 @@ import type {
   WinPlaceRunnerInput,
 } from "../../src/winPlaceModel/types";
 import { buildWinPlaceBetRows } from "./winPlacePersistence";
+import {
+  settleWinPlaceBet,
+  type WinPlacePendingBetRow,
+} from "./winPlaceSettlement";
 
 type Env = {
   SUPABASE_URL: string;
@@ -1132,6 +1136,9 @@ async function runCron(env: Env) {
     betsCreated: 0,
     winPlaceEvaluationsCreated: 0,
     winPlaceBetsCreated: 0,
+    winPlaceBetsSettled: 0,
+    winPlaceBetsVoided: 0,
+    winPlaceSettlementSkipped: 0,
     notificationsClaimed: 0,
     notificationsSent: 0,
     notificationSubscriptionsAttempted: 0,
@@ -1908,6 +1915,150 @@ async function runCron(env: Env) {
 
     const lookbackDays = Number(env.BET_SETTLEMENT_LOOKBACK_DAYS ?? String(DEFAULT_SETTLEMENT_LOOKBACK_DAYS));
     const lowerDate = getRaceDateInStockholm(startMs - lookbackDays * 24 * 60 * 60 * 1000);
+
+    const {
+      data: pendingWinPlaceRows,
+      error: pendingWinPlaceError,
+    } = await supabase
+      .from("win_place_model_bets")
+      .select(
+        "id,bet_id,race_id,rule_version,market,signal_phase,date,track_id,track_name,race_number,horse_number,horse_name,stake_oren,result_outcome",
+      )
+      .eq("rule_version", WIN_PLACE_RULE_CONFIG_V1.ruleVersion)
+      .eq("signal_phase", "LIVE")
+      .eq("result_outcome", "PENDING")
+      .gte("date", lowerDate)
+      .order("date", { ascending: true });
+
+    if (pendingWinPlaceError) {
+      throw new Error(
+        `Could not load pending win-place bets: ${pendingWinPlaceError.message}`,
+      );
+    }
+
+    const pendingWinPlaceBets =
+      (pendingWinPlaceRows ?? []) as WinPlacePendingBetRow[];
+
+    const winPlaceBetsByRace = new Map<
+      string,
+      WinPlacePendingBetRow[]
+    >();
+
+    for (const bet of pendingWinPlaceBets) {
+      const key = [
+        bet.date,
+        bet.track_id,
+        bet.race_number,
+      ].join(":");
+
+      const list = winPlaceBetsByRace.get(key) ?? [];
+      list.push(bet);
+      winPlaceBetsByRace.set(key, list);
+    }
+
+    for (const bets of winPlaceBetsByRace.values()) {
+      throwIfRunTimedOut(startMs);
+
+      const firstBet = bets[0];
+
+      if (!firstBet) {
+        continue;
+      }
+
+      const race = await fetchRaceForTrack({
+        apiBaseUrl,
+        raceDate: firstBet.date,
+        trackId: firstBet.track_id,
+        raceNumber: firstBet.race_number,
+        signal: runController.signal,
+      }).catch(() => null);
+
+      if (!race) {
+        summary.winPlaceSettlementSkipped += bets.length;
+        continue;
+      }
+
+      const raceCancelled =
+        /install|inst[äa]lld|inst[äa]llt|cancel/i.test(
+          race.status ?? "",
+        );
+
+      for (const bet of bets) {
+        const runner =
+          race.runners.find(
+            (item) => item.number === bet.horse_number,
+          ) ?? null;
+
+        const finishPositionIndex =
+          race.finishOrder.indexOf(bet.horse_number);
+
+        const finishPosition =
+          finishPositionIndex >= 0
+            ? finishPositionIndex + 1
+            : null;
+
+        const horseScratched = runner?.scratched === true;
+
+        const officialWinOddsDecimal =
+          toDecimalOdds(runner?.oddsRaw ?? null);
+
+        const placeOddsDecimal =
+          toDecimalOdds(runner?.placeOddsRaw ?? null);
+
+        const settled = settleWinPlaceBet({
+          market: bet.market,
+          stakeOren: bet.stake_oren,
+          raceCancelled,
+          horseScratched,
+          finishPosition,
+          officialWinOddsDecimal,
+          placeOddsDecimal,
+          placeHitMaxOfficialFinishPosition:
+            WIN_PLACE_RULE_CONFIG_V1
+              .placeHitMaxOfficialFinishPosition,
+        });
+
+        if (settled.resultOutcome === "PENDING") {
+          summary.winPlaceSettlementSkipped += 1;
+          continue;
+        }
+
+        const settledAt = new Date().toISOString();
+
+        const { error: updateError } = await supabase
+          .from("win_place_model_bets")
+          .update({
+            result_outcome: settled.resultOutcome,
+            result_status: settled.resultStatus,
+            finish_position_official:
+              settled.finishPositionOfficial,
+            official_win_odds_decimal:
+              settled.officialWinOddsDecimal,
+            place_odds_decimal:
+              settled.placeOddsDecimal,
+            return_oren: settled.returnOren,
+            net_oren: settled.netOren,
+            roi_pct: settled.roiPct,
+            result_source: "ATG",
+            result_updated_at: settledAt,
+            updated_at: settledAt,
+          })
+          .eq("id", bet.id)
+          .eq("result_outcome", "PENDING");
+
+        if (updateError) {
+          throw new Error(
+            `Could not settle win-place bet ${bet.bet_id}: ${updateError.message}`,
+          );
+        }
+
+        if (settled.resultOutcome === "VOID") {
+          summary.winPlaceBetsVoided += 1;
+        } else {
+          summary.winPlaceBetsSettled += 1;
+        }
+      }
+    }
 
     const { data: pendingRows, error: pendingError } = await supabase
       .from("place_model_bets")

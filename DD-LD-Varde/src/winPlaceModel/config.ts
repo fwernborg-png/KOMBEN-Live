@@ -10,6 +10,7 @@ export type WinPlaceRuleConfig = {
   excludeMonte: boolean;
   defaultWinStakeSEK: number;
   defaultPlaceStakeSEK: number;
+  placeHitMaxOfficialFinishPosition: number;
 };
 
 export const WIN_PLACE_RULE_CONFIG_V1: WinPlaceRuleConfig = {
@@ -24,6 +25,7 @@ export const WIN_PLACE_RULE_CONFIG_V1: WinPlaceRuleConfig = {
   excludeMonte: true,
   defaultWinStakeSEK: 100,
   defaultPlaceStakeSEK: 100,
+  placeHitMaxOfficialFinishPosition: 3,
 };
 
 export function getWinPlaceCollectionStartMs(
