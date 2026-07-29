@@ -74,7 +74,7 @@ describe("slutlig gemensam spelnotis", () => {
     });
 
     expect(notification?.title).toBe(
-      "PLATSSPEL – Mantorp lopp 5",
+      "PLATSSPEL – endast plats – Mantorp lopp 5",
     );
     expect(notification?.body).toBe(
       "nr 4 Platshäst 4: 100 kr plats.",

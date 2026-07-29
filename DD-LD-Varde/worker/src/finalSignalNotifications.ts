@@ -91,7 +91,7 @@ export function buildFinalSignalNotification(args: {
       `${WIN_PLACE_RULE_CONFIG_V1.defaultWinStakeSEK} kr vinnare + ` +
       `${WIN_PLACE_RULE_CONFIG_V1.defaultPlaceStakeSEK} kr plats.`;
   } else {
-    title = `PLATSSPEL – ${trackName} lopp ${raceNumber}`;
+    title = `PLATSSPEL – endast plats – ${trackName} lopp ${raceNumber}`;
     body =
       `${horseLabel(placeCandidate as SmoothestCandidate)}: ` +
       `${PLACE_RULE_CONFIG_V1.defaultStakeSEK} kr plats.`;
