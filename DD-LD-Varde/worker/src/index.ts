@@ -483,25 +483,85 @@ function parsePercent(value: unknown) {
   return n > 1 ? n : n * 100;
 }
 
-function latestYearNumeric(yearsValue: unknown, keys: string[], parser?: (value: number) => number | null) {
-  const years = Array.isArray(yearsValue) ? yearsValue : [];
-  const candidates = years
-    .map((item) => {
-      const rec = asRecord(item);
-      if (!rec) return null;
-      const year = asNumber(rec.year) ?? asNumber(rec.season) ?? 0;
-      const value = keys
-        .map((key) => asNumber(rec[key]))
-        .find((n): n is number => n !== null);
-      if (value === undefined) return null;
-      const parsed = parser ? parser(value) : value;
-      if (parsed === null) return null;
-      return { year, value: parsed };
-    })
-    .filter((item): item is { year: number; value: number } => item !== null)
-    .sort((a, b) => b.year - a.year);
+export function latestYearWinPercent(yearsValue: unknown): number | null {
+  const candidates: Array<{
+    year: number;
+    record: Record<string, unknown>;
+  }> = [];
 
-  return candidates[0]?.value ?? null;
+  if (Array.isArray(yearsValue)) {
+    for (const item of yearsValue) {
+      const record = asRecord(item);
+      if (!record) continue;
+
+      candidates.push({
+        year:
+          asNumber(record.year) ??
+          asNumber(record.season) ??
+          0,
+        record,
+      });
+    }
+  } else {
+    const yearsRecord = asRecord(yearsValue);
+
+    if (yearsRecord) {
+      for (const [yearKey, item] of Object.entries(yearsRecord)) {
+        const record = asRecord(item);
+        if (!record) continue;
+
+        candidates.push({
+          year:
+            asNumber(record.year) ??
+            asNumber(record.season) ??
+            (
+              Number.isFinite(Number(yearKey))
+                ? Number(yearKey)
+                : 0
+            ),
+          record,
+        });
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.year - a.year);
+
+  for (const { record } of candidates) {
+    const directPercent =
+      asNumber(record.winPercentage) ??
+      asNumber(record.winPercent);
+
+    if (directPercent !== null) {
+      return parsePercent(directPercent);
+    }
+
+    const starts =
+      asNumber(record.starts) ??
+      asNumber(record.numberOfStarts);
+
+    const placement =
+      getRecord(record, "placement") ??
+      getRecord(record, "placements");
+
+    const wins =
+      (placement
+        ? asNumber(placement["1"]) ??
+          asNumber(placement.first)
+        : null) ??
+      asNumber(record.wins) ??
+      asNumber(record.firstPlaces);
+
+    if (
+      starts !== null &&
+      starts > 0 &&
+      wins !== null
+    ) {
+      return (wins / starts) * 100;
+    }
+  }
+
+  return null;
 }
 
 function firstNumeric(value: unknown, paths: string[][], parser?: (value: number) => number | null) {
@@ -530,12 +590,16 @@ function extractRunnerStats(start: Record<string, unknown>): RunnerStats {
   const driver = getRecord(start, "driver");
   const horseStatistics = getRecord(horse, "statistics");
   const horseLife = getRecord(horseStatistics, "life");
-  const horseYears = getArray(horseStatistics, "years");
-  const driverStatistics = getRecord(driver, "statistics");
-  const driverYears = getArray(driverStatistics, "years");
+  const horseYearsValue = horseStatistics?.years;
 
-  const horseYearWinPercent = latestYearNumeric(horseYears, ["winPercentage", "winPercent"], parsePercent);
-  const driverYearWinPercent = latestYearNumeric(driverYears, ["winPercentage", "winPercent"], parsePercent);
+  const driverStatistics = getRecord(driver, "statistics");
+  const driverYearsValue = driverStatistics?.years;
+
+  const horseYearWinPercent =
+    latestYearWinPercent(horseYearsValue);
+
+  const driverYearWinPercent =
+    latestYearWinPercent(driverYearsValue);
 
   return {
     earningsPerStart: firstNumeric(start, [
@@ -1256,6 +1320,79 @@ async function runCron(env: Env) {
 
         if (raceStateError) {
           throw new Error(`Could not upsert place_live_race_states: ${raceStateError.message}`);
+        }
+      }
+    }
+
+    // Berika forskningsloppen med galoppdata före LOCK-arkivering.
+    // Samma värde följer sedan med vidare till platsmodellen.
+    if (researchArchiveEnabled) {
+      for (const { race } of allRaces) {
+        throwIfRunTimedOut(startMs);
+
+        if (
+          !race.startTime ||
+          !isInWinPlaceFinalSignalWindow(
+            race.startTime,
+            startMs,
+            WIN_PLACE_RULE_CONFIG_V1,
+          )
+        ) {
+          continue;
+        }
+
+        const gallopFetches = race.runners
+          .filter(
+            (runner) =>
+              !runner.scratched &&
+              runner.stats.gallopPercent === null &&
+              runner.horseId !== null,
+          )
+          .map(async (runner) => {
+            const gallopPercent =
+              await fetchHorseGallopPercent({
+                horseId: runner.horseId as number,
+                apiBaseUrl,
+                signal: runController.signal,
+                fetchImpl: (input, init) =>
+                  fetchWithTimeout({
+                    url: String(input),
+                    description:
+                      `Research horse results ${runner.horseId}`,
+                    signal: runController.signal,
+                    init,
+                  }),
+              });
+
+            return {
+              runnerNumber: runner.number,
+              gallopPercent,
+            };
+          });
+
+        const gallopResults =
+          await Promise.allSettled(gallopFetches);
+
+        throwIfRunTimedOut(startMs);
+
+        for (const result of gallopResults) {
+          if (
+            result.status !== "fulfilled" ||
+            result.value.gallopPercent === null
+          ) {
+            continue;
+          }
+
+          const runner = race.runners.find(
+            (item) =>
+              item.number ===
+              result.value.runnerNumber,
+          );
+
+          if (runner) {
+            runner.stats.gallopPercent =
+              result.value.gallopPercent;
+          }
         }
       }
     }
