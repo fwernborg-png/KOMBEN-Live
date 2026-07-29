@@ -38,6 +38,7 @@ import type {
   PlaceEvaluation,
   PlaceRunnerInput,
 } from "./placeModel/types";
+import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 
 type Track = {
   id: number;
@@ -5283,7 +5284,7 @@ export default function App() {
         <div className="panel-header-row">
           <div>
             <p style={s.kicker}>SPELJOURNAL</p>
-            <h2 style={s.raceTitle}>Platsjournal</h2>
+            <h2 style={s.raceTitle}>Speljournal</h2>
           </div>
           <div className="panel-meta-row">
             <span>{placeBets.length} modellspel</span>
@@ -5292,6 +5293,16 @@ export default function App() {
         </div>
 
         {placeDbError ? <div style={s.error}>{placeDbError}</div> : null}
+
+        <WinPlaceJournalPanel date={date} mode="journal" />
+
+        <div className="panel-header-row" style={{ marginTop: 18 }}>
+          <div>
+            <p style={s.kicker}>ENDAST PLATS</p>
+            <h3 className="minor-heading">Jämnaste hästen</h3>
+          </div>
+          <span className="panel-meta-chip">{PLACE_RULE_CONFIG_V1.ruleVersion}</span>
+        </div>
 
         <div className="controls" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10, marginBottom: 12 }}>
           <label style={s.label}>
@@ -5431,13 +5442,24 @@ export default function App() {
         <div className="panel-header-row">
           <div>
             <p style={s.kicker}>STATISTIK</p>
-            <h2 style={s.raceTitle}>Platsmodell V1.0</h2>
+            <h2 style={s.raceTitle}>Modellstatistik</h2>
           </div>
           <div className="panel-meta-row">
             <span>Databas {dbStatus.startsWith("✅") ? "ansluten" : dbStatus}</span>
-            <span>{PLACE_RULE_CONFIG_V1.ruleVersion}</span>
+            <span>LIVE</span>
           </div>
         </div>
+
+        <WinPlaceJournalPanel date={date} mode="stats" />
+
+        <div className="panel-header-row" style={{ marginTop: 22 }}>
+          <div>
+            <p style={s.kicker}>ENDAST PLATS</p>
+            <h3 className="minor-heading">Jämnaste hästen</h3>
+          </div>
+          <span className="panel-meta-chip">{PLACE_RULE_CONFIG_V1.ruleVersion}</span>
+        </div>
+
         <div className="mini-stats-grid">
           <div className="mini-stat-card"><span>Lasta modellspel</span><strong>{placeBets.length}</strong></div>
           <div className="mini-stat-card"><span>Pending</span><strong>{placeStats.pending}</strong></div>
