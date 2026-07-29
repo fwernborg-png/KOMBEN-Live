@@ -26,7 +26,7 @@ import {
 } from "./researchRaceParser";
 
 export const RESEARCH_ARCHIVE_VERSION =
-  "RESEARCH_ARCHIVE_V1.0";
+  "RESEARCH_ARCHIVE_V1.1";
 
 export const RESEARCH_PARSER_VERSION =
   "RESEARCH_PARSER_V1.0";
@@ -673,6 +673,15 @@ export function buildResearchLockArchiveRows(
     },
   );
 
+  const lockRunnerNumbers = new Set(
+    compacted
+      .filter(
+        (point) =>
+          point.captureType === "LOCK",
+      )
+      .map((point) => point.runnerNumber),
+  );
+
   const indicatorBuild = buildIndicators({
     raceKey,
     snapshotKey,
@@ -683,6 +692,12 @@ export function buildResearchLockArchiveRows(
   const activeRunners = race.runners.filter(
     (runner) => !runner.scratched,
   );
+
+  const lockComplete =
+    activeRunners.length > 0 &&
+    activeRunners.every((runner) =>
+      lockRunnerNumbers.has(runner.number),
+    );
 
   const oddsComplete =
     activeRunners.length > 0 &&
@@ -710,7 +725,9 @@ export function buildResearchLockArchiveRows(
     );
 
   const snapshotComplete =
-    oddsComplete && indicatorsComplete;
+    oddsComplete &&
+    indicatorsComplete &&
+    lockComplete;
 
   const inferredMeeting =
     inferResearchMeetingTimeCategory({
@@ -787,6 +804,13 @@ export function buildResearchLockArchiveRows(
 
       if (metric?.lockOdds === null) {
         missingFields.push("lockOdds");
+      }
+
+      if (
+        !runner.scratched &&
+        !lockRunnerNumbers.has(runner.number)
+      ) {
+        missingFields.push("lockOddsPoint");
       }
 
       const distanceHandicapMeters =
@@ -902,7 +926,11 @@ export function buildResearchLockArchiveRows(
           ),
 
         odds_data_complete:
-          (metric?.validOddsPoints ?? 0) >= 5,
+          (metric?.validOddsPoints ?? 0) >= 5 &&
+          (
+            runner.scratched ||
+            lockRunnerNumbers.has(runner.number)
+          ),
 
         missing_fields: missingFields,
         invalid_fields: [],
@@ -1324,6 +1352,10 @@ export function buildResearchLockArchiveRows(
 
       ...(!indicatorsComplete
         ? ["indicatorData"]
+        : []),
+
+      ...(!lockComplete
+        ? ["lockOddsPoint"]
         : []),
     ],
 

@@ -276,6 +276,47 @@ describe("researchArchive", () => {
     expect(first.snapshotComplete).toBe(true);
   });
 
+  it("markerar snapshot som PARTIAL när en aktiv häst saknar LOCK-punkt", () => {
+    const oddsWithoutFreshLock = buildOdds().filter(
+      (row) =>
+        row.pointTimestampMs <=
+        START_MS - 180_000,
+    );
+
+    const rows = buildResearchLockArchiveRows({
+      race: buildRace(),
+      odds: oddsWithoutFreshLock,
+      actualLockTimeMs: LOCK_MS,
+    });
+
+    expect(
+      rows.oddsPointRows.some(
+        (row) =>
+          row.capture_type === "LOCK",
+      ),
+    ).toBe(false);
+
+    expect(rows.snapshotComplete).toBe(false);
+
+    expect(
+      rows.snapshotRow.data_quality_status,
+    ).toBe("PARTIAL");
+
+    expect(
+      rows.snapshotRow.missing_fields,
+    ).toContain("lockOddsPoint");
+
+    for (const runner of rows.runnerSnapshotRows) {
+      expect(
+        runner.odds_data_complete,
+      ).toBe(false);
+
+      expect(
+        runner.missing_fields,
+      ).toContain("lockOddsPoint");
+    }
+  });
+
   it("sparar mest sänkt, jämnast och favorit separat", () => {
     const rows = buildResearchLockArchiveRows({
       race: buildRace(),

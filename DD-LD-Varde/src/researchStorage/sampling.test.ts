@@ -128,6 +128,33 @@ describe("researchStorage sampling", () => {
     expect(final?.secondsBeforeStart).toBe(20);
   });
 
+  it("accepterar aktuell minutpunkt som LOCK när cron kör drygt 40 sekunder senare", () => {
+    const compacted = compactResearchOddsHistory({
+      observations: [
+        observation({
+          secondsBeforeStart: 120,
+          market: "WIN",
+          odds: 6.25,
+        }),
+      ],
+      plannedStartTimeMs: START_MS,
+      actualLockTimeMs:
+        START_MS - 79_500,
+    });
+
+    const lock = compacted.find(
+      (point) =>
+        point.captureType === "LOCK",
+    );
+
+    expect(lock).toBeDefined();
+    expect(lock?.secondsBeforeStart).toBe(120);
+    expect(lock?.winOddsDecimal).toBe(6.25);
+    expect(
+      lock?.sourceTimestampDeltaSeconds,
+    ).toBe(30);
+  });
+
   it("använder aldrig en oddspunkt efter faktisk låstid som LOCK", () => {
     const observations = [
       observation({

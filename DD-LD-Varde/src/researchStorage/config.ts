@@ -7,7 +7,7 @@ export const RESEARCH_METRICS_VERSION =
   "RESEARCH_METRICS_V1.0";
 
 export const RESEARCH_SAMPLING_VERSION =
-  "RESEARCH_SAMPLING_V1.0";
+  "RESEARCH_SAMPLING_V1.1";
 
 export type ResearchStorageConfig = {
   schemaVersion: string;
@@ -105,7 +105,7 @@ export const RESEARCH_STORAGE_CONFIG_V1 = {
     {
       captureType: "LOCK",
       targetSecondsBeforeStart: 90,
-      toleranceSeconds: 35,
+      toleranceSeconds: 65,
     },
 
     {
