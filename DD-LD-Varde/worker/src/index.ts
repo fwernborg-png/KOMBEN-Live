@@ -22,6 +22,16 @@ import {
   settleWinPlaceBet,
   type WinPlacePendingBetRow,
 } from "./winPlaceSettlement";
+import {
+  parseResearchProducts,
+  parseResearchRaceMeta,
+  parseResearchRunnerMeta,
+  type ParsedResearchProduct,
+  type ParsedResearchStartMethod,
+} from "./researchRaceParser";
+import {
+  mergeResearchProducts,
+} from "./researchWorkerIntegration";
 
 type Env = {
   SUPABASE_URL: string;
@@ -45,6 +55,14 @@ type MeetingRaceRef = {
   raceNumber: number;
   raceId: string | null;
   startTime?: string;
+
+  eventId: string | null;
+  meetingId: string | null;
+  meetingName: string | null;
+
+  products: ParsedResearchProduct[];
+
+  rawJson: Record<string, unknown>;
 };
 
 type RunnerStats = {
@@ -59,20 +77,67 @@ type Runner = {
   number: number;
   horseId: number | null;
   name: string;
+
   oddsRaw: number | null;
   placeOddsRaw: number | null;
+
   scratched: boolean;
   stats: RunnerStats;
+
+  horseAge: number | null;
+  horseSex: string | null;
+
+  startLane: number | null;
+  startDistanceMeters: number | null;
+
+  driverId: number | null;
+  driverName: string | null;
+
+  trainerId: number | null;
+  trainerName: string | null;
+
+  rawRunnerJson: Record<string, unknown>;
 };
 
 type Race = {
   raceNumber: number;
   id: string;
+
   startTime?: string;
   status?: string;
+
   runners: Runner[];
+
   isMonte: boolean;
   finishOrder: number[];
+
+  eventId: string | null;
+  meetingId: string | null;
+  meetingName: string | null;
+
+  raceName: string | null;
+
+  startMethod: ParsedResearchStartMethod;
+  distanceMeters: number | null;
+
+  raceClassCode: string | null;
+  raceCategory: string | null;
+
+  earningsMin: number | null;
+  earningsMax: number | null;
+
+  ageMin: number | null;
+  ageMax: number | null;
+
+  firstAdditionalDistanceMeters: number | null;
+
+  prizeMoneyTotal: number | null;
+  firstPrize: number | null;
+
+  products: ParsedResearchProduct[];
+
+  rawRaceJson: Record<string, unknown>;
+  rawMeetingJson: Record<string, unknown>;
 };
 
 type LiveOddsPointRow = {
@@ -136,6 +201,7 @@ type TrendRunnerLite = {
   name: string;
   scratched: boolean;
   oddsRaw: number | null;
+  startLane: number | null;
   stats: RunnerStats;
   firstOddsRaw: number | null;
   changePercent: number | null;
@@ -333,6 +399,8 @@ function parseTrack(value: unknown): Track | null {
 }
 
 function parseMeetingRaceRefs(trackValue: unknown): MeetingRaceRef[] {
+  const trackRecord = asRecord(trackValue);
+
   const raceArrays = [
     getArray(trackValue, "races"),
     getArray(trackValue, "starts"),
@@ -353,10 +421,45 @@ function parseMeetingRaceRefs(trackValue: unknown): MeetingRaceRef[] {
         asString(rec.startTime) || asString(rec.scheduledStartTime) || undefined,
       );
 
+      const eventId =
+        asString(rec.eventId) ||
+        asString(rec.event_id) ||
+        asString(trackRecord?.eventId) ||
+        asString(trackRecord?.event_id) ||
+        null;
+
+      const meetingId =
+        asString(rec.meetingId) ||
+        asString(rec.meeting_id) ||
+        asString(trackRecord?.meetingId) ||
+        asString(trackRecord?.meeting_id) ||
+        null;
+
+      const meetingName =
+        asString(rec.meetingName) ||
+        asString(rec.meeting_name) ||
+        asString(trackRecord?.meetingName) ||
+        asString(trackRecord?.meeting_name) ||
+        null;
+
       return {
         raceNumber,
         raceId,
         startTime,
+
+        eventId,
+        meetingId,
+        meetingName,
+
+        products:
+          parseResearchProducts(rec),
+
+        rawJson: {
+          raceReference: rec,
+          eventId,
+          meetingId,
+          meetingName,
+        },
       } satisfies MeetingRaceRef;
     })
     .filter((ref): ref is MeetingRaceRef => ref !== null);
@@ -516,6 +619,9 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
     rec.withdrawn === true ||
     normalizeText(asString(rec.status)) === "scratched";
 
+  const researchMeta =
+    parseResearchRunnerMeta(rec);
+
   return {
     number,
     horseId,
@@ -524,6 +630,21 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
     placeOddsRaw,
     scratched,
     stats: extractRunnerStats(rec),
+
+    horseAge: researchMeta.horseAge,
+    horseSex: researchMeta.horseSex,
+
+    startLane: researchMeta.startLane,
+    startDistanceMeters:
+      researchMeta.startDistanceMeters,
+
+    driverId: researchMeta.driverId,
+    driverName: researchMeta.driverName,
+
+    trainerId: researchMeta.trainerId,
+    trainerName: researchMeta.trainerName,
+
+    rawRunnerJson: rec,
   };
 }
 
@@ -573,11 +694,19 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
     .sort((a, b) => a.position - b.position)
     .map((item) => item.number);
 
-  const raceText = collectStrings(rawRace).join(" ").toLowerCase();
+  const raceText = collectStrings(rawRace)
+    .join(" ")
+    .toLowerCase();
+
+  const researchMeta =
+    parseResearchRaceMeta(rawRace);
 
   return {
     raceNumber,
-    id: asString(rec.id) || `race-${requestedRaceNumber}`,
+    id:
+      asString(rec.id) ||
+      asString(rawRace.id) ||
+      `race-${requestedRaceNumber}`,
     startTime: normalizeAtgStartTime(
       asString(rawRace.startTime) ||
         asString(rawRace.scheduledStartTime) ||
@@ -588,6 +717,64 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
     runners,
     isMonte: /mont[eé]/i.test(raceText),
     finishOrder,
+
+    eventId: null,
+    meetingId: null,
+    meetingName: null,
+
+    raceName: researchMeta.raceName,
+
+    startMethod:
+      researchMeta.startMethod,
+
+    distanceMeters:
+      researchMeta.distanceMeters,
+
+    raceClassCode:
+      researchMeta.raceClassCode,
+
+    raceCategory:
+      researchMeta.raceCategory,
+
+    earningsMin:
+      researchMeta.earningsMin,
+
+    earningsMax:
+      researchMeta.earningsMax,
+
+    ageMin: researchMeta.ageMin,
+    ageMax: researchMeta.ageMax,
+
+    firstAdditionalDistanceMeters:
+      researchMeta.firstAdditionalDistanceMeters,
+
+    prizeMoneyTotal:
+      researchMeta.prizeMoneyTotal,
+
+    firstPrize:
+      researchMeta.firstPrize,
+
+    products:
+      researchMeta.products,
+
+    rawRaceJson: rawRace,
+    rawMeetingJson: {},
+  };
+}
+
+function buildCompactRaceStatePayload(
+  race: Race,
+) {
+  return {
+    ...race,
+
+    rawRaceJson: {},
+    rawMeetingJson: {},
+
+    runners: race.runners.map((runner) => ({
+      ...runner,
+      rawRunnerJson: {},
+    })),
   };
 }
 
@@ -779,11 +966,57 @@ async function fetchRaceForTrack(args: {
   raceDate: string;
   trackId: number;
   raceNumber: number;
+  meetingRef: MeetingRaceRef;
   signal?: AbortSignal;
 }) {
-  const { apiBaseUrl, raceDate, trackId, raceNumber, signal } = args;
-  const payload = await fetchJson(`${apiBaseUrl}/games/vinnare_${raceDate}_${trackId}_${raceNumber}`, signal);
-  return parseRace(payload, raceNumber);
+  const {
+    apiBaseUrl,
+    raceDate,
+    trackId,
+    raceNumber,
+    meetingRef,
+    signal,
+  } = args;
+
+  const payload = await fetchJson(
+    `${apiBaseUrl}/games/vinnare_${raceDate}_${trackId}_${raceNumber}`,
+    signal,
+  );
+
+  const parsed = parseRace(
+    payload,
+    raceNumber,
+  );
+
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    ...parsed,
+
+    startTime:
+      parsed.startTime ??
+      meetingRef.startTime,
+
+    eventId:
+      meetingRef.eventId,
+
+    meetingId:
+      meetingRef.meetingId,
+
+    meetingName:
+      meetingRef.meetingName,
+
+    products:
+      mergeResearchProducts(
+        parsed.products,
+        meetingRef.products,
+      ),
+
+    rawMeetingJson:
+      meetingRef.rawJson,
+  };
 }
 
 function toDecimalOdds(raw: number | null): number | null {
@@ -865,6 +1098,7 @@ async function loadPlaceOddsContext(args: {
       name: runner.name,
       scratched: runner.scratched,
       oddsRaw: runner.oddsRaw,
+      startLane: runner.startLane,
       stats: { ...runner.stats },
       firstOddsRaw,
       changePercent: percentChange(firstOddsRaw, runner.oddsRaw),
@@ -878,208 +1112,6 @@ async function loadPlaceOddsContext(args: {
     trendLite,
   };
 }
-
-async function buildPlaceEvaluationForRace(args: {
-  supabase: ReturnType<typeof createSupabaseClient>;
-  apiBaseUrl: string;
-  raceDate: string;
-  nowMs: number;
-  lockGraceMs: number;
-  runController: AbortController;
-  track: Track;
-  race: Race;
-  config: PlaceEvaluation["configSnapshot"];
-}): Promise<PlaceEvaluationBuildResult | null> {
-  const {
-    supabase,
-    apiBaseUrl,
-    raceDate,
-    nowMs,
-    lockGraceMs,
-    runController,
-    track,
-    race,
-    config,
-  } = args;
-
-  const context = await loadPlaceOddsContext({
-    supabase,
-    race,
-    nowMs,
-  });
-
-  if (!context) {
-    return null;
-  }
-
-  const { window, byRunner, latestPointMs, trendLite } = context;
-
-  const lockTimeMs =
-    window.startMs - config.lockMinutesBeforeRace * 60_000;
-
-  if (!Number.isFinite(lockTimeMs) || nowMs < lockTimeMs) {
-    return null;
-  }
-
-  const gallopFetches = trendLite
-    .filter(
-      (runner) =>
-        !runner.scratched &&
-        runner.stats.gallopPercent === null &&
-        runner.horseId !== null,
-    )
-    .map(async (runner) => {
-      const gallopPercent = await fetchHorseGallopPercent({
-        horseId: runner.horseId as number,
-        apiBaseUrl,
-        signal: runController.signal,
-        fetchImpl: (input, init) =>
-          fetchWithTimeout({
-            url: String(input),
-            description: `Horse results ${runner.horseId}`,
-            signal: runController.signal,
-            init,
-          }),
-      });
-
-      return {
-        runnerNumber: runner.number,
-        gallopPercent,
-      };
-    });
-
-  const gallopResults = await Promise.allSettled(gallopFetches);
-
-  for (const settled of gallopResults) {
-    if (settled.status !== "fulfilled") {
-      continue;
-    }
-
-    const target = trendLite.find(
-      (runner) => runner.number === settled.value.runnerNumber,
-    );
-
-    if (target && settled.value.gallopPercent !== null) {
-      target.stats.gallopPercent = settled.value.gallopPercent;
-    }
-  }
-
-  const indicatorsByRunner = computeIndicatorsAndStrength({
-    runners: trendLite,
-  });
-
-  const placeRunners: PlaceRunnerInput[] = trendLite.map((runner) => {
-    const history = (byRunner.get(runner.number) ?? [])
-      .filter(
-        (point) =>
-          point.timestamp >= window.collectionStartMs &&
-          point.timestamp < window.startMs,
-      )
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    const indicators = indicatorsByRunner.get(runner.number) ?? {
-      strength: 0,
-      indicatorsGreen: [],
-    };
-
-    return {
-      number: runner.number,
-      horseId: runner.horseId,
-      name: runner.name,
-      startLane: null,
-      scratched: runner.scratched,
-      currentWinOddsDecimal: toDecimalOdds(runner.oddsRaw),
-      indicatorsGreen: indicators.indicatorsGreen,
-      strength: indicators.strength,
-      gallopPercent: runner.stats.gallopPercent,
-      gallopSource:
-        runner.stats.gallopPercent === null
-          ? null
-          : "ATG_HORSE_RESULTS",
-      gallopUpdatedAtMs:
-        runner.stats.gallopPercent === null ? null : nowMs,
-      gallopIsFresh: runner.stats.gallopPercent !== null,
-      oddsHistory: history,
-    };
-  });
-
-  const missingOddsRunners = placeRunners
-    .filter((runner) => !runner.scratched)
-    .filter((runner) => {
-      if (!runner.oddsHistory.length) {
-        return true;
-      }
-
-      return (
-        runner.oddsHistory[0].timestamp >
-        window.collectionStartMs + 2 * 60_000
-      );
-    })
-    .map((runner) => runner.number);
-
-  const missingGallopRunners = placeRunners
-    .filter((runner) => !runner.scratched)
-    .filter((runner) => runner.gallopPercent === null)
-    .map((runner) => runner.number);
-
-  const hasFreshCurrentOddsPoint =
-    latestPointMs !== null &&
-    Math.abs(lockTimeMs - latestPointMs) <= lockGraceMs;
-
-  const evaluation = evaluatePlaceModelAtLock({
-    race: {
-      raceId: race.id,
-      date: raceDate,
-      trackId: track.id,
-      trackName: track.name,
-      raceNumber: race.raceNumber,
-      plannedStartTime:
-        race.startTime ?? new Date(window.startMs).toISOString(),
-      raceStatus: race.status,
-      isMonte: race.isMonte,
-      startMethod: /auto/i.test(race.status ?? "")
-        ? "AUTO"
-        : /volt/i.test(race.status ?? "")
-          ? "VOLT"
-          : "UNKNOWN",
-      distanceMeters: null,
-      starters: race.runners.filter((runner) => !runner.scratched).length,
-    },
-    runners: placeRunners,
-    nowMs,
-    config,
-    alreadyLockedForVersion: false,
-    appStartedAfterLock: false,
-    hasCompleteIndicatorData: true,
-    incompleteIndicatorRunnerNumbers: missingGallopRunners,
-    hasCompleteOddsHistory: missingOddsRunners.length === 0,
-    incompleteOddsHistoryRunnerNumbers: missingOddsRunners,
-    hasFreshCurrentOddsPoint,
-  });
-
-  return {
-    lockTimeMs,
-    latestPointMs,
-    evaluation: {
-      ...evaluation,
-      snapshot: {
-        ...evaluation.snapshot,
-        lockTiming: {
-          plannedLockTimeMs: lockTimeMs,
-          lastFetchFinishedAtMs: nowMs,
-          actualSignalLockTimeMs: nowMs,
-          usedOddsPointTimestampMs: latestPointMs,
-        },
-      },
-    },
-  };
-}
-
-type PlaceEvaluationBuildResult = {
-  evaluation: PlaceEvaluation;
-  lockTimeMs: number;
-  latestPointMs: number | null;
-};
 
 async function runCron(env: Env) {
   const startMs = Date.now();
@@ -1164,6 +1196,7 @@ async function runCron(env: Env) {
           raceDate,
           trackId: track.id,
           raceNumber: ref.raceNumber,
+          meetingRef: ref,
           signal: runController.signal,
         }).catch(() => null);
 
@@ -1172,8 +1205,9 @@ async function runCron(env: Env) {
         summary.racesFetched += 1;
         allRaces.push({ track, race });
 
-        const starters = race.runners.filter((runner) => !runner.scratched).length;
-        const startMethod = /auto/i.test(race.status ?? "") ? "AUTO" : /volt/i.test(race.status ?? "") ? "VOLT" : "UNKNOWN";
+        const starters = race.runners.filter(
+          (runner) => !runner.scratched,
+        ).length;
 
         const { error: raceStateError } = await supabase.from("place_live_race_states").upsert(
           {
@@ -1185,10 +1219,11 @@ async function runCron(env: Env) {
             planned_start_time: race.startTime ?? null,
             race_status: race.status ?? null,
             is_monte: race.isMonte,
-            start_method: startMethod,
-            distance_meters: null,
+            start_method: race.startMethod,
+            distance_meters: race.distanceMeters,
             starters,
-            payload_json: race,
+            payload_json:
+              buildCompactRaceStatePayload(race),
             last_seen_at: nowIso,
             updated_at: nowIso,
           },
@@ -1364,7 +1399,7 @@ async function runCron(env: Env) {
             number: runner.number,
             horseId: runner.horseId,
             name: runner.name,
-            startLane: null,
+            startLane: runner.startLane,
             scratched: runner.scratched,
             currentWinOddsDecimal: toDecimalOdds(
               runner.oddsRaw,
@@ -1411,12 +1446,8 @@ async function runCron(env: Env) {
           plannedStartTime,
           raceStatus: race.status,
           isMonte: race.isMonte,
-          startMethod: /auto/i.test(race.status ?? "")
-            ? "AUTO"
-            : /volt/i.test(race.status ?? "")
-              ? "VOLT"
-              : "UNKNOWN",
-          distanceMeters: null,
+          startMethod: race.startMethod,
+          distanceMeters: race.distanceMeters,
           starters: race.runners.filter(
             (runner) => !runner.scratched,
           ).length,
@@ -1581,6 +1612,7 @@ async function runCron(env: Env) {
           name: runner.name,
           scratched: runner.scratched,
           oddsRaw: runner.oddsRaw,
+          startLane: runner.startLane,
           stats: { ...runner.stats },
           firstOddsRaw,
           changePercent,
@@ -1629,7 +1661,7 @@ async function runCron(env: Env) {
           number: runner.number,
           horseId: runner.horseId,
           name: runner.name,
-          startLane: null,
+          startLane: runner.startLane,
           scratched: runner.scratched,
           currentWinOddsDecimal: toDecimalOdds(runner.oddsRaw),
           indicatorsGreen: meta.indicatorsGreen,
@@ -1669,8 +1701,8 @@ async function runCron(env: Env) {
         plannedStartTime: race.startTime ?? new Date(startMs).toISOString(),
         raceStatus: race.status,
         isMonte: race.isMonte,
-        startMethod: /auto/i.test(race.status ?? "") ? "AUTO" : /volt/i.test(race.status ?? "") ? "VOLT" : "UNKNOWN",
-        distanceMeters: null,
+        startMethod: race.startMethod,
+        distanceMeters: race.distanceMeters,
         starters: race.runners.filter((runner) => !runner.scratched).length,
       };
 
