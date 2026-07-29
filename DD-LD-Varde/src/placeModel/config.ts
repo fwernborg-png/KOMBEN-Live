@@ -13,9 +13,9 @@ export type PlaceRuleConfig = {
 };
 
 export const PLACE_RULE_CONFIG_V1: PlaceRuleConfig = {
-  ruleVersion: "PLACE_V1.0",
+  ruleVersion: "PLACE_V2.0",
   collectionStartMinutesBeforeRace: 60,
-  lockMinutesBeforeRace: 1,
+  lockMinutesBeforeRace: 1.5,
   minStrength: 4,
   maxCurrentWinOddsExclusive: 10.0,
   requireOddsDrop: true,
