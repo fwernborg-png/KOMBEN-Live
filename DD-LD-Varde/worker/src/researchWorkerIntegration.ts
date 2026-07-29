@@ -1,0 +1,325 @@
+import type {
+  ResearchArchiveOddsRow,
+  ResearchArchiveRaceInput,
+  ResearchArchiveRunnerStats,
+} from "./researchArchive";
+import type {
+  ParsedResearchProduct,
+  ParsedResearchStartMethod,
+} from "./researchRaceParser";
+
+export type WorkerResearchRunner = {
+  number: number;
+  horseId: number | null;
+  name: string;
+
+  oddsRaw: number | null;
+  placeOddsRaw: number | null;
+  scratched: boolean;
+
+  stats: ResearchArchiveRunnerStats;
+
+  horseAge: number | null;
+  horseSex: string | null;
+
+  startLane: number | null;
+  startDistanceMeters: number | null;
+
+  driverId: number | null;
+  driverName: string | null;
+
+  trainerId: number | null;
+  trainerName: string | null;
+
+  rawRunnerJson: Record<string, unknown>;
+};
+
+export type WorkerResearchRace = {
+  raceNumber: number;
+  id: string;
+
+  startTime?: string;
+  status?: string;
+
+  runners: WorkerResearchRunner[];
+  isMonte: boolean;
+
+  eventId: string | null;
+  meetingId: string | null;
+  meetingName: string | null;
+
+  raceName: string | null;
+
+  startMethod: ParsedResearchStartMethod;
+  distanceMeters: number | null;
+
+  raceClassCode: string | null;
+  raceCategory: string | null;
+
+  earningsMin: number | null;
+  earningsMax: number | null;
+
+  ageMin: number | null;
+  ageMax: number | null;
+
+  firstAdditionalDistanceMeters: number | null;
+
+  prizeMoneyTotal: number | null;
+  firstPrize: number | null;
+
+  products: ParsedResearchProduct[];
+
+  rawRaceJson: Record<string, unknown>;
+  rawMeetingJson: Record<string, unknown>;
+};
+
+export type WorkerResearchTrack = {
+  id: number;
+  name: string;
+  countryCode: "SE" | "FR";
+};
+
+export type WorkerResearchDbOddsRow = {
+  race_id: string;
+
+  runner_number: number;
+
+  horse_id: number | null;
+  horse_name: string;
+
+  market: "WIN" | "PLACE";
+
+  odds_decimal: number | string;
+  point_ts: string;
+  source: string;
+};
+
+function rawOddsToDecimal(
+  value: number | null,
+): number | null {
+  if (
+    value === null ||
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    Math.round(value) === 9_999
+  ) {
+    return null;
+  }
+
+  return value / 100;
+}
+
+export function isResearchArchiveEnabled(
+  value: string | undefined,
+): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return ["1", "true", "yes", "on"].includes(
+    value.trim().toLowerCase(),
+  );
+}
+
+export function mergeResearchProducts(
+  ...groups: ParsedResearchProduct[][]
+): ParsedResearchProduct[] {
+  const unique = new Map<
+    string,
+    ParsedResearchProduct
+  >();
+
+  for (const product of groups.flat()) {
+    const key = [
+      product.productCode,
+      product.productId ?? "",
+      product.legNumber ?? "",
+      product.totalLegs ?? "",
+    ].join(":");
+
+    if (!unique.has(key)) {
+      unique.set(key, product);
+    }
+  }
+
+  return [...unique.values()];
+}
+
+export function buildResearchArchiveRaceInput(args: {
+  raceDate: string;
+  track: WorkerResearchTrack;
+  race: WorkerResearchRace;
+}): ResearchArchiveRaceInput {
+  const { raceDate, track, race } = args;
+
+  if (!race.startTime) {
+    throw new Error(
+      `Planerad starttid saknas för lopp ${race.id}`,
+    );
+  }
+
+  return {
+    sourceRaceId: race.id,
+    raceDate,
+
+    eventId: race.eventId,
+    meetingId: race.meetingId,
+    meetingName: race.meetingName,
+
+    countryCode: track.countryCode,
+
+    currencyCode:
+      track.countryCode === "FR"
+        ? "EUR"
+        : "SEK",
+
+    trackId: track.id,
+    trackName: track.name,
+    raceNumber: race.raceNumber,
+
+    raceName: race.raceName,
+
+    plannedStartTime: race.startTime,
+    actualStartTime: null,
+
+    raceStatus: race.status ?? null,
+
+    startMethod: race.startMethod,
+    distanceMeters: race.distanceMeters,
+    isMonte: race.isMonte,
+
+    scheduledStarters: race.runners.length,
+
+    raceClassCode: race.raceClassCode,
+    raceCategory: race.raceCategory,
+
+    earningsMin: race.earningsMin,
+    earningsMax: race.earningsMax,
+
+    ageMin: race.ageMin,
+    ageMax: race.ageMax,
+
+    firstAdditionalDistanceMeters:
+      race.firstAdditionalDistanceMeters,
+
+    prizeMoneyTotal: race.prizeMoneyTotal,
+    firstPrize: race.firstPrize,
+
+    products: race.products,
+
+    runners: race.runners.map((runner) => ({
+      number: runner.number,
+
+      horseId: runner.horseId,
+      name: runner.name,
+
+      horseAge: runner.horseAge,
+      horseSex: runner.horseSex,
+
+      startLane: runner.startLane,
+      startDistanceMeters:
+        runner.startDistanceMeters,
+
+      driverId: runner.driverId,
+      driverName: runner.driverName,
+
+      trainerId: runner.trainerId,
+      trainerName: runner.trainerName,
+
+      scratched: runner.scratched,
+
+      currentWinOddsDecimal:
+        rawOddsToDecimal(runner.oddsRaw),
+
+      currentPlaceOddsDecimal:
+        rawOddsToDecimal(
+          runner.placeOddsRaw,
+        ),
+
+      stats: {
+        ...runner.stats,
+      },
+
+      rawRunnerJson:
+        runner.rawRunnerJson,
+    })),
+
+    rawRaceJson: {
+      race: race.rawRaceJson,
+      meeting: race.rawMeetingJson,
+    },
+  };
+}
+
+export function mapResearchArchiveOddsRows(args: {
+  rows: WorkerResearchDbOddsRow[];
+  race: WorkerResearchRace;
+  actualLockTimeMs: number;
+}): ResearchArchiveOddsRow[] {
+  const runnerByNumber = new Map(
+    args.race.runners.map((runner) => [
+      runner.number,
+      runner,
+    ]),
+  );
+
+  return args.rows
+    .map((row): ResearchArchiveOddsRow | null => {
+      const pointTimestampMs = Date.parse(
+        row.point_ts,
+      );
+
+      const oddsDecimal = Number(
+        row.odds_decimal,
+      );
+
+      if (
+        !Number.isFinite(pointTimestampMs) ||
+        pointTimestampMs >
+          args.actualLockTimeMs ||
+        !Number.isFinite(oddsDecimal)
+      ) {
+        return null;
+      }
+
+      const runner = runnerByNumber.get(
+        row.runner_number,
+      );
+
+      return {
+        runnerNumber: row.runner_number,
+
+        horseId:
+          row.horse_id ??
+          runner?.horseId ??
+          null,
+
+        horseName:
+          row.horse_name ||
+          runner?.name ||
+          `Häst ${row.runner_number}`,
+
+        market: row.market,
+        oddsDecimal,
+        pointTimestampMs,
+
+        scratched:
+          runner?.scratched ?? false,
+
+        source: row.source || "ATG",
+      };
+    })
+    .filter(
+      (
+        row,
+      ): row is ResearchArchiveOddsRow =>
+        row !== null,
+    )
+    .sort(
+      (a, b) =>
+        a.runnerNumber - b.runnerNumber ||
+        a.pointTimestampMs -
+          b.pointTimestampMs ||
+        a.market.localeCompare(b.market),
+    );
+}
