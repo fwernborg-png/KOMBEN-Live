@@ -8,3 +8,6 @@ crons = ["* * * * *"]
 
 [limits]
 subrequests = 10000
+
+[vars]
+RESEARCH_ARCHIVE_ENABLED = "true"
