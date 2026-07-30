@@ -255,7 +255,7 @@ describe("researchWorkerArchiveRun", () => {
   it("gör inga databasanrop när brytaren är av", async () => {
     const adapter: ResearchArchivePersistenceAdapter =
       {
-        async loadExistingRaceKeys() {
+        async loadExistingLockStates() {
           throw new Error(
             "Ska inte anropas",
           );
@@ -298,8 +298,8 @@ describe("researchWorkerArchiveRun", () => {
 
     const adapter: ResearchArchivePersistenceAdapter =
       {
-        async loadExistingRaceKeys() {
-          return new Set();
+        async loadExistingLockStates() {
+          return new Map();
         },
 
         async loadOddsRows() {
@@ -376,8 +376,8 @@ describe("researchWorkerArchiveRun", () => {
 
     const adapter: ResearchArchivePersistenceAdapter =
       {
-        async loadExistingRaceKeys() {
-          return new Set([raceKey]);
+        async loadExistingLockStates() {
+          return new Map([[raceKey, true]]);
         },
 
         async loadOddsRows() {
@@ -411,11 +411,111 @@ describe("researchWorkerArchiveRun", () => {
     expect(persisted).toBe(false);
   });
 
+  it(
+    "försöker skriva om ett partiellt LOCK-snapshot",
+    async () => {
+      const item = buildRaceItem();
+
+      const raceKey =
+        buildResearchRaceKey({
+          raceDate: "2026-07-29",
+          trackId: item.track.id,
+          raceNumber:
+            item.race.raceNumber,
+          sourceRaceId:
+            item.race.id,
+        });
+
+      let oddsRead = false;
+      let persisted = false;
+
+      const adapter:
+        ResearchArchivePersistenceAdapter =
+          {
+            async loadExistingLockStates() {
+              return new Map([
+                [
+                  raceKey,
+                  false,
+                ],
+              ]);
+            },
+
+            async loadOddsRows() {
+              oddsRead = true;
+
+              return buildOddsRows(
+                item,
+              );
+            },
+
+            async persistRows(rows) {
+              persisted = true;
+
+              return {
+                raceKey:
+                  rows.raceKey,
+
+                snapshotKey:
+                  rows.snapshotKey,
+
+                runners:
+                  rows.runnerSnapshotRows
+                    .length,
+
+                indicators:
+                  rows.indicatorRows
+                    .length,
+
+                permanentOddsPoints:
+                  rows.oddsPointRows
+                    .length,
+
+                metrics:
+                  rows.metricRows
+                    .length,
+
+                products:
+                  rows.productRows
+                    .length,
+
+                snapshotComplete:
+                  rows.snapshotComplete,
+              };
+            },
+          };
+
+      const summary =
+        await archiveResearchRacesAtLock({
+          enabled: true,
+          raceDate: "2026-07-29",
+          nowMs: LOCK_MS,
+          races: [item],
+          adapter,
+        });
+
+      expect(
+        summary.retriedPartial,
+      ).toBe(1);
+
+      expect(
+        summary.skippedExisting,
+      ).toBe(0);
+
+      expect(
+        summary.archivedRaces,
+      ).toBe(1);
+
+      expect(oddsRead).toBe(true);
+      expect(persisted).toBe(true);
+    },
+  );
+
   it("isolerar ett arkivfel utan att kasta vidare", async () => {
     const adapter: ResearchArchivePersistenceAdapter =
       {
-        async loadExistingRaceKeys() {
-          return new Set();
+        async loadExistingLockStates() {
+          return new Map();
         },
 
         async loadOddsRows() {
@@ -454,9 +554,9 @@ describe("researchWorkerArchiveRun", () => {
 
     const adapter: ResearchArchivePersistenceAdapter =
       {
-        async loadExistingRaceKeys() {
+        async loadExistingLockStates() {
           databaseRead = true;
-          return new Set();
+          return new Map();
         },
 
         async loadOddsRows() {

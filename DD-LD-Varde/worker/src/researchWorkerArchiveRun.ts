@@ -32,15 +32,16 @@ export type ResearchArchiveRunSummary = {
   partialSnapshots: number;
 
   skippedExisting: number;
+  retriedPartial: number;
   failedRaces: number;
 
   errors: string[];
 };
 
 export type ResearchArchivePersistenceAdapter = {
-  loadExistingRaceKeys(args: {
+  loadExistingLockStates(args: {
     raceDate: string;
-  }): Promise<Set<string>>;
+  }): Promise<Map<string, boolean>>;
 
   loadOddsRows(args: {
     raceId: string;
@@ -66,6 +67,7 @@ function emptySummary(
     partialSnapshots: 0,
 
     skippedExisting: 0,
+    retriedPartial: 0,
     failedRaces: 0,
 
     errors: [],
@@ -85,13 +87,13 @@ export function createSupabaseResearchArchiveAdapter(
   supabase: SupabaseClient,
 ): ResearchArchivePersistenceAdapter {
   return {
-    async loadExistingRaceKeys({ raceDate }) {
+    async loadExistingLockStates({ raceDate }) {
       const {
         data,
         error,
       } = await supabase
         .from("research_race_snapshots")
-        .select("race_key")
+        .select("race_key,snapshot_complete")
         .eq("signal_phase", "LIVE")
         .eq("capture_type", "LOCK")
         .like(
@@ -105,14 +107,19 @@ export function createSupabaseResearchArchiveAdapter(
         );
       }
 
-      return new Set(
+      return new Map(
         (data ?? []).map(
-          (row) =>
-            (
-              row as {
-                race_key: string;
-              }
-            ).race_key,
+          (row) => {
+            const parsed = row as {
+              race_key: string;
+              snapshot_complete: boolean;
+            };
+
+            return [
+              parsed.race_key,
+              parsed.snapshot_complete,
+            ] as const;
+          },
         ),
       );
     },
@@ -193,11 +200,12 @@ export async function archiveResearchRacesAtLock(
     return summary;
   }
 
-  let existingRaceKeys: Set<string>;
+  let existingLockStates:
+    Map<string, boolean>;
 
   try {
-    existingRaceKeys =
-      await args.adapter.loadExistingRaceKeys({
+    existingLockStates =
+      await args.adapter.loadExistingLockStates({
         raceDate: args.raceDate,
       });
   } catch (error) {
@@ -240,11 +248,22 @@ export async function archiveResearchRacesAtLock(
         sourceRaceId: race.id,
       });
 
+    const existingSnapshotComplete =
+      existingLockStates.get(
+        raceKey,
+      );
+
     if (
-      existingRaceKeys.has(raceKey)
+      existingSnapshotComplete === true
     ) {
       summary.skippedExisting += 1;
       continue;
+    }
+
+    if (
+      existingSnapshotComplete === false
+    ) {
+      summary.retriedPartial += 1;
     }
 
     try {
@@ -327,7 +346,10 @@ export async function archiveResearchRacesAtLock(
         summary.partialSnapshots += 1;
       }
 
-      existingRaceKeys.add(raceKey);
+      existingLockStates.set(
+        raceKey,
+        persisted.snapshotComplete,
+      );
     } catch (error) {
       summary.failedRaces += 1;
 

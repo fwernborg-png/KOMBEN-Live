@@ -4,7 +4,7 @@ import { parsePushSubscription } from "./pushSubscription";
 import { deliverFinalSignalNotification } from "./finalSignalPushDelivery";
 import { PLACE_RULE_CONFIG_V1 } from "../../src/placeModel/config";
 import { evaluatePlaceModelAtLock } from "../../src/placeModel/engine";
-import { fetchHorseGallopPercent } from "../../src/gallop";
+import { fetchHorseGallopPercentWithRetry } from "./gallopRetry";
 import { buildModelBetFromEvaluation, settleModelBet } from "../../src/placeModel/workflow";
 import type { OddsPoint, PlaceBet, PlaceEvaluation, PlaceRunnerInput } from "../../src/placeModel/types";
 import {
@@ -40,6 +40,13 @@ import {
 import {
   completeResearchRacesForDay,
 } from "./researchCompletion";
+import {
+  extractRunnerStats,
+} from "./runnerStatistics";
+
+export {
+  latestYearWinPercent,
+} from "./runnerStatistics";
 
 type Env = {
   SUPABASE_URL: string;
@@ -478,192 +485,6 @@ function parseMeetingRaceRefs(trackValue: unknown): MeetingRaceRef[] {
     if (!dedup.has(ref.raceNumber)) dedup.set(ref.raceNumber, ref);
   }
   return [...dedup.values()].sort((a, b) => a.raceNumber - b.raceNumber);
-}
-
-function parsePercent(value: unknown) {
-  const n = asNumber(value);
-  if (n === null) return null;
-  return n > 1 ? n : n * 100;
-}
-
-export function latestYearWinPercent(yearsValue: unknown): number | null {
-  const candidates: Array<{
-    year: number;
-    record: Record<string, unknown>;
-  }> = [];
-
-  if (Array.isArray(yearsValue)) {
-    for (const item of yearsValue) {
-      const record = asRecord(item);
-      if (!record) continue;
-
-      candidates.push({
-        year:
-          asNumber(record.year) ??
-          asNumber(record.season) ??
-          0,
-        record,
-      });
-    }
-  } else {
-    const yearsRecord = asRecord(yearsValue);
-
-    if (yearsRecord) {
-      for (const [yearKey, item] of Object.entries(yearsRecord)) {
-        const record = asRecord(item);
-        if (!record) continue;
-
-        candidates.push({
-          year:
-            asNumber(record.year) ??
-            asNumber(record.season) ??
-            (
-              Number.isFinite(Number(yearKey))
-                ? Number(yearKey)
-                : 0
-            ),
-          record,
-        });
-      }
-    }
-  }
-
-  candidates.sort((a, b) => b.year - a.year);
-
-  for (const { record } of candidates) {
-    const directPercent =
-      asNumber(record.winPercentage) ??
-      asNumber(record.winPercent);
-
-    if (directPercent !== null) {
-      return parsePercent(directPercent);
-    }
-
-    const starts =
-      asNumber(record.starts) ??
-      asNumber(record.numberOfStarts);
-
-    const placement =
-      getRecord(record, "placement") ??
-      getRecord(record, "placements");
-
-    const wins =
-      (placement
-        ? asNumber(placement["1"]) ??
-          asNumber(placement.first)
-        : null) ??
-      asNumber(record.wins) ??
-      asNumber(record.firstPlaces);
-
-    if (
-      starts !== null &&
-      starts > 0 &&
-      wins !== null
-    ) {
-      return (wins / starts) * 100;
-    }
-  }
-
-  return null;
-}
-
-function firstNumeric(value: unknown, paths: string[][], parser?: (value: number) => number | null) {
-  for (const path of paths) {
-    let cursor: unknown = value;
-    for (const key of path) {
-      const rec = asRecord(cursor);
-      if (!rec) {
-        cursor = null;
-        break;
-      }
-      cursor = rec[key];
-    }
-
-    const candidate = asNumber(cursor);
-    if (candidate === null) continue;
-    const parsed = parser ? parser(candidate) : candidate;
-    if (parsed !== null) return parsed;
-  }
-
-  return null;
-}
-
-function extractRunnerStats(start: Record<string, unknown>): RunnerStats {
-  const horse = getRecord(start, "horse");
-  const driver = getRecord(start, "driver");
-  const horseStatistics = getRecord(horse, "statistics");
-  const horseLife = getRecord(horseStatistics, "life");
-  const horseYearsValue = horseStatistics?.years;
-
-  const driverStatistics = getRecord(driver, "statistics");
-  const driverYearsValue = driverStatistics?.years;
-
-  const horseYearWinPercent =
-    latestYearWinPercent(horseYearsValue);
-
-  const driverYearWinPercent =
-    latestYearWinPercent(driverYearsValue);
-
-  return {
-    earningsPerStart: firstNumeric(start, [
-      ["earningsPerStart"],
-      ["moneyPerStart"],
-      ["statistics", "earningsPerStart"],
-      ["statistics", "moneyPerStart"],
-      ["horse", "statistics", "life", "earningsPerStart"],
-      ["horse", "statistics", "life", "moneyPerStart"],
-      ["horse", "statistics", "earningsPerStart"],
-      ["horse", "statistics", "moneyPerStart"],
-      ["horse", "life", "earningsPerStart"],
-      ["career", "earningsPerStart"],
-      ["horse", "career", "earningsPerStart"],
-    ]),
-    winPercent:
-      firstNumeric(start, [
-        ["winPercent"],
-        ["winPercentage"],
-        ["statistics", "winPercent"],
-        ["statistics", "winPercentage"],
-        ["horse", "statistics", "life", "winPercent"],
-        ["horse", "statistics", "life", "winPercentage"],
-        ["horse", "statistics", "winPercent"],
-        ["horse", "statistics", "winPercentage"],
-      ], parsePercent) ??
-      firstNumeric(horseLife, [["winPercent"], ["winPercentage"]], parsePercent) ??
-      horseYearWinPercent,
-    driverWinPercent:
-      firstNumeric(driver ?? start, [
-        ["winPercent"],
-        ["winPercentage"],
-        ["statistics", "winPercent"],
-        ["statistics", "winPercentage"],
-        ["career", "winPercentage"],
-      ], parsePercent) ?? driverYearWinPercent,
-    startPoints:
-      firstNumeric(start, [
-        ["startPoints"],
-        ["startPoang"],
-        ["statistics", "startPoints"],
-        ["statistics", "startPoang"],
-        ["horse", "statistics", "life", "startPoints"],
-        ["horse", "statistics", "life", "startPoang"],
-        ["horse", "statistics", "startPoints"],
-        ["horse", "statistics", "startPoang"],
-      ]) ??
-      firstNumeric(horseLife, [["startPoints"], ["startPoang"]]),
-    gallopPercent: firstNumeric(start, [
-      ["gallopPercent"],
-      ["galoppPercent"],
-      ["gallopRate"],
-      ["statistics", "gallopPercent"],
-      ["statistics", "galoppPercent"],
-      ["horse", "statistics", "life", "gallopPercent"],
-      ["horse", "statistics", "life", "galoppPercent"],
-      ["horse", "statistics", "gallopPercent"],
-      ["horse", "statistics", "galoppPercent"],
-      ["career", "gallopPercent"],
-    ], parsePercent),
-  };
 }
 
 function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
@@ -1252,6 +1073,7 @@ async function runCron(env: Env) {
     researchSnapshotsComplete: 0,
     researchSnapshotsPartial: 0,
     researchSnapshotsSkippedExisting: 0,
+    researchSnapshotsRetriedPartial: 0,
     researchArchiveFailures: 0,
     researchArchiveErrors: [] as string[],
 
@@ -1362,7 +1184,7 @@ async function runCron(env: Env) {
           )
           .map(async (runner) => {
             const gallopPercent =
-              await fetchHorseGallopPercent({
+              await fetchHorseGallopPercentWithRetry({
                 horseId: runner.horseId as number,
                 apiBaseUrl,
                 signal: runController.signal,
@@ -1497,6 +1319,9 @@ async function runCron(env: Env) {
 
     summary.researchSnapshotsSkippedExisting =
       researchArchiveSummary.skippedExisting;
+
+    summary.researchSnapshotsRetriedPartial =
+      researchArchiveSummary.retriedPartial;
 
     summary.researchArchiveFailures =
       researchArchiveSummary.failedRaces;
@@ -1872,7 +1697,7 @@ async function runCron(env: Env) {
       const gallopFetches = trendLite
         .filter((runner) => !runner.scratched && runner.stats.gallopPercent === null && runner.horseId !== null)
         .map(async (runner) => {
-          const gallop = await fetchHorseGallopPercent({
+          const gallop = await fetchHorseGallopPercentWithRetry({
             horseId: runner.horseId as number,
             apiBaseUrl,
             signal: runController.signal,
