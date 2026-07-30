@@ -39,6 +39,7 @@ import type {
   PlaceRunnerInput,
 } from "./placeModel/types";
 import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
+import { ResearchHistoryPanel } from "./researchHistory/ResearchHistoryPanel";
 
 type Track = {
   id: number;
@@ -277,7 +278,7 @@ type MeetingRaceRef = {
   startTime?: string;
 };
 type MeetingRacesByTrack = Record<number, MeetingRaceRef[]>;
-type AppTab = "overview" | "race" | "journal" | "stats";
+type AppTab = "overview" | "race" | "journal" | "stats" | "history";
 type StatKey = "KR" | "ST" | "K" | "SP" | "G" | "ODD";
 type StatDefinition = {
   key: StatKey;
@@ -353,6 +354,7 @@ const APP_TABS: Array<{ id: AppTab; label: string }> = [
   { id: "race", label: "Lopp" },
   { id: "journal", label: "Speljournal" },
   { id: "stats", label: "Statistik" },
+  { id: "history", label: "Historik & analys" },
 ];
 
 const STAT_DEFINITIONS: StatDefinition[] = [
@@ -5585,6 +5587,7 @@ export default function App() {
           {activeTab === "race" ? renderRaceTab() : null}
           {activeTab === "journal" ? renderJournalTab() : null}
           {activeTab === "stats" ? renderStatsTab() : null}
+          {activeTab === "history" ? <ResearchHistoryPanel /> : null}
 
           <footer className="footer-compact">
             <span>Banor {tracks.length}</span>
