@@ -37,6 +37,9 @@ import {
   archiveResearchRacesAtLock,
   createSupabaseResearchArchiveAdapter,
 } from "./researchWorkerArchiveRun";
+import {
+  completeResearchRacesForDay,
+} from "./researchCompletion";
 
 type Env = {
   SUPABASE_URL: string;
@@ -1252,6 +1255,15 @@ async function runCron(env: Env) {
     researchArchiveFailures: 0,
     researchArchiveErrors: [] as string[],
 
+    researchCompletionRacesChecked: 0,
+    researchResultRacesCompleted: 0,
+    researchResultRowsArchived: 0,
+    researchEventRowsProcessed: 0,
+    researchFinalOddsPointsArchived: 0,
+    researchResultSnapshotsArchived: 0,
+    researchCompletionFailures: 0,
+    researchCompletionErrors: [] as string[],
+
     evaluationsCreated: 0,
     betsCreated: 0,
     winPlaceEvaluationsCreated: 0,
@@ -1491,6 +1503,45 @@ async function runCron(env: Env) {
 
     summary.researchArchiveErrors =
       researchArchiveSummary.errors;
+
+    const researchCompletionSummary =
+      await completeResearchRacesForDay({
+        enabled:
+          researchArchiveEnabled,
+
+        supabase,
+
+        raceDate,
+
+        races:
+          allRaces,
+
+        nowIso,
+      });
+
+    summary.researchCompletionRacesChecked =
+      researchCompletionSummary.racesChecked;
+
+    summary.researchResultRacesCompleted =
+      researchCompletionSummary.racesCompleted;
+
+    summary.researchResultRowsArchived =
+      researchCompletionSummary.resultRowsArchived;
+
+    summary.researchEventRowsProcessed =
+      researchCompletionSummary.eventRowsProcessed;
+
+    summary.researchFinalOddsPointsArchived =
+      researchCompletionSummary.finalOddsPointsArchived;
+
+    summary.researchResultSnapshotsArchived =
+      researchCompletionSummary.resultSnapshotsArchived;
+
+    summary.researchCompletionFailures =
+      researchCompletionSummary.failedRaces;
+
+    summary.researchCompletionErrors =
+      researchCompletionSummary.errors;
 
     const vapidSubject = env.VAPID_SUBJECT?.trim();
     const vapidPublicKey = env.VAPID_PUBLIC_KEY?.trim();
