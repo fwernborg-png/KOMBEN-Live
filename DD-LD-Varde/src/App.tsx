@@ -195,7 +195,6 @@ const PLACE_BETS_CACHE_KEY = "komben-live-place-bets-cache-v1";
 const ALL_RACES_REFRESH_SECONDS = 60;
 const MAX_HISTORY_POINTS = 720;
 const TVILLING_STAKE = 100;
-const SHOW_LEGACY_KOMB_UI = false;
 const ACTIVE_PLACE_UI_ONLY = true;
 
 type AutoSelection = {
@@ -5084,10 +5083,26 @@ export default function App() {
                         const isExpanded = expandedRunnerKey === rowKey;
                         const consistency = runnerInfo?.consistency;
 
+                        const officialFinishIndex =
+                          selectedRace.finishOrder.indexOf(
+                            runner.number,
+                          );
+
+                        const officialFinishPosition =
+                          officialFinishIndex >= 0
+                            ? officialFinishIndex + 1
+                            : null;
+
+                        const podiumPosition =
+                          officialFinishPosition !== null &&
+                          officialFinishPosition <= 3
+                            ? officialFinishPosition
+                            : null;
+
                         return (
                           <div
                             key={rowKey}
-                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""}`}
+                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""} ${podiumPosition ? `is-finish-${podiumPosition}` : ""}`}
                           >
                             <div
                               role="button"
@@ -5104,9 +5119,31 @@ export default function App() {
                               <span className={`number-pill ${isWatched || isLockedPlay || isBiggestDrop ? "is-highlight" : ""}`}>{runner.number}</span>
                               <span className="runner-name-cell">
                                 <span className="runner-title-line">
-                                  {isWatched ? <span className="inline-tag watch">BEVAKAS</span> : null}
-                                  {isLockedPlay ? <span className="inline-tag a1">PLATSSPEL</span> : null}
-                                  <strong>{runner.name}</strong>
+                                  {podiumPosition ? (
+                                    <span
+                                      className={`finish-position-badge finish-${podiumPosition}`}
+                                      title={`Officiell placering: ${podiumPosition}:a`}
+                                      aria-label={`Officiell placering ${podiumPosition}`}
+                                    >
+                                      {podiumPosition}:a
+                                    </span>
+                                  ) : null}
+
+                                  {isWatched ? (
+                                    <span className="inline-tag watch">
+                                      BEVAKAS
+                                    </span>
+                                  ) : null}
+
+                                  {isLockedPlay ? (
+                                    <span className="inline-tag a1">
+                                      PLATSSPEL
+                                    </span>
+                                  ) : null}
+
+                                  <strong title={runner.name}>
+                                    {runner.name}
+                                  </strong>
                                 </span>
                                 <small>{runner.driver}</small>
                               </span>
@@ -5172,110 +5209,227 @@ export default function App() {
                   </div>
 
                   <aside className="race-side-panel">
-                    <section className={`side-card signal-card ${selectedRaceSignalState.mode === "PRELIM_WATCH" ? "is-watched" : ""} ${selectedRaceSignalState.mode === "LOCKED_PLAY" ? "is-locked-play" : ""}`}>
-                      <div className="side-card-title">{selectedRaceSignalState.title}</div>
-                      <div className="candidate-summary">
-                        <span>Status</span>
-                        <strong>{selectedRaceSignalState.statusText}</strong>
-                        <small>
-                          {selectedSignalRunner
-                            ? `${selectedSignalRunner.number}. ${selectedSignalRunner.name} · ${selectedSignalRunner.driver}`
-                            : selectedRaceSignalState.evaluatedRunnerNumber
-                              ? `${selectedRaceSignalState.evaluatedRunnerNumber}. Utvarderad`
-                              : "Ingen giltig kandidat"}
-                        </small>
+                    <section className="side-card strategy-selection-card biggest-drop-card">
+                      <div className="strategy-card-heading">
+                        <span className="strategy-card-icon" aria-hidden="true">↘</span>
+
+                        <div>
+                          <div className="side-card-title">Mest sänkta</div>
+                          <small>Största oddssänkningen i loppet</small>
+                        </div>
                       </div>
+
+                      {raceInsights.biggestDrop ? (
+                        <button
+                          type="button"
+                          className="strategy-horse-button"
+                          onClick={() =>
+                            setExpandedRunnerKey(
+                              `${selectedRace.id}-${raceInsights.biggestDrop?.number}`,
+                            )
+                          }
+                        >
+                          <span className="strategy-number biggest-drop-number">
+                            {raceInsights.biggestDrop.number}
+                          </span>
+
+                          <span className="strategy-horse-copy">
+                            <strong>{raceInsights.biggestDrop.name}</strong>
+
+                            <span className="strategy-odds-line">
+                              {formatOdds(raceInsights.biggestDrop.firstOdds)}
+                              <span aria-hidden="true">→</span>
+                              {formatOdds(raceInsights.biggestDrop.odds)}
+                            </span>
+
+                            <span className="strategy-strength-line">
+                              Styrka {runnerStrength(raceInsights.biggestDrop)}/6
+                            </span>
+                          </span>
+
+                          <strong className="strategy-change biggest-drop-change">
+                            {formatDropPercent(raceInsights.biggestDrop.dropPercent)}
+                          </strong>
+                        </button>
+                      ) : (
+                        <div className="strategy-empty-state">
+                          För lite oddshistorik för att utse mest sänkta.
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="side-card strategy-selection-card smoothest-card">
+                      <div className="strategy-card-heading">
+                        <span className="strategy-card-icon" aria-hidden="true">≈</span>
+
+                        <div>
+                          <div className="side-card-title">Jämnaste häst</div>
+                          <small>Jämnast oddsutveckling under mätperioden</small>
+                        </div>
+                      </div>
+
+                      {raceInsights.smoothest ? (
+                        <button
+                          type="button"
+                          className="strategy-horse-button"
+                          onClick={() =>
+                            setExpandedRunnerKey(
+                              `${selectedRace.id}-${raceInsights.smoothest?.number}`,
+                            )
+                          }
+                        >
+                          <span className="strategy-number smoothest-number">
+                            {raceInsights.smoothest.number}
+                          </span>
+
+                          <span className="strategy-horse-copy">
+                            <strong>{raceInsights.smoothest.name}</strong>
+
+                            <span className="strategy-odds-line">
+                              Odds {formatOdds(raceInsights.smoothest.odds)}
+                            </span>
+
+                            <span className="strategy-strength-line">
+                              Styrka {runnerStrength(raceInsights.smoothest)}/6
+                            </span>
+                          </span>
+
+                          <strong className="strategy-change smoothest-change">
+                            {raceInsights.byRunner[
+                              raceInsights.smoothest.number
+                            ]?.consistency == null
+                              ? "–"
+                              : `CV ${(
+                                  raceInsights.byRunner[
+                                    raceInsights.smoothest.number
+                                  ]?.consistency ?? 0
+                                )
+                                  .toFixed(2)
+                                  .replace(".", ",")}`}
+                          </strong>
+                        </button>
+                      ) : (
+                        <div className="strategy-empty-state">
+                          För lite oddshistorik för att utse jämnaste häst.
+                        </div>
+                      )}
+                    </section>
+
+                    <section
+                      className={`side-card compact-signal-card ${
+                        selectedRaceSignalState.mode === "PRELIM_WATCH"
+                          ? "is-watched"
+                          : ""
+                      } ${
+                        selectedRaceSignalState.mode === "LOCKED_PLAY"
+                          ? "is-locked-play"
+                          : ""
+                      }`}
+                    >
+                      <div className="compact-signal-main">
+                        <span
+                          className={`signal-status-symbol ${
+                            selectedRaceSignalState.mode === "LOCKED_PLAY"
+                              ? "is-play"
+                              : selectedRaceSignalState.mode === "PRELIM_WATCH"
+                                ? "is-watch"
+                                : "is-no-play"
+                          }`}
+                          aria-hidden="true"
+                        >
+                          {selectedRaceSignalState.mode === "LOCKED_PLAY"
+                            ? "✓"
+                            : selectedRaceSignalState.mode === "PRELIM_WATCH"
+                              ? "!"
+                              : "×"}
+                        </span>
+
+                        <div>
+                          <div className="side-card-title">
+                            {selectedRaceSignalState.statusText}
+                          </div>
+
+                          <strong className="signal-reason">
+                            {selectedRaceSignalState.mode === "LOCKED_PLAY"
+                              ? "Spelsignal låst"
+                              : selectedRaceSignalState.mode === "PRELIM_WATCH"
+                                ? "Kandidat bevakas fram till låstid"
+                                : (
+                                    selectedRaceLockedEvaluation?.reasons?.[0] ??
+                                    selectedRacePlacePreview?.reasons?.[0] ??
+                                    selectedRaceSignalState.title
+                                  )}
+                          </strong>
+                        </div>
+                      </div>
+
                       {selectedRaceSignalState.mode === "LOCKED_PLAY" ? (
                         <div className="play-now-banner" role="status" aria-live="polite">
                           SPELA DENNA
                         </div>
                       ) : null}
-                      <div className="candidate-summary a2">
-                        <span>Regelutfall</span>
-                        <div className="rule-check-list">
-                          {(selectedRaceLockedEvaluation ?? selectedRacePlacePreview)?.checks?.length
-                            ? (selectedRaceLockedEvaluation ?? selectedRacePlacePreview)?.checks.map((check) => (
-                              <span key={check.key} className={check.passed ? "is-pass" : "is-fail"}>
-                                {check.passed ? "✓" : "✕"} {check.message}
-                              </span>
-                            ))
-                            : <span className="muted">Inga regelavvikelser</span>}
-                        </div>
+                    </section>
+
+                    <section className="side-card lock-time-card">
+                      <div className="lock-time-item">
+                        <span>Planerad låstid</span>
+
+                        <strong>
+                          {selectedRaceLockTiming?.plannedLockTimeMs == null
+                            ? "–"
+                            : formatClockTimeMaybe(
+                                selectedRaceLockTiming.plannedLockTimeMs,
+                              )}
+                        </strong>
                       </div>
 
-                      {selectedRaceLockTiming ? (
-                        <div className="candidate-summary">
-                          <span>Låstider</span>
-                          <small>Planerad låstid: {formatClockTimeMaybe(selectedRaceLockTiming.plannedLockTimeMs)}</small>
-                          <small>Sista hämtning start: {formatClockTimeMaybe(selectedRaceLockTiming.lastFetchStartedAtMs)}</small>
-                          <small>Sista hämtning klar: {formatClockTimeMaybe(selectedRaceLockTiming.lastFetchFinishedAtMs)}</small>
-                          <small>Faktisk signallåsning: {formatClockTimeMaybe(selectedRaceLockTiming.actualSignalLockTimeMs)}</small>
-                          <small>Använd oddspunkt: {formatClockTimeMaybe(selectedRaceLockTiming.usedOddsPointTimestampMs)}</small>
-                        </div>
-                      ) : null}
+                      <div className="lock-time-divider" aria-hidden="true" />
 
-                      {(selectedRacePlaceBet || selectedRacePlacePreview?.smoothest) ? (
-                        <div className="odds-highlight-card">
-                          <span>SIGNALDATA</span>
-                          <strong>
-                            {(selectedRacePlaceBet?.horseNumber ?? selectedRacePlacePreview?.smoothest?.runnerNumber) ?? "-"}. {(selectedRacePlaceBet?.horseName ?? selectedRacePlacePreview?.smoothest?.runnerName) ?? "Ingen"}
-                          </strong>
-                          <small>
-                            Kusk {selectedSignalRunner?.driver ?? "-"} · Status {selectedRaceSignalState.statusText}
-                          </small>
-                          <small>
-                            Första {(selectedRacePlaceBet?.startOdds ?? selectedRacePlacePreview?.smoothest?.startOdds)?.toFixed(2).replace(".", ",") ?? "-"}
-                            · Nu {(selectedRacePlaceBet?.currentWinOdds ?? selectedRacePlacePreview?.smoothest?.currentWinOdds)?.toFixed(2).replace(".", ",") ?? "-"}
-                            · Sänkning {(selectedRacePlaceBet?.oddsDropPercent ?? selectedRacePlacePreview?.smoothest?.oddsDropPercent) != null ? `${(selectedRacePlaceBet?.oddsDropPercent ?? selectedRacePlacePreview?.smoothest?.oddsDropPercent ?? 0).toFixed(1).replace(".", ",")} %` : "-"}
-                          </small>
-                          <small>
-                            CV {(selectedRacePlaceBet?.cvDisplay ?? selectedRacePlacePreview?.smoothest?.cvDisplay)?.toFixed(2).replace(".", ",") ?? "-"}
-                            · Styrka {(selectedRacePlaceBet?.strength ?? selectedRacePlacePreview?.smoothest?.strength) ?? "-"}/6
-                            · Matningar {(selectedRacePlaceBet?.validOddsPoints ?? selectedRacePlacePreview?.smoothest?.validOddsPoints) ?? "-"}
-                          </small>
-                          {selectedSignalRunner ? <div>{renderIndicatorDotMatrix(selectedSignalRunner)}</div> : null}
-                        </div>
-                      ) : null}
+                      <div className="lock-time-item">
+                        <span>Signal låst</span>
 
-                      {SHOW_LEGACY_KOMB_UI ? (
-                        <button
-                          type="button"
-                          onClick={lockCurrentSelection}
-                          disabled={!candidates[0] || !candidates[1]}
-                          style={{ ...s.button, marginBottom: 0, background: "#ff6b00", color: "#fff", opacity: !candidates[0] || !candidates[1] ? 0.45 : 1 }}
-                        >
-                          {lockedSelection ? `Kandidater låsta ${lockedSelection.lockedAt}` : "Lås kandidater"}
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => void refreshSelectedRace()}
-                        disabled={loadingOdds || !selectedRace}
-                        style={{ ...s.refreshButton, width: "100%", minHeight: 44, opacity: loadingOdds || !selectedRace ? 0.45 : 1 }}
-                      >
-                        {loadingOdds ? "Uppdaterar lopp..." : "Uppdatera lopp"}
-                      </button>
+                        <strong className="lock-time-success">
+                          {selectedRaceLockTiming?.actualSignalLockTimeMs == null
+                            ? "–"
+                            : formatClockTimeMaybe(
+                                selectedRaceLockTiming.actualSignalLockTimeMs,
+                              )}
+                        </strong>
+                      </div>
                     </section>
 
-                    <section className="side-card">
-                      <div className="side-card-title">Jamnaste hast</div>
-                      <strong>{raceInsights.smoothest ? `${raceInsights.smoothest.number}. ${raceInsights.smoothest.name}` : "Saknas"}</strong>
-                      <small>{raceInsights.smoothest ? `${(raceInsights.byRunner[raceInsights.smoothest.number]?.consistency ?? 0).toFixed(2).replace(".", ",")} · ${formatDropPercent(raceInsights.smoothest.dropPercent)}` : "For lite oddshistorik"}</small>
-                    </section>
+                    <button
+                      type="button"
+                      onClick={() => void refreshSelectedRace()}
+                      disabled={loadingOdds || !selectedRace}
+                      className="refresh-race-primary"
+                    >
+                      {loadingOdds ? "Uppdaterar lopp..." : "Uppdatera lopp"}
+                    </button>
 
-                    <section className="side-card">
-                      <div className="side-card-title">Mest sankta</div>
-                      <strong>{raceInsights.biggestDrop ? `${raceInsights.biggestDrop.number}. ${raceInsights.biggestDrop.name}` : "Saknas"}</strong>
-                      <small>{raceInsights.biggestDrop ? `${formatOdds(raceInsights.biggestDrop.firstOdds)} till ${formatOdds(raceInsights.biggestDrop.odds)} · ${formatDropPercent(raceInsights.biggestDrop.dropPercent)}` : "Ingen trend an"}</small>
-                    </section>
+                    <details className="side-card indicator-help-card">
+                      <summary>
+                        <span>Statistikindikatorer</span>
+                        <span className="indicator-help-arrow" aria-hidden="true">›</span>
+                      </summary>
 
-                    <section className="side-card legend-card">
-                      <div className="side-card-title">Statistik indikatorer</div>
-                      {STAT_DEFINITIONS.map((definition) => (
-                        <span key={definition.key}>{definition.shortLabel}: {definition.label}</span>
-                      ))}
-                      <small>Grön plutt = topp 4. Grå plutt = giltigt värde men ej topp 4. Mörk plutt = data saknas. G rankas med lägst värde som bäst.</small>
-                    </section>
+                      <div className="indicator-help-content">
+                        {STAT_DEFINITIONS.map((definition) => (
+                          <div
+                            key={definition.key}
+                            className="indicator-help-row"
+                          >
+                            <strong>{definition.shortLabel}</strong>
+                            <span>{definition.label}</span>
+                          </div>
+                        ))}
+
+                        <small>
+                          Grön punkt betyder topp 4 i det aktuella loppet.
+                          För G är lägst värde bäst.
+                        </small>
+                      </div>
+                    </details>
                   </aside>
                 </div>
 

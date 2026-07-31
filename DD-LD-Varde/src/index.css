@@ -1087,3 +1087,668 @@ button { cursor: pointer; }
     flex-direction: column;
   }
 }
+
+/* KOMBEN CLEAR RACE LAYOUT V1 */
+
+.strategy-selection-card {
+  position: relative;
+  overflow: hidden;
+  padding: 12px;
+}
+
+.strategy-selection-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+}
+
+.strategy-selection-card.biggest-drop-card {
+  border-color: rgba(85, 232, 154, 0.58);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(24, 82, 52, 0.36),
+      rgba(8, 20, 16, 0.97) 58%
+    );
+}
+
+.strategy-selection-card.biggest-drop-card::before {
+  background: #55e89a;
+}
+
+.strategy-selection-card.smoothest-card {
+  border-color: rgba(77, 157, 255, 0.58);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(24, 63, 112, 0.38),
+      rgba(8, 20, 16, 0.97) 58%
+    );
+}
+
+.strategy-selection-card.smoothest-card::before {
+  background: #4d9dff;
+}
+
+.strategy-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+
+.strategy-card-heading .side-card-title {
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+
+.strategy-card-heading small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.strategy-card-icon {
+  display: inline-flex;
+  width: 25px;
+  height: 25px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 18px;
+  font-weight: 900;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.biggest-drop-card .strategy-card-icon {
+  color: #7def58;
+}
+
+.smoothest-card .strategy-card-icon {
+  color: #5aa9ff;
+}
+
+.strategy-horse-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 4px 0 2px;
+  border: 0;
+  background: transparent;
+  color: #edf8f2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.strategy-horse-button:hover {
+  filter: brightness(1.08);
+}
+
+.strategy-number {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  font-size: 24px;
+  font-weight: 950;
+}
+
+.biggest-drop-number {
+  border: 1px solid rgba(85, 232, 154, 0.78);
+  color: #7def58;
+  background: rgba(31, 110, 65, 0.2);
+}
+
+.smoothest-number {
+  border: 1px solid rgba(77, 157, 255, 0.78);
+  color: #61adff;
+  background: rgba(28, 77, 136, 0.22);
+}
+
+.strategy-horse-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.strategy-horse-copy > strong {
+  overflow: hidden;
+  color: #ffffff;
+  font-size: clamp(15px, 1.2vw, 20px);
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strategy-odds-line {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: #edf8f2;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.strategy-strength-line {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.strategy-change {
+  align-self: center;
+  font-size: clamp(13px, 1.1vw, 18px);
+  white-space: nowrap;
+}
+
+.biggest-drop-change {
+  color: #55e89a;
+  text-shadow: 0 0 10px rgba(85, 232, 154, 0.2);
+}
+
+.smoothest-change {
+  color: #62aaff;
+}
+
+.strategy-empty-state {
+  padding: 8px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.compact-signal-card {
+  padding: 12px;
+}
+
+.compact-signal-main {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.compact-signal-main .side-card-title {
+  font-size: 16px;
+  line-height: 1.05;
+}
+
+.signal-status-symbol {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 29px;
+  font-weight: 500;
+}
+
+.signal-status-symbol.is-play {
+  border: 1px solid rgba(85, 232, 154, 0.6);
+  color: #7def58;
+  background: rgba(38, 132, 73, 0.25);
+}
+
+.signal-status-symbol.is-watch {
+  border: 1px solid rgba(255, 209, 102, 0.65);
+  color: #ffd166;
+  background: rgba(143, 103, 29, 0.23);
+}
+
+.signal-status-symbol.is-no-play {
+  border: 1px solid rgba(255, 91, 91, 0.62);
+  color: #ff5b5b;
+  background: rgba(138, 35, 35, 0.23);
+}
+
+.signal-reason {
+  display: block;
+  margin-top: 4px;
+  color: #e7eee9;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lock-time-card {
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  align-items: stretch;
+  padding: 10px 12px;
+}
+
+.lock-time-item {
+  display: grid;
+  gap: 5px;
+}
+
+.lock-time-item span {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lock-time-item strong {
+  color: #ffffff;
+  font-size: 16px;
+}
+
+.lock-time-success {
+  color: #55e89a !important;
+}
+
+.lock-time-divider {
+  width: 1px;
+  background: rgba(172, 211, 190, 0.16);
+}
+
+.refresh-race-primary {
+  min-height: 42px;
+  border: 1px solid rgba(83, 159, 255, 0.72);
+  border-radius: 11px;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(48, 129, 221, 0.95),
+      rgba(31, 91, 169, 0.98)
+    );
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.refresh-race-primary:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.indicator-help-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.indicator-help-card summary {
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  color: #5aa9ff;
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+  list-style: none;
+}
+
+.indicator-help-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.indicator-help-arrow {
+  font-size: 26px;
+  transition: transform 160ms ease;
+}
+
+.indicator-help-card[open] .indicator-help-arrow {
+  transform: rotate(90deg);
+}
+
+.indicator-help-content {
+  display: grid;
+  gap: 7px;
+  padding: 0 12px 12px;
+  border-top: 1px solid rgba(172, 211, 190, 0.1);
+}
+
+.indicator-help-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 7px;
+  color: #dce9e1;
+  font-size: 11px;
+}
+
+.indicator-help-row strong {
+  color: #ffffff;
+}
+
+.indicator-help-content small {
+  padding-top: 4px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+@media (min-width: 1025px) {
+  .race-side-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-selection-card {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 1024px) {
+  .race-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .race-side-panel {
+    order: 1;
+    width: 100%;
+    display: grid;
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .race-main-panel {
+    order: 2;
+    width: 100%;
+  }
+
+  .compact-signal-card,
+  .lock-time-card,
+  .refresh-race-primary,
+  .indicator-help-card {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 700px) {
+  .tab-section {
+    gap: 9px;
+  }
+
+  .race-hero-bar {
+    padding-inline: 9px;
+  }
+
+  .race-toolbar {
+    padding: 9px;
+  }
+
+  .race-side-panel {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .strategy-selection-card,
+  .compact-signal-card,
+  .lock-time-card,
+  .refresh-race-primary,
+  .indicator-help-card {
+    grid-column: 1;
+  }
+
+  .strategy-selection-card {
+    padding: 11px;
+  }
+
+  .strategy-card-heading {
+    margin-bottom: 6px;
+  }
+
+  .strategy-card-heading .side-card-title {
+    font-size: 14px;
+  }
+
+  .strategy-card-heading small {
+    display: none;
+  }
+
+  .strategy-horse-button {
+    grid-template-columns: 43px minmax(0, 1fr) auto;
+    gap: 9px;
+  }
+
+  .strategy-number {
+    width: 41px;
+    height: 41px;
+    font-size: 22px;
+  }
+
+  .strategy-horse-copy > strong {
+    overflow: visible;
+    font-size: 19px;
+    line-height: 1.08;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .strategy-odds-line {
+    font-size: 13px;
+  }
+
+  .strategy-change {
+    font-size: 16px;
+  }
+
+  .compact-signal-main .side-card-title {
+    font-size: 17px;
+  }
+
+  .signal-reason {
+    font-size: 13px;
+  }
+
+  .compact-table-body {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .compact-row-button {
+    grid-template-columns:
+      40px
+      minmax(0, 1fr)
+      70px
+      82px;
+
+    grid-template-areas:
+      "num name odds change"
+      "num strength strength change";
+
+    column-gap: 9px;
+    row-gap: 5px;
+    min-height: 65px;
+    padding: 7px 8px;
+  }
+
+  .compact-row-button > :nth-child(1) {
+    grid-area: num;
+  }
+
+  .compact-row-button > :nth-child(2) {
+    grid-area: name;
+  }
+
+  .compact-row-button > :nth-child(3) {
+    display: none;
+  }
+
+  .compact-row-button > :nth-child(4) {
+    grid-area: odds;
+    justify-self: end;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 750;
+  }
+
+  .compact-row-button > :nth-child(5) {
+    grid-area: change;
+    justify-self: end;
+    align-self: center;
+    font-size: 15px;
+    font-weight: 800;
+  }
+
+  .compact-row-button > :nth-child(6),
+  .compact-row-button > :nth-child(7),
+  .compact-row-button > :nth-child(8),
+  .compact-row-button > :nth-child(10) {
+    display: none;
+  }
+
+  .compact-row-button > :nth-child(9) {
+    grid-area: strength;
+    justify-self: start;
+  }
+
+  .number-pill {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    font-size: 15px;
+  }
+
+  .runner-name-cell {
+    display: block;
+    min-width: 0;
+  }
+
+  .runner-title-line {
+    display: block;
+    min-width: 0;
+  }
+
+  .runner-name-cell strong {
+    display: block;
+    overflow: visible;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 850;
+    line-height: 1.12;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .strength-cell {
+    font-size: 10px;
+  }
+
+  .strength-dot {
+    width: 7px;
+    height: 7px;
+  }
+
+  .expanded-row {
+    padding: 7px 12px 12px 57px;
+  }
+
+  .expanded-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+@media (max-width: 390px) {
+  .strategy-horse-button {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .strategy-change {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .compact-row-button {
+    grid-template-columns:
+      37px
+      minmax(0, 1fr)
+      66px
+      76px;
+
+    column-gap: 6px;
+    padding-inline: 6px;
+  }
+
+  .runner-name-cell strong {
+    font-size: 14px;
+  }
+
+  .compact-row-button > :nth-child(4),
+  .compact-row-button > :nth-child(5) {
+    font-size: 14px;
+  }
+}
+
+
+/* OFFICIELL RESULTATPALL 1–2–3 */
+
+.finish-position-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+}
+
+.finish-position-badge.finish-1 {
+  color: #291d00;
+  border: 1px solid #fff1a3;
+  background: linear-gradient(180deg, #ffe877, #d9aa00);
+  box-shadow: 0 0 10px rgba(255, 213, 45, 0.34);
+}
+
+.finish-position-badge.finish-2 {
+  color: #172026;
+  border: 1px solid #f3f6f8;
+  background: linear-gradient(180deg, #f1f4f6, #9da8ae);
+}
+
+.finish-position-badge.finish-3 {
+  color: #291407;
+  border: 1px solid #ffc59d;
+  background: linear-gradient(180deg, #e6a16f, #a9572c);
+}
+
+.compact-row.is-finish-1 {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 220, 63, 0.25);
+}
+
+.compact-row.is-finish-2 {
+  box-shadow:
+    inset 0 0 0 1px rgba(220, 230, 235, 0.18);
+}
+
+.compact-row.is-finish-3 {
+  box-shadow:
+    inset 0 0 0 1px rgba(220, 130, 77, 0.2);
+}
+
+.runner-title-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+@media (max-width: 920px) {
+  .finish-position-badge {
+    min-width: 31px;
+    height: 21px;
+    font-size: 9px;
+  }
+
+  .runner-title-line {
+    flex-wrap: wrap;
+  }
+}
