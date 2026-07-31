@@ -29,6 +29,9 @@ function row(
 
     raceNumber: 1,
 
+    raceName:
+      "Testloppet",
+
     plannedStartTime:
       "2026-07-30T18:00:00.000Z",
 
@@ -41,6 +44,9 @@ function row(
     raceCategory: null,
     raceClassCode: null,
 
+    earningsMin: null,
+    earningsMax: 250000,
+
     starters: 10,
 
     selectionKind:
@@ -52,6 +58,12 @@ function row(
       "Testhästen",
 
     startLane: 4,
+
+    startDistanceMeters: 1640,
+    distanceHandicapMeters: 0,
+
+    driverId: "12345",
+    driverName: "Test Kusk",
 
     strengthTotal: 5,
 

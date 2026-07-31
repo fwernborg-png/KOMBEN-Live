@@ -17,10 +17,13 @@ import {
 
 import type {
   ResearchGrouping,
+  ResearchGroupSummary,
   ResearchHistoryFilters,
   ResearchHistoryOptions,
   ResearchHistoryRow,
+  ResearchLaneGroup,
   ResearchSelection,
+  SimulatedMarketSummary,
 } from "./types";
 
 import "./researchHistory.css";
@@ -35,7 +38,37 @@ const DEFAULT_OPTIONS:
     tracks: [],
     distances: [],
     startMethods: [],
+
+    raceCategories: [],
+    raceClassCodes: [],
+
+    drivers: [],
+    startLanes: [],
   };
+
+type NumericFilterKey =
+  | "distanceMeters"
+  | "startLane"
+  | "earningsMin"
+  | "earningsMax"
+  | "minStarters"
+  | "maxStarters"
+  | "minStrength"
+  | "maxStrength"
+  | "minDropPercent"
+  | "maxDropPercent"
+  | "minStartOdds"
+  | "maxStartOdds"
+  | "minLockOdds"
+  | "maxLockOdds";
+
+type GroupSort =
+  | "BETS"
+  | "WIN_RATE"
+  | "PLACE_RATE"
+  | "WINNER_ROI"
+  | "PLACE_ROI"
+  | "COMBINED_ROI";
 
 function isoDateOffset(
   dateValue: string,
@@ -102,13 +135,36 @@ function buildInitialFilters(
 
     startMethod: "",
     distanceMeters: null,
+
     trackName: "",
+    driverName: "",
+
+    startLane: null,
+    laneGroup: "ALL",
+
+    raceCategory: "",
+    raceClassCode: "",
+
+    earningsMin: null,
+    earningsMax: null,
+
+    minStarters: null,
+    maxStarters: null,
 
     minStrength: null,
-    minDropPercent: null,
+    maxStrength: null,
 
-    completeOnly: true,
-    limit: 2000,
+    minDropPercent: null,
+    maxDropPercent: null,
+
+    minStartOdds: null,
+    maxStartOdds: null,
+
+    minLockOdds: null,
+    maxLockOdds: null,
+
+    completeOnly: false,
+    limit: 5000,
   };
 }
 
@@ -141,7 +197,53 @@ function groupingLabel(
     return "Styrka";
   }
 
+  if (value === "DRIVER") {
+    return "Kusk";
+  }
+
+  if (value === "START_LANE") {
+    return "Startspår";
+  }
+
+  if (value === "RACE_CLASS") {
+    return "Loppklass";
+  }
+
+  if (value === "LOCK_ODDS") {
+    return "Låsoddsintervall";
+  }
+
   return "Startmetod";
+}
+
+function laneGroupLabel(
+  value: ResearchLaneGroup,
+): string {
+  if (value === "AUTO_INNER_1_5") {
+    return "Autostart spår 1–5";
+  }
+
+  if (value === "AUTO_FRONT_1_8") {
+    return "Autostart framspår 1–8";
+  }
+
+  if (value === "AUTO_BACK_9_12") {
+    return "Autostart bakspår 9–12";
+  }
+
+  if (value === "AUTO_THIRD_13_15") {
+    return "Autostart spår 13–15";
+  }
+
+  if (value === "VOLT_BASE") {
+    return "Voltstart grundvolt";
+  }
+
+  if (value === "VOLT_HANDICAP") {
+    return "Voltstart tillägg";
+  }
+
+  return "Alla spår";
 }
 
 function formatNumber(
@@ -197,6 +299,21 @@ function formatMoney(
   )} kr`;
 }
 
+function formatEarnings(
+  value: number | null,
+): string {
+  if (value === null) {
+    return "–";
+  }
+
+  return `${value.toLocaleString(
+    "sv-SE",
+    {
+      maximumFractionDigits: 0,
+    },
+  )} kr`;
+}
+
 function roiClass(
   value: number | null,
 ): string {
@@ -207,6 +324,34 @@ function roiClass(
   return value >= 0
     ? "is-positive"
     : "is-negative";
+}
+
+function sampleClass(
+  bets: number,
+): string {
+  if (bets >= 50) {
+    return "is-good";
+  }
+
+  if (bets >= 20) {
+    return "is-medium";
+  }
+
+  return "is-small";
+}
+
+function sampleLabel(
+  bets: number,
+): string {
+  if (bets >= 50) {
+    return "Bra underlag";
+  }
+
+  if (bets >= 20) {
+    return "Begränsat underlag";
+  }
+
+  return "För litet underlag";
 }
 
 function resultLabel(
@@ -245,6 +390,284 @@ function resultClass(
   return "is-miss";
 }
 
+function nullableSortValue(
+  value: number | null,
+): number {
+  return value === null
+    ? Number.NEGATIVE_INFINITY
+    : value;
+}
+
+function groupSortValue(
+  group: ResearchGroupSummary,
+  sort: GroupSort,
+): number {
+  if (sort === "WIN_RATE") {
+    return group.winRatePercent;
+  }
+
+  if (sort === "PLACE_RATE") {
+    return group.placeRatePercent;
+  }
+
+  if (sort === "WINNER_ROI") {
+    return nullableSortValue(
+      group.winnerRoiPercent,
+    );
+  }
+
+  if (sort === "PLACE_ROI") {
+    return nullableSortValue(
+      group.placeRoiPercent,
+    );
+  }
+
+  if (sort === "COMBINED_ROI") {
+    return nullableSortValue(
+      group.combinedRoiPercent,
+    );
+  }
+
+  return group.bets;
+}
+
+function validateFilters(
+  filters: ResearchHistoryFilters,
+): string | null {
+  const pairs: Array<{
+    label: string;
+    minimum: number | null;
+    maximum: number | null;
+  }> = [
+    {
+      label: "startodds",
+      minimum: filters.minStartOdds,
+      maximum: filters.maxStartOdds,
+    },
+    {
+      label: "låsodds",
+      minimum: filters.minLockOdds,
+      maximum: filters.maxLockOdds,
+    },
+    {
+      label: "oddssänkning",
+      minimum: filters.minDropPercent,
+      maximum: filters.maxDropPercent,
+    },
+    {
+      label: "styrka",
+      minimum: filters.minStrength,
+      maximum: filters.maxStrength,
+    },
+    {
+      label: "antal startande",
+      minimum: filters.minStarters,
+      maximum: filters.maxStarters,
+    },
+    {
+      label: "inkomstgräns",
+      minimum: filters.earningsMin,
+      maximum: filters.earningsMax,
+    },
+  ];
+
+  for (const pair of pairs) {
+    if (
+      pair.minimum !== null &&
+      pair.maximum !== null &&
+      pair.minimum > pair.maximum
+    ) {
+      return (
+        `Lägsta värdet för ${pair.label} ` +
+        "kan inte vara högre än det högsta."
+      );
+    }
+  }
+
+  if (
+    filters.dateFrom &&
+    filters.dateTo &&
+    filters.dateFrom >
+      filters.dateTo
+  ) {
+    return (
+      "Från-datum kan inte vara senare " +
+      "än till-datum."
+    );
+  }
+
+  return null;
+}
+
+function activeQuestion(
+  filters: ResearchHistoryFilters,
+): string {
+  const parts: string[] = [
+    selectionLabel(
+      filters.selection,
+    ),
+  ];
+
+  if (filters.startMethod) {
+    parts.push(
+      filters.startMethod === "AUTO"
+        ? "autostart"
+        : filters.startMethod === "VOLT"
+          ? "voltstart"
+          : filters.startMethod,
+    );
+  }
+
+  if (filters.distanceMeters) {
+    parts.push(
+      `${filters.distanceMeters} meter`,
+    );
+  }
+
+  if (
+    filters.laneGroup !== "ALL"
+  ) {
+    parts.push(
+      laneGroupLabel(
+        filters.laneGroup,
+      ),
+    );
+  } else if (
+    filters.startLane !== null
+  ) {
+    parts.push(
+      `spår ${filters.startLane}`,
+    );
+  }
+
+  if (
+    filters.minLockOdds !== null ||
+    filters.maxLockOdds !== null
+  ) {
+    parts.push(
+      `låsodds ${
+        filters.minLockOdds ??
+        "lägst"
+      }–${
+        filters.maxLockOdds ??
+        "högst"
+      }`,
+    );
+  }
+
+  if (filters.trackName) {
+    parts.push(
+      filters.trackName,
+    );
+  }
+
+  if (filters.driverName) {
+    parts.push(
+      filters.driverName,
+    );
+  }
+
+  if (filters.raceClassCode) {
+    parts.push(
+      filters.raceClassCode,
+    );
+  } else if (
+    filters.raceCategory
+  ) {
+    parts.push(
+      filters.raceCategory,
+    );
+  }
+
+  return parts.join(" · ");
+}
+
+function MarketCard(
+  {
+    title,
+    subtitle,
+    market,
+    combined = false,
+  }: {
+    title: string;
+    subtitle: string;
+    market: SimulatedMarketSummary;
+    combined?: boolean;
+  },
+) {
+  return (
+    <article
+      className={
+        combined
+          ? "is-combined"
+          : ""
+      }
+    >
+      <div>
+        <span>{title}</span>
+        <strong>{subtitle}</strong>
+      </div>
+
+      <dl>
+        <div>
+          <dt>Insats</dt>
+          <dd>
+            {formatMoney(
+              market.stake,
+            )}
+          </dd>
+        </div>
+
+        <div>
+          <dt>Åter</dt>
+          <dd>
+            {formatMoney(
+              market.returnAmount,
+            )}
+          </dd>
+        </div>
+
+        <div>
+          <dt>Netto</dt>
+          <dd
+            className={
+              market.net >= 0
+                ? "is-positive"
+                : "is-negative"
+            }
+          >
+            {formatMoney(
+              market.net,
+            )}
+          </dd>
+        </div>
+
+        <div>
+          <dt>ROI</dt>
+          <dd
+            className={
+              roiClass(
+                market.roiPercent,
+              )
+            }
+          >
+            {formatPercent(
+              market.roiPercent,
+            )}
+          </dd>
+        </div>
+      </dl>
+
+      {market.payoutMissing > 0 ? (
+        <small className="research-warning-text">
+          Utbetalningsodds saknas för{" "}
+          {market.payoutMissing} träffar.
+        </small>
+      ) : null}
+    </article>
+  );
+}
+
 export function ResearchHistoryPanel() {
   const [
     options,
@@ -277,6 +700,13 @@ export function ResearchHistoryPanel() {
   ] = useState<
     ResearchGrouping
   >("START_METHOD");
+
+  const [
+    groupSort,
+    setGroupSort,
+  ] = useState<
+    GroupSort
+  >("BETS");
 
   const [
     loading,
@@ -382,10 +812,92 @@ export function ResearchHistoryPanel() {
       ],
     );
 
+  const sortedGroups =
+    useMemo(
+      () =>
+        [...groups].sort(
+          (a, b) =>
+            groupSortValue(
+              b,
+              groupSort,
+            ) -
+              groupSortValue(
+                a,
+                groupSort,
+              ) ||
+            b.bets -
+              a.bets ||
+            a.label.localeCompare(
+              b.label,
+              "sv",
+            ),
+        ),
+      [
+        groups,
+        groupSort,
+      ],
+    );
+
+  function updateFilter<
+    Key extends keyof ResearchHistoryFilters,
+  >(
+    key: Key,
+    value: ResearchHistoryFilters[Key],
+  ) {
+    setFilters(
+      (current) => ({
+        ...current,
+        [key]: value,
+      }),
+    );
+  }
+
+  function updateNumber(
+    key: NumericFilterKey,
+    rawValue: string,
+  ) {
+    const normalized =
+      rawValue
+        .trim()
+        .replace(",", ".");
+
+    if (!normalized) {
+      updateFilter(
+        key,
+        null,
+      );
+
+      return;
+    }
+
+    const value =
+      Number(normalized);
+
+    updateFilter(
+      key,
+      Number.isFinite(value)
+        ? value
+        : null,
+    );
+  }
+
   async function runAnalysis(
     nextFilters =
       filters,
   ) {
+    const validationError =
+      validateFilters(
+        nextFilters,
+      );
+
+    if (validationError) {
+      setError(
+        validationError,
+      );
+
+      return;
+    }
+
     setLoading(true);
     setError("");
 
@@ -429,9 +941,22 @@ export function ResearchHistoryPanel() {
     );
   }
 
-  const strategyText =
-    selectionLabel(
-      filters.selection,
+  function applyLockOddsPreset(
+    minimum: number | null,
+    maximum: number | null,
+  ) {
+    setFilters(
+      (current) => ({
+        ...current,
+        minLockOdds: minimum,
+        maxLockOdds: maximum,
+      }),
+    );
+  }
+
+  const question =
+    activeQuestion(
+      filters,
     );
 
   return (
@@ -454,21 +979,21 @@ export function ResearchHistoryPanel() {
 
         <div className="research-health">
           <span>
-            Arkiverade lopp{" "}
+            Arkiverade lopp
             <strong>
               {options.raceCount}
             </strong>
           </span>
 
           <span>
-            Visade lopp{" "}
+            Visade lopp
             <strong>
               {rows.length}
             </strong>
           </span>
 
           <span>
-            Senast{" "}
+            Senast
             <strong>
               {loadedAt
                 ? new Date(
@@ -488,354 +1013,897 @@ export function ResearchHistoryPanel() {
       </div>
 
       <div className="research-question">
-        Hur går{" "}
-        <strong>
-          {strategyText.toLowerCase()}
-        </strong>
-
-        {filters.startMethod
-          ? ` i ${filters.startMethod === "AUTO" ? "autostart" : "voltstart"}`
-          : ""}
-
-        {filters.distanceMeters
-          ? ` över ${filters.distanceMeters} meter`
-          : ""}
-
-        {filters.trackName
-          ? ` på ${filters.trackName}`
-          : ""}
-
-        ?
+        <span>Aktuell undersökning</span>
+        <strong>{question}</strong>
       </div>
 
-      <div className="research-filter-panel">
-        <label>
-          <span>Strategi</span>
+      <div className="research-filter-panel research-filter-panel-v2">
+        <fieldset className="research-filter-section">
+          <legend>
+            1. Strategi och period
+          </legend>
 
-          <select
-            value={
-              filters.selection
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
+          <div className="research-filter-grid">
+            <label>
+              <span>Strategi</span>
 
-                  selection:
+              <select
+                value={
+                  filters.selection
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "selection",
                     event.target
                       .value as ResearchSelection,
-                }),
-              )
-            }
-          >
-            <option value="MOST_SHORTENED">
-              Mest sänkta
-            </option>
-
-            <option value="SMOOTHEST">
-              Jämnaste
-            </option>
-
-            <option value="FAVORITE">
-              Favoriten
-            </option>
-          </select>
-        </label>
-
-        <label>
-          <span>Från datum</span>
-
-          <input
-            type="date"
-            value={
-              filters.dateFrom
-            }
-            min={
-              options.minDate ??
-              undefined
-            }
-            max={
-              filters.dateTo ||
-              options.maxDate ||
-              undefined
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
-
-                  dateFrom:
-                    event.target.value,
-                }),
-              )
-            }
-          />
-        </label>
-
-        <label>
-          <span>Till datum</span>
-
-          <input
-            type="date"
-            value={
-              filters.dateTo
-            }
-            min={
-              filters.dateFrom ||
-              options.minDate ||
-              undefined
-            }
-            max={
-              options.maxDate ??
-              undefined
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
-
-                  dateTo:
-                    event.target.value,
-                }),
-              )
-            }
-          />
-        </label>
-
-        <label>
-          <span>Startmetod</span>
-
-          <select
-            value={
-              filters.startMethod
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
-
-                  startMethod:
-                    event.target.value,
-                }),
-              )
-            }
-          >
-            <option value="">
-              Alla
-            </option>
-
-            <option value="AUTO">
-              Autostart
-            </option>
-
-            <option value="VOLT">
-              Voltstart
-            </option>
-          </select>
-        </label>
-
-        <label>
-          <span>Distans</span>
-
-          <select
-            value={
-              filters
-                .distanceMeters ??
-              ""
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
-
-                  distanceMeters:
-                    event.target.value
-                      ? Number(
-                          event.target
-                            .value,
-                        )
-                      : null,
-                }),
-              )
-            }
-          >
-            <option value="">
-              Alla
-            </option>
-
-            {options.distances.map(
-              (distance) => (
-                <option
-                  key={
-                    distance
-                  }
-                  value={
-                    distance
-                  }
-                >
-                  {distance} meter
+                  )
+                }
+              >
+                <option value="MOST_SHORTENED">
+                  Mest sänkta
                 </option>
-              ),
-            )}
-          </select>
-        </label>
 
-        <label>
-          <span>Bana</span>
+                <option value="SMOOTHEST">
+                  Jämnaste
+                </option>
 
-          <select
-            value={
-              filters.trackName
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
+                <option value="FAVORITE">
+                  Favoriten
+                </option>
+              </select>
+            </label>
 
-                  trackName:
+            <label>
+              <span>Från datum</span>
+
+              <input
+                type="date"
+                value={
+                  filters.dateFrom
+                }
+                min={
+                  options.minDate ??
+                  undefined
+                }
+                max={
+                  filters.dateTo ||
+                  options.maxDate ||
+                  undefined
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "dateFrom",
                     event.target.value,
-                }),
-              )
-            }
-          >
-            <option value="">
-              Alla banor
-            </option>
+                  )
+                }
+              />
+            </label>
 
-            {options.tracks.map(
-              (track) => (
-                <option
-                  key={track}
-                  value={track}
-                >
-                  {track}
+            <label>
+              <span>Till datum</span>
+
+              <input
+                type="date"
+                value={
+                  filters.dateTo
+                }
+                min={
+                  filters.dateFrom ||
+                  options.minDate ||
+                  undefined
+                }
+                max={
+                  options.maxDate ??
+                  undefined
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "dateTo",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Startmetod</span>
+
+              <select
+                value={
+                  filters.startMethod
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "startMethod",
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">
+                  Alla
                 </option>
-              ),
-            )}
-          </select>
-        </label>
 
-        <label>
-          <span>Minsta styrka</span>
-
-          <select
-            value={
-              filters.minStrength ??
-              ""
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
-
-                  minStrength:
-                    event.target.value
-                      ? Number(
-                          event.target
-                            .value,
-                        )
-                      : null,
-                }),
-              )
-            }
-          >
-            <option value="">
-              Alla
-            </option>
-
-            {[1, 2, 3, 4, 5, 6].map(
-              (strength) => (
-                <option
-                  key={
-                    strength
-                  }
-                  value={
-                    strength
-                  }
-                >
-                  Minst {strength}/6
+                <option value="AUTO">
+                  Autostart
                 </option>
-              ),
-            )}
-          </select>
-        </label>
 
-        <label>
-          <span>Minsta sänkning</span>
+                <option value="VOLT">
+                  Voltstart
+                </option>
 
-          <input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            max="100"
-            step="1"
-            placeholder="Alla"
-            value={
-              filters
-                .minDropPercent ??
-              ""
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
+                <option value="UNKNOWN">
+                  Okänd startmetod
+                </option>
+              </select>
+            </label>
 
-                  minDropPercent:
-                    event.target.value
-                      ? Number(
-                          event.target
-                            .value,
-                        )
-                      : null,
-                }),
-              )
-            }
-          />
-        </label>
+            <label>
+              <span>Distans</span>
 
-        <label className="research-checkbox">
-          <input
-            type="checkbox"
-            checked={
-              filters.completeOnly
-            }
-            onChange={(
-              event,
-            ) =>
-              setFilters(
-                (current) => ({
-                  ...current,
+              <select
+                value={
+                  filters.distanceMeters ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "distanceMeters",
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">
+                  Alla distanser
+                </option>
 
-                  completeOnly:
+                {options.distances.map(
+                  (distance) => (
+                    <option
+                      key={distance}
+                      value={distance}
+                    >
+                      {distance} meter
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="research-filter-section">
+          <legend>
+            2. Odds och marknadsrörelse
+          </legend>
+
+          <div className="research-preset-area">
+            <span>
+              Snabbval för låsodds
+            </span>
+
+            <div className="research-preset-row">
+              <button
+                type="button"
+                onClick={() =>
+                  applyLockOddsPreset(
+                    null,
+                    null,
+                  )
+                }
+              >
+                Alla
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  applyLockOddsPreset(
+                    null,
+                    2.99,
+                  )
+                }
+              >
+                Under 3
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  applyLockOddsPreset(
+                    3,
+                    5,
+                  )
+                }
+              >
+                3–5
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  applyLockOddsPreset(
+                    5,
+                    10,
+                  )
+                }
+              >
+                5–10
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  applyLockOddsPreset(
+                    10,
+                    15,
+                  )
+                }
+              >
+                10–15
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  applyLockOddsPreset(
+                    15,
+                    25,
+                  )
+                }
+              >
+                15–25
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  applyLockOddsPreset(
+                    25,
+                    null,
+                  )
+                }
+              >
+                25+
+              </button>
+            </div>
+          </div>
+
+          <div className="research-filter-grid">
+            <label>
+              <span>Startodds från</span>
+
+              <input
+                type="number"
+                inputMode="decimal"
+                min="1"
+                step="0.01"
+                placeholder="Alla"
+                value={
+                  filters.minStartOdds ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "minStartOdds",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Startodds till</span>
+
+              <input
+                type="number"
+                inputMode="decimal"
+                min="1"
+                step="0.01"
+                placeholder="Alla"
+                value={
+                  filters.maxStartOdds ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "maxStartOdds",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Låsodds från</span>
+
+              <input
+                type="number"
+                inputMode="decimal"
+                min="1"
+                step="0.01"
+                placeholder="Alla"
+                value={
+                  filters.minLockOdds ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "minLockOdds",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Låsodds till</span>
+
+              <input
+                type="number"
+                inputMode="decimal"
+                min="1"
+                step="0.01"
+                placeholder="Alla"
+                value={
+                  filters.maxLockOdds ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "maxLockOdds",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Sänkning från %</span>
+
+              <input
+                type="number"
+                inputMode="decimal"
+                step="1"
+                placeholder="Alla"
+                value={
+                  filters.minDropPercent ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "minDropPercent",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Sänkning till %</span>
+
+              <input
+                type="number"
+                inputMode="decimal"
+                step="1"
+                placeholder="Alla"
+                value={
+                  filters.maxDropPercent ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "maxDropPercent",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="research-filter-section">
+          <legend>
+            3. Startspår
+          </legend>
+
+          <div className="research-filter-grid">
+            <label>
+              <span>Exakt startspår</span>
+
+              <select
+                value={
+                  filters.startLane ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "startLane",
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">
+                  Alla spår
+                </option>
+
+                {options.startLanes.map(
+                  (lane) => (
+                    <option
+                      key={lane}
+                      value={lane}
+                    >
+                      Spår {lane}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
+            <label>
+              <span>Spårgrupp</span>
+
+              <select
+                value={
+                  filters.laneGroup
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "laneGroup",
                     event.target
-                      .checked,
-                }),
-              )
-            }
-          />
+                      .value as ResearchLaneGroup,
+                  )
+                }
+              >
+                <option value="ALL">
+                  Alla spår
+                </option>
 
-          <span>
-            Endast komplett data
-          </span>
-        </label>
+                <option value="AUTO_INNER_1_5">
+                  Auto: spår 1–5
+                </option>
 
-        <div className="research-filter-actions">
+                <option value="AUTO_FRONT_1_8">
+                  Auto: framspår 1–8
+                </option>
+
+                <option value="AUTO_BACK_9_12">
+                  Auto: bakspår 9–12
+                </option>
+
+                <option value="AUTO_THIRD_13_15">
+                  Auto: spår 13–15
+                </option>
+
+                <option value="VOLT_BASE">
+                  Volt: grundvolt
+                </option>
+
+                <option value="VOLT_HANDICAP">
+                  Volt: tillägg
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <p className="research-filter-help">
+            Exempel: Mest sänkta hästen, låsodds
+            10–15 och autostart framspår 1–8.
+          </p>
+        </fieldset>
+
+        <fieldset className="research-filter-section">
+          <legend>
+            4. Bana och kusk
+          </legend>
+
+          <div className="research-filter-grid">
+            <label>
+              <span>Bana</span>
+
+              <select
+                value={
+                  filters.trackName
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "trackName",
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">
+                  Alla banor
+                </option>
+
+                {options.tracks.map(
+                  (track) => (
+                    <option
+                      key={track}
+                      value={track}
+                    >
+                      {track}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
+            <label>
+              <span>Kusk</span>
+
+              <input
+                type="text"
+                list="research-driver-options"
+                placeholder="Alla kuskar"
+                value={
+                  filters.driverName
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "driverName",
+                    event.target.value,
+                  )
+                }
+              />
+
+              <datalist id="research-driver-options">
+                {options.drivers.map(
+                  (driver) => (
+                    <option
+                      key={driver}
+                      value={driver}
+                    />
+                  ),
+                )}
+              </datalist>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="research-filter-section">
+          <legend>
+            5. Loppklass och inkomstgräns
+          </legend>
+
+          <div className="research-filter-grid">
+            <label>
+              <span>Loppkategori</span>
+
+              <select
+                value={
+                  filters.raceCategory
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "raceCategory",
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">
+                  Alla kategorier
+                </option>
+
+                {options.raceCategories.map(
+                  (category) => (
+                    <option
+                      key={category}
+                      value={category}
+                    >
+                      {category}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
+            <label>
+              <span>Loppklass</span>
+
+              <select
+                value={
+                  filters.raceClassCode
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "raceClassCode",
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">
+                  Alla klasser
+                </option>
+
+                {options.raceClassCodes.map(
+                  (raceClass) => (
+                    <option
+                      key={raceClass}
+                      value={raceClass}
+                    >
+                      {raceClass}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
+            <label>
+              <span>Inkomstgräns från</span>
+
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                step="10000"
+                placeholder="Alla"
+                value={
+                  filters.earningsMin ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "earningsMin",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Inkomstgräns till</span>
+
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                step="10000"
+                placeholder="Alla"
+                value={
+                  filters.earningsMax ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "earningsMax",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="research-filter-section">
+          <legend>
+            6. Startfält och styrka
+          </legend>
+
+          <div className="research-filter-grid">
+            <label>
+              <span>Minst startande</span>
+
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="20"
+                step="1"
+                placeholder="Alla"
+                value={
+                  filters.minStarters ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "minStarters",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Högst startande</span>
+
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max="20"
+                step="1"
+                placeholder="Alla"
+                value={
+                  filters.maxStarters ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "maxStarters",
+                    event.target.value,
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              <span>Minsta styrka</span>
+
+              <select
+                value={
+                  filters.minStrength ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "minStrength",
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">
+                  Alla
+                </option>
+
+                {[0, 1, 2, 3, 4, 5, 6].map(
+                  (strength) => (
+                    <option
+                      key={strength}
+                      value={strength}
+                    >
+                      Minst {strength}/6
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
+            <label>
+              <span>Högsta styrka</span>
+
+              <select
+                value={
+                  filters.maxStrength ??
+                  ""
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateNumber(
+                    "maxStrength",
+                    event.target.value,
+                  )
+                }
+              >
+                <option value="">
+                  Alla
+                </option>
+
+                {[0, 1, 2, 3, 4, 5, 6].map(
+                  (strength) => (
+                    <option
+                      key={strength}
+                      value={strength}
+                    >
+                      Högst {strength}/6
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="research-filter-section">
+          <legend>
+            7. Datakvalitet
+          </legend>
+
+          <div className="research-filter-grid">
+            <label className="research-checkbox">
+              <input
+                type="checkbox"
+                checked={
+                  filters.completeOnly
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "completeOnly",
+                    event.target.checked,
+                  )
+                }
+              />
+
+              <span>
+                Endast helt komplett LOCK-data
+              </span>
+            </label>
+
+            <label>
+              <span>Max antal rader</span>
+
+              <select
+                value={
+                  filters.limit
+                }
+                onChange={(
+                  event,
+                ) =>
+                  updateFilter(
+                    "limit",
+                    Number(
+                      event.target.value,
+                    ),
+                  )
+                }
+              >
+                <option value={500}>
+                  500
+                </option>
+
+                <option value={2000}>
+                  2 000
+                </option>
+
+                <option value={5000}>
+                  5 000
+                </option>
+
+                <option value={10000}>
+                  10 000
+                </option>
+              </select>
+            </label>
+          </div>
+        </fieldset>
+
+        <div className="research-filter-actions research-filter-actions-v2">
           <button
             type="button"
             className="research-primary-button"
@@ -845,8 +1913,8 @@ export function ResearchHistoryPanel() {
             }
           >
             {loading
-              ? "Analyserar..."
-              : "Analysera"}
+              ? "Analyserar…"
+              : "Kör analys"}
           </button>
 
           <button
@@ -857,7 +1925,7 @@ export function ResearchHistoryPanel() {
               resetFilters
             }
           >
-            Återställ
+            Nollställ filter
           </button>
         </div>
       </div>
@@ -865,37 +1933,59 @@ export function ResearchHistoryPanel() {
       {error ? (
         <div className="research-error">
           <strong>
-            Analysen kunde inte laddas
+            Analysen kunde inte köras
           </strong>
 
-          <span>{error}</span>
-
-          <small>
-            Supabase-migrationen måste vara körd innan fliken kan läsa forskningsarkivet.
-          </small>
+          <small>{error}</small>
         </div>
       ) : null}
+
+      <div
+        className={
+          `research-sample-box ${
+            sampleClass(
+              summary.bets,
+            )
+          }`
+        }
+      >
+        <div>
+          <span>UNDERLAG</span>
+
+          <strong>
+            {sampleLabel(
+              summary.bets,
+            )}
+          </strong>
+        </div>
+
+        <p>
+          Resultatet bygger på{" "}
+          <strong>
+            {summary.bets} spel
+          </strong>
+          . Färre än 20 spel ska inte användas
+          för slutsatser. Minst 50 ger ett mer
+          användbart första underlag.
+        </p>
+      </div>
 
       <div className="research-summary-grid">
         <article>
           <span>Lopp</span>
-
           <strong>
             {summary.races}
           </strong>
-
           <small>
-            {summary.bets} spel · {summary.voids} VOID
+            VOID: {summary.voids}
           </small>
         </article>
 
         <article>
-          <span>Vinnare</span>
-
+          <span>Vinster</span>
           <strong>
             {summary.wins}
           </strong>
-
           <small>
             {formatPercent(
               summary.winRatePercent,
@@ -904,12 +1994,10 @@ export function ResearchHistoryPanel() {
         </article>
 
         <article>
-          <span>Plats</span>
-
+          <span>Platser</span>
           <strong>
             {summary.places}
           </strong>
-
           <small>
             {formatPercent(
               summary.placeRatePercent,
@@ -919,362 +2007,199 @@ export function ResearchHistoryPanel() {
 
         <article>
           <span>Snitt låsodds</span>
-
           <strong>
             {formatOdds(
               summary.averageLockOdds,
             )}
           </strong>
-
           <small>
-            Vinnarodds vid LOCK
+            odds vid LOCK
           </small>
         </article>
 
         <article>
           <span>Snitt sänkning</span>
-
           <strong>
             {formatPercent(
               summary.averageDropPercent,
             )}
           </strong>
-
           <small>
-            Start till LOCK
+            start till LOCK
           </small>
         </article>
 
         <article>
-          <span>Snittstyrka</span>
-
+          <span>Snitt styrka</span>
           <strong>
             {formatNumber(
               summary.averageStrength,
-              2,
+              1,
             )}
           </strong>
-
           <small>
-            Av 6 indikatorer
+            av 6 faktorer
           </small>
         </article>
       </div>
 
       <div className="research-market-grid">
-        <article>
-          <div>
-            <span>
-              VINNARE
-            </span>
+        <MarketCard
+          title="VINNARE"
+          subtitle={`${RESEARCH_STAKE_SEK} kr per spel`}
+          market={
+            summary.winnerMarket
+          }
+        />
 
-            <strong>
-              100 kr per lopp
-            </strong>
-          </div>
+        <MarketCard
+          title="PLATS"
+          subtitle={`${RESEARCH_STAKE_SEK} kr per spel`}
+          market={
+            summary.placeMarket
+          }
+        />
 
-          <dl>
-            <div>
-              <dt>Insats</dt>
-              <dd>
-                {formatMoney(
-                  summary
-                    .winnerMarket
-                    .stake,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Åter</dt>
-              <dd>
-                {formatMoney(
-                  summary
-                    .winnerMarket
-                    .returnAmount,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Netto</dt>
-              <dd
-                className={roiClass(
-                  summary
-                    .winnerMarket
-                    .net,
-                )}
-              >
-                {formatMoney(
-                  summary
-                    .winnerMarket
-                    .net,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>ROI</dt>
-              <dd
-                className={roiClass(
-                  summary
-                    .winnerMarket
-                    .roiPercent,
-                )}
-              >
-                {formatPercent(
-                  summary
-                    .winnerMarket
-                    .roiPercent,
-                )}
-              </dd>
-            </div>
-          </dl>
-        </article>
-
-        <article>
-          <div>
-            <span>
-              PLATS
-            </span>
-
-            <strong>
-              100 kr per lopp
-            </strong>
-          </div>
-
-          <dl>
-            <div>
-              <dt>Insats</dt>
-              <dd>
-                {formatMoney(
-                  summary
-                    .placeMarket
-                    .stake,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Åter</dt>
-              <dd>
-                {formatMoney(
-                  summary
-                    .placeMarket
-                    .returnAmount,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Netto</dt>
-              <dd
-                className={roiClass(
-                  summary
-                    .placeMarket
-                    .net,
-                )}
-              >
-                {formatMoney(
-                  summary
-                    .placeMarket
-                    .net,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>ROI</dt>
-              <dd
-                className={roiClass(
-                  summary
-                    .placeMarket
-                    .roiPercent,
-                )}
-              >
-                {formatPercent(
-                  summary
-                    .placeMarket
-                    .roiPercent,
-                )}
-              </dd>
-            </div>
-          </dl>
-
-          {summary
-            .placeMarket
-            .payoutMissing > 0 ? (
-              <small className="research-warning-text">
-                {
-                  summary
-                    .placeMarket
-                    .payoutMissing
-                } träffar saknar platsodds
-              </small>
-            ) : null}
-        </article>
-
-        <article className="is-combined">
-          <div>
-            <span>
-              VINNARE + PLATS
-            </span>
-
-            <strong>
-              200 kr per lopp
-            </strong>
-          </div>
-
-          <dl>
-            <div>
-              <dt>Insats</dt>
-              <dd>
-                {formatMoney(
-                  summary
-                    .combinedMarket
-                    .stake,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Åter</dt>
-              <dd>
-                {formatMoney(
-                  summary
-                    .combinedMarket
-                    .returnAmount,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>Netto</dt>
-              <dd
-                className={roiClass(
-                  summary
-                    .combinedMarket
-                    .net,
-                )}
-              >
-                {formatMoney(
-                  summary
-                    .combinedMarket
-                    .net,
-                )}
-              </dd>
-            </div>
-
-            <div>
-              <dt>ROI</dt>
-              <dd
-                className={roiClass(
-                  summary
-                    .combinedMarket
-                    .roiPercent,
-                )}
-              >
-                {formatPercent(
-                  summary
-                    .combinedMarket
-                    .roiPercent,
-                )}
-              </dd>
-            </div>
-          </dl>
-        </article>
+        <MarketCard
+          title="VINNARE + PLATS"
+          subtitle={`${RESEARCH_STAKE_SEK * 2} kr per lopp`}
+          market={
+            summary.combinedMarket
+          }
+          combined
+        />
       </div>
 
-      <section className="research-breakdown-panel">
-        <div className="research-section-heading">
+      <div className="research-breakdown-panel">
+        <div className="research-section-heading research-section-heading-v2">
           <div>
             <span>JÄMFÖRELSE</span>
 
             <h3>
-              Resultat per{" "}
+              Resultat uppdelat per{" "}
               {groupingLabel(
                 grouping,
               ).toLowerCase()}
             </h3>
           </div>
 
-          <label>
-            <span>Gruppera efter</span>
+          <div className="research-group-controls">
+            <label>
+              <span>Gruppera efter</span>
 
-            <select
-              value={grouping}
-              onChange={(
-                event,
-              ) =>
-                setGrouping(
-                  event.target
-                    .value as ResearchGrouping,
-                )
-              }
-            >
-              <option value="START_METHOD">
-                Startmetod
-              </option>
+              <select
+                value={grouping}
+                onChange={(
+                  event,
+                ) =>
+                  setGrouping(
+                    event.target
+                      .value as ResearchGrouping,
+                  )
+                }
+              >
+                <option value="START_METHOD">
+                  Startmetod
+                </option>
 
-              <option value="DISTANCE">
-                Distans
-              </option>
+                <option value="DISTANCE">
+                  Distans
+                </option>
 
-              <option value="TRACK">
-                Bana
-              </option>
+                <option value="TRACK">
+                  Bana
+                </option>
 
-              <option value="STRENGTH">
-                Styrka
-              </option>
-            </select>
-          </label>
+                <option value="DRIVER">
+                  Kusk
+                </option>
+
+                <option value="START_LANE">
+                  Startspår
+                </option>
+
+                <option value="RACE_CLASS">
+                  Loppklass
+                </option>
+
+                <option value="LOCK_ODDS">
+                  Låsoddsintervall
+                </option>
+
+                <option value="STRENGTH">
+                  Styrka
+                </option>
+              </select>
+            </label>
+
+            <label>
+              <span>Sortera efter</span>
+
+              <select
+                value={groupSort}
+                onChange={(
+                  event,
+                ) =>
+                  setGroupSort(
+                    event.target
+                      .value as GroupSort,
+                  )
+                }
+              >
+                <option value="BETS">
+                  Antal spel
+                </option>
+
+                <option value="WIN_RATE">
+                  Vinstprocent
+                </option>
+
+                <option value="PLACE_RATE">
+                  Platsprocent
+                </option>
+
+                <option value="WINNER_ROI">
+                  Vinnare-ROI
+                </option>
+
+                <option value="PLACE_ROI">
+                  Plats-ROI
+                </option>
+
+                <option value="COMBINED_ROI">
+                  Kombinerad ROI
+                </option>
+              </select>
+            </label>
+          </div>
         </div>
 
         <div className="research-table-scroll">
-          <table className="research-table">
+          <table className="research-table research-group-table">
             <thead>
               <tr>
                 <th>
-                  Grupp
+                  {groupingLabel(
+                    grouping,
+                  )}
                 </th>
 
-                <th>
-                  Spel
-                </th>
-
-                <th>
-                  Vinst
-                </th>
-
-                <th>
-                  Plats
-                </th>
-
-                <th>
-                  Snittodds
-                </th>
-
-                <th>
-                  Snittras
-                </th>
-
-                <th>
-                  ROI V
-                </th>
-
-                <th>
-                  ROI P
-                </th>
-
-                <th>
-                  ROI V+P
-                </th>
+                <th>Underlag</th>
+                <th>Spel</th>
+                <th>Vinster</th>
+                <th>Vinst %</th>
+                <th>Platser</th>
+                <th>Plats %</th>
+                <th>Snittodds</th>
+                <th>Sänkning</th>
+                <th>Vinnare ROI</th>
+                <th>Plats ROI</th>
+                <th>V+P ROI</th>
               </tr>
             </thead>
 
             <tbody>
-              {groups.map(
+              {sortedGroups.map(
                 (group) => (
                   <tr key={group.key}>
                     <td>
@@ -1284,20 +2209,33 @@ export function ResearchHistoryPanel() {
                     </td>
 
                     <td>
-                      {group.bets}
+                      <span
+                        className={
+                          `research-sample-badge ${
+                            sampleClass(
+                              group.bets,
+                            )
+                          }`
+                        }
+                      >
+                        {sampleLabel(
+                          group.bets,
+                        )}
+                      </span>
                     </td>
 
+                    <td>{group.bets}</td>
+                    <td>{group.wins}</td>
+
                     <td>
-                      {group.wins}
-                      {" · "}
                       {formatPercent(
                         group.winRatePercent,
                       )}
                     </td>
 
+                    <td>{group.places}</td>
+
                     <td>
-                      {group.places}
-                      {" · "}
                       {formatPercent(
                         group.placeRatePercent,
                       )}
@@ -1316,9 +2254,11 @@ export function ResearchHistoryPanel() {
                     </td>
 
                     <td
-                      className={roiClass(
-                        group.winnerRoiPercent,
-                      )}
+                      className={
+                        roiClass(
+                          group.winnerRoiPercent,
+                        )
+                      }
                     >
                       {formatPercent(
                         group.winnerRoiPercent,
@@ -1326,9 +2266,11 @@ export function ResearchHistoryPanel() {
                     </td>
 
                     <td
-                      className={roiClass(
-                        group.placeRoiPercent,
-                      )}
+                      className={
+                        roiClass(
+                          group.placeRoiPercent,
+                        )
+                      }
                     >
                       {formatPercent(
                         group.placeRoiPercent,
@@ -1336,9 +2278,11 @@ export function ResearchHistoryPanel() {
                     </td>
 
                     <td
-                      className={roiClass(
-                        group.combinedRoiPercent,
-                      )}
+                      className={
+                        roiClass(
+                          group.combinedRoiPercent,
+                        )
+                      }
                     >
                       {formatPercent(
                         group.combinedRoiPercent,
@@ -1348,30 +2292,30 @@ export function ResearchHistoryPanel() {
                 ),
               )}
 
-              {!groups.length ? (
+              {!sortedGroups.length ? (
                 <tr>
-                  <td colSpan={9}>
-                    Ingen historik matchar filtreringen.
+                  <td colSpan={12}>
+                    Inga lopp matchar de valda filtren.
                   </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
         </div>
-      </section>
+      </div>
 
-      <section className="research-detail-panel">
+      <div className="research-detail-panel">
         <div className="research-section-heading">
           <div>
-            <span>UNDERLAG</span>
+            <span>LOPP FÖR LOPP</span>
 
             <h3>
-              Lopp i urvalet
+              Matchande hästar
             </h3>
           </div>
 
           <small>
-            Senaste 250 visas i tabellen
+            {rows.length} valda hästar
           </small>
         </div>
 
@@ -1379,151 +2323,172 @@ export function ResearchHistoryPanel() {
           <table className="research-table research-detail-table">
             <thead>
               <tr>
-                <th>
-                  Datum
-                </th>
-
-                <th>
-                  Lopp
-                </th>
-
-                <th>
-                  Häst
-                </th>
-
-                <th>
-                  Start
-                </th>
-
-                <th>
-                  Distans
-                </th>
-
-                <th>
-                  Styrka
-                </th>
-
-                <th>
-                  Startodds
-                </th>
-
-                <th>
-                  Låsodds
-                </th>
-
-                <th>
-                  Sänkning
-                </th>
-
-                <th>
-                  Placering
-                </th>
-
-                <th>
-                  Utfall
-                </th>
+                <th>Datum</th>
+                <th>Lopp</th>
+                <th>Häst</th>
+                <th>Kusk</th>
+                <th>Start</th>
+                <th>Klass</th>
+                <th>Inkomstgräns</th>
+                <th>Startodds</th>
+                <th>Låsodds</th>
+                <th>Sänkning</th>
+                <th>Styrka</th>
+                <th>Resultat</th>
+                <th>Vinnarodds</th>
+                <th>Platsodds</th>
               </tr>
             </thead>
 
             <tbody>
-              {rows
-                .slice(0, 250)
-                .map(
-                  (row) => (
-                    <tr key={row.raceKey}>
-                      <td>
-                        {row.raceDate}
-                      </td>
+              {rows.map(
+                (row) => (
+                  <tr
+                    key={
+                      `${row.raceKey}-${row.runnerNumber}`
+                    }
+                  >
+                    <td>{row.raceDate}</td>
 
-                      <td>
-                        <strong>
-                          {row.trackName}
-                        </strong>
+                    <td>
+                      <strong>
+                        {row.trackName} L{row.raceNumber}
+                      </strong>
 
-                        <small>
-                          Lopp {row.raceNumber}
-                        </small>
-                      </td>
+                      <small>
+                        {row.startMethod ?? "–"} ·{" "}
+                        {row.distanceMeters ?? "–"} m
+                      </small>
+                    </td>
 
-                      <td>
-                        <strong>
-                          {row.runnerNumber}.{" "}
-                          {row.horseName}
-                        </strong>
+                    <td>
+                      <strong>
+                        {row.runnerNumber}. {row.horseName}
+                      </strong>
 
-                        <small>
-                          Spår{" "}
-                          {row.startLane ??
-                            "–"}
-                        </small>
-                      </td>
+                      <small>
+                        {row.isFavoriteAtLock
+                          ? "Favorit vid LOCK"
+                          : "Ej favorit vid LOCK"}
+                      </small>
+                    </td>
 
-                      <td>
-                        {row.startMethod ??
+                    <td>
+                      {row.driverName ?? "–"}
+                    </td>
+
+                    <td>
+                      <strong>
+                        Spår {row.startLane ?? "–"}
+                      </strong>
+
+                      <small>
+                        {row.distanceHandicapMeters &&
+                        row.distanceHandicapMeters > 0
+                          ? `Tillägg ${row.distanceHandicapMeters} m`
+                          : "Grunddistans"}
+                      </small>
+                    </td>
+
+                    <td>
+                      <strong>
+                        {row.raceClassCode ??
+                          row.raceCategory ??
                           "–"}
-                      </td>
+                      </strong>
 
-                      <td>
-                        {row.distanceMeters
-                          ? `${row.distanceMeters} m`
-                          : "–"}
-                      </td>
+                      <small>
+                        {row.raceName ?? ""}
+                      </small>
+                    </td>
 
-                      <td>
-                        {row.strengthTotal ??
-                          "–"}
-                        /6
-                      </td>
+                    <td>
+                      {row.earningsMin !== null ||
+                      row.earningsMax !== null
+                        ? `${
+                            formatEarnings(
+                              row.earningsMin,
+                            )
+                          } – ${
+                            formatEarnings(
+                              row.earningsMax,
+                            )
+                          }`
+                        : "–"}
+                    </td>
 
-                      <td>
-                        {formatOdds(
-                          row.startOdds,
+                    <td>
+                      {formatOdds(
+                        row.startOdds,
+                      )}
+                    </td>
+
+                    <td>
+                      {formatOdds(
+                        row.lockOdds,
+                      )}
+                    </td>
+
+                    <td>
+                      {formatPercent(
+                        row.oddsDropToLockPercent,
+                      )}
+                    </td>
+
+                    <td>
+                      {row.strengthTotal === null
+                        ? "–"
+                        : `${row.strengthTotal}/6`}
+                    </td>
+
+                    <td>
+                      <span
+                        className={
+                          `research-result-chip ${
+                            resultClass(
+                              row,
+                            )
+                          }`
+                        }
+                      >
+                        {resultLabel(
+                          row,
                         )}
-                      </td>
+                      </span>
 
-                      <td>
-                        {formatOdds(
-                          row.lockOdds,
-                        )}
-                      </td>
-
-                      <td>
-                        {formatPercent(
-                          row.oddsDropToLockPercent,
-                        )}
-                      </td>
-
-                      <td>
+                      <small>
+                        Placering{" "}
                         {row.finishPositionOfficial ??
                           "–"}
-                      </td>
+                      </small>
+                    </td>
 
-                      <td>
-                        <span
-                          className={`research-result-chip ${resultClass(
-                            row,
-                          )}`}
-                        >
-                          {resultLabel(
-                            row,
-                          )}
-                        </span>
-                      </td>
-                    </tr>
-                  ),
-                )}
+                    <td>
+                      {formatOdds(
+                        row.officialWinOddsDecimal,
+                      )}
+                    </td>
+
+                    <td>
+                      {formatOdds(
+                        row.officialPlaceOddsDecimal,
+                      )}
+                    </td>
+                  </tr>
+                ),
+              )}
 
               {!rows.length ? (
                 <tr>
-                  <td colSpan={11}>
-                    Ingen historik matchar filtreringen.
+                  <td colSpan={14}>
+                    Inga lopp matchar de valda filtren.
                   </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
         </div>
-      </section>
+      </div>
     </section>
   );
 }

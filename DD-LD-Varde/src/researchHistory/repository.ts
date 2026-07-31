@@ -41,6 +41,26 @@ function asNullableString(
     : null;
 }
 
+function asNullableId(
+  value: unknown,
+): string | null {
+  if (
+    typeof value === "string" &&
+    value.trim() !== ""
+  ) {
+    return value.trim();
+  }
+
+  if (
+    typeof value === "number" &&
+    Number.isFinite(value)
+  ) {
+    return String(value);
+  }
+
+  return null;
+}
+
 function asNumber(
   value: unknown,
 ): number | null {
@@ -176,6 +196,11 @@ function parseHistoryRow(
         row.race_number,
       ),
 
+    raceName:
+      asNullableString(
+        row.race_name,
+      ),
+
     plannedStartTime:
       asNullableString(
         row.planned_start_time,
@@ -201,6 +226,16 @@ function parseHistoryRow(
         row.race_class_code,
       ),
 
+    earningsMin:
+      asNumber(
+        row.earnings_min,
+      ),
+
+    earningsMax:
+      asNumber(
+        row.earnings_max,
+      ),
+
     starters:
       asNumber(
         row.starters,
@@ -221,6 +256,26 @@ function parseHistoryRow(
     startLane:
       asNumber(
         row.start_lane,
+      ),
+
+    startDistanceMeters:
+      asNumber(
+        row.start_distance_meters,
+      ),
+
+    distanceHandicapMeters:
+      asNumber(
+        row.distance_handicap_meters,
+      ),
+
+    driverId:
+      asNullableId(
+        row.driver_id,
+      ),
+
+    driverName:
+      asNullableString(
+        row.driver_name,
       ),
 
     strengthTotal:
@@ -381,12 +436,12 @@ export async function loadResearchHistoryOptions():
     data,
     error,
   } = await supabase.rpc(
-    "research_history_options_v1",
+    "research_history_options_v2",
   );
 
   if (error) {
     throw new Error(
-      `Kunde inte läsa analysfilter: ${error.message}`,
+      `Kunde inte läsa analysfilter V2: ${error.message}`,
     );
   }
 
@@ -402,10 +457,18 @@ export async function loadResearchHistoryOptions():
     return {
       minDate: null,
       maxDate: null,
+
       raceCount: 0,
+
       tracks: [],
       distances: [],
       startMethods: [],
+
+      raceCategories: [],
+      raceClassCodes: [],
+
+      drivers: [],
+      startLanes: [],
     };
   }
 
@@ -439,6 +502,26 @@ export async function loadResearchHistoryOptions():
       asStringArray(
         row.start_methods,
       ),
+
+    raceCategories:
+      asStringArray(
+        row.race_categories,
+      ),
+
+    raceClassCodes:
+      asStringArray(
+        row.race_class_codes,
+      ),
+
+    drivers:
+      asStringArray(
+        row.drivers,
+      ),
+
+    startLanes:
+      asNumberArray(
+        row.start_lanes,
+      ),
   };
 }
 
@@ -449,7 +532,7 @@ export async function loadResearchHistoryRows(
     data,
     error,
   } = await supabase.rpc(
-    "research_history_rows_v1",
+    "research_history_rows_v2",
     {
       p_date_from:
         filters.dateFrom || null,
@@ -469,11 +552,56 @@ export async function loadResearchHistoryRows(
       p_track_name:
         filters.trackName || null,
 
+      p_driver_name:
+        filters.driverName || null,
+
+      p_start_lane:
+        filters.startLane,
+
+      p_lane_group:
+        filters.laneGroup || "ALL",
+
+      p_race_category:
+        filters.raceCategory || null,
+
+      p_race_class_code:
+        filters.raceClassCode || null,
+
+      p_earnings_min:
+        filters.earningsMin,
+
+      p_earnings_max:
+        filters.earningsMax,
+
+      p_min_starters:
+        filters.minStarters,
+
+      p_max_starters:
+        filters.maxStarters,
+
       p_min_strength:
         filters.minStrength,
 
+      p_max_strength:
+        filters.maxStrength,
+
       p_min_drop_percent:
         filters.minDropPercent,
+
+      p_max_drop_percent:
+        filters.maxDropPercent,
+
+      p_min_start_odds:
+        filters.minStartOdds,
+
+      p_max_start_odds:
+        filters.maxStartOdds,
+
+      p_min_lock_odds:
+        filters.minLockOdds,
+
+      p_max_lock_odds:
+        filters.maxLockOdds,
 
       p_complete_only:
         filters.completeOnly,
@@ -485,7 +613,7 @@ export async function loadResearchHistoryRows(
 
   if (error) {
     throw new Error(
-      `Kunde inte läsa historiken: ${error.message}`,
+      `Kunde inte läsa historiken V2: ${error.message}`,
     );
   }
 

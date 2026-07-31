@@ -254,6 +254,60 @@ export function computeResearchHistorySummary(
   };
 }
 
+function lockOddsGroup(
+  value: number | null,
+): {
+  key: string;
+  label: string;
+} {
+  if (value === null) {
+    return {
+      key: "UNKNOWN",
+      label: "Okänt låsodds",
+    };
+  }
+
+  if (value < 3) {
+    return {
+      key: "01_UNDER_3",
+      label: "Under 3,00",
+    };
+  }
+
+  if (value < 5) {
+    return {
+      key: "02_3_TO_5",
+      label: "3,00–4,99",
+    };
+  }
+
+  if (value < 10) {
+    return {
+      key: "03_5_TO_10",
+      label: "5,00–9,99",
+    };
+  }
+
+  if (value < 15) {
+    return {
+      key: "04_10_TO_15",
+      label: "10,00–14,99",
+    };
+  }
+
+  if (value < 25) {
+    return {
+      key: "05_15_TO_25",
+      label: "15,00–24,99",
+    };
+  }
+
+  return {
+    key: "06_25_PLUS",
+    label: "25,00 eller högre",
+  };
+}
+
 function groupingKey(
   row: ResearchHistoryRow,
   grouping: ResearchGrouping,
@@ -281,11 +335,67 @@ function groupingKey(
   if (grouping === "TRACK") {
     return {
       key:
-        row.trackName,
+        row.trackName ||
+        "UNKNOWN",
 
       label:
-        row.trackName,
+        row.trackName ||
+        "Okänd bana",
     };
+  }
+
+  if (grouping === "DRIVER") {
+    return {
+      key:
+        row.driverName ??
+        "UNKNOWN",
+
+      label:
+        row.driverName ??
+        "Okänd kusk",
+    };
+  }
+
+  if (grouping === "START_LANE") {
+    const value =
+      row.startLane;
+
+    return {
+      key:
+        value === null
+          ? "UNKNOWN"
+          : String(value).padStart(
+              2,
+              "0",
+            ),
+
+      label:
+        value === null
+          ? "Okänt spår"
+          : `Spår ${value}`,
+    };
+  }
+
+  if (grouping === "RACE_CLASS") {
+    const value =
+      row.raceClassCode ??
+      row.raceCategory;
+
+    return {
+      key:
+        value ??
+        "UNKNOWN",
+
+      label:
+        value ??
+        "Okänd loppklass",
+    };
+  }
+
+  if (grouping === "LOCK_ODDS") {
+    return lockOddsGroup(
+      row.lockOdds,
+    );
   }
 
   if (grouping === "STRENGTH") {

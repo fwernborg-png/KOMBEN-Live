@@ -3,11 +3,24 @@ export type ResearchSelection =
   | "SMOOTHEST"
   | "FAVORITE";
 
+export type ResearchLaneGroup =
+  | "ALL"
+  | "AUTO_INNER_1_5"
+  | "AUTO_FRONT_1_8"
+  | "AUTO_BACK_9_12"
+  | "AUTO_THIRD_13_15"
+  | "VOLT_BASE"
+  | "VOLT_HANDICAP";
+
 export type ResearchGrouping =
   | "START_METHOD"
   | "DISTANCE"
   | "TRACK"
-  | "STRENGTH";
+  | "STRENGTH"
+  | "DRIVER"
+  | "START_LANE"
+  | "RACE_CLASS"
+  | "LOCK_ODDS";
 
 export type ResearchHistoryFilters = {
   dateFrom: string;
@@ -17,10 +30,33 @@ export type ResearchHistoryFilters = {
 
   startMethod: string;
   distanceMeters: number | null;
+
   trackName: string;
+  driverName: string;
+
+  startLane: number | null;
+  laneGroup: ResearchLaneGroup;
+
+  raceCategory: string;
+  raceClassCode: string;
+
+  earningsMin: number | null;
+  earningsMax: number | null;
+
+  minStarters: number | null;
+  maxStarters: number | null;
 
   minStrength: number | null;
+  maxStrength: number | null;
+
   minDropPercent: number | null;
+  maxDropPercent: number | null;
+
+  minStartOdds: number | null;
+  maxStartOdds: number | null;
+
+  minLockOdds: number | null;
+  maxLockOdds: number | null;
 
   completeOnly: boolean;
   limit: number;
@@ -35,6 +71,12 @@ export type ResearchHistoryOptions = {
   tracks: string[];
   distances: number[];
   startMethods: string[];
+
+  raceCategories: string[];
+  raceClassCodes: string[];
+
+  drivers: string[];
+  startLanes: number[];
 };
 
 export type ResearchHistoryRow = {
@@ -43,6 +85,8 @@ export type ResearchHistoryRow = {
 
   trackName: string;
   raceNumber: number;
+  raceName: string | null;
+
   plannedStartTime: string | null;
 
   startMethod: string | null;
@@ -51,13 +95,22 @@ export type ResearchHistoryRow = {
   raceCategory: string | null;
   raceClassCode: string | null;
 
+  earningsMin: number | null;
+  earningsMax: number | null;
+
   starters: number | null;
 
   selectionKind: ResearchSelection;
 
   runnerNumber: number;
   horseName: string;
+
   startLane: number | null;
+  startDistanceMeters: number | null;
+  distanceHandicapMeters: number | null;
+
+  driverId: string | null;
+  driverName: string | null;
 
   strengthTotal: number | null;
 
