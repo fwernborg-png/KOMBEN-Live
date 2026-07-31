@@ -40,6 +40,7 @@ import type {
 } from "./placeModel/types";
 import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 import { ResearchHistoryPanel } from "./researchHistory/ResearchHistoryPanel";
+import { mergeVpPayloadIntoWinnerPayload } from "./atg/vpPayload";
 
 type Track = {
   id: number;
@@ -3393,6 +3394,7 @@ export default function App() {
 
   async function fetchRace(track: Track, number: number, signal?: AbortSignal) {
     const gameId = `vinnare_${date}_${track.id}_${number}`;
+    const vpGameId = `vp_${date}_${track.id}_${number}`;
     for (let attempt = 0; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
       const timeoutController = new AbortController();
       const timeoutHandle = window.setTimeout(() => {
@@ -3405,10 +3407,17 @@ export default function App() {
       }
 
       try {
-        const response = await fetch(`${API}/games/${gameId}`, {
-          cache: "no-store",
-          signal: timeoutController.signal,
-        });
+        const [response, vpResponse] = await Promise.all([
+          fetch(`${API}/games/${gameId}`, {
+            cache: "no-store",
+            signal: timeoutController.signal,
+          }),
+
+          fetch(`${API}/games/${vpGameId}`, {
+            cache: "no-store",
+            signal: timeoutController.signal,
+          }).catch(() => null),
+        ]);
 
         if (!response.ok) {
           if (response.status >= 500 && attempt < FETCH_RETRY_ATTEMPTS) {
@@ -3417,8 +3426,27 @@ export default function App() {
           return null;
         }
 
-        const data: unknown = await response.json();
-        const parsed = parseRace(data, number);
+        const winnerPayload: unknown =
+          await response.json();
+
+        const vpPayload: unknown =
+          vpResponse?.ok
+            ? await vpResponse
+                .json()
+                .catch(() => null)
+            : null;
+
+        const mergedPayload =
+          mergeVpPayloadIntoWinnerPayload(
+            winnerPayload,
+            vpPayload,
+          );
+
+        const parsed =
+          parseRace(
+            mergedPayload,
+            number,
+          );
         if (!parsed) return null;
         return { ...parsed, id: stableRaceId(track, parsed.raceNumber || number) };
       } catch (error) {
@@ -5045,6 +5073,13 @@ export default function App() {
                           !isWatched &&
                           !isLockedPlay &&
                           selectedRaceSignalState.evaluatedRunnerNumber === runner.number;
+
+                        const isSmoothest =
+                          raceInsights.smoothest?.number === runner.number;
+
+                        const isBiggestDrop =
+                          raceInsights.biggestDrop?.number === runner.number;
+
                         const runnerInfo = raceInsights.byRunner[runner.number];
                         const isExpanded = expandedRunnerKey === rowKey;
                         const consistency = runnerInfo?.consistency;
@@ -5052,7 +5087,7 @@ export default function App() {
                         return (
                           <div
                             key={rowKey}
-                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""}`}
+                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""}`}
                           >
                             <div
                               role="button"
@@ -5066,7 +5101,7 @@ export default function App() {
                                 }
                               }}
                             >
-                              <span className={`number-pill ${isWatched || isLockedPlay ? "is-highlight" : ""}`}>{runner.number}</span>
+                              <span className={`number-pill ${isWatched || isLockedPlay || isBiggestDrop ? "is-highlight" : ""}`}>{runner.number}</span>
                               <span className="runner-name-cell">
                                 <span className="runner-title-line">
                                   {isWatched ? <span className="inline-tag watch">BEVAKAS</span> : null}
@@ -5095,9 +5130,21 @@ export default function App() {
                                 {isWatched ? <span className="candidate-badge a1">BEVAKAS</span> : null}
                                 {isLockedPlay ? <span className="candidate-badge a1">PLATSSPEL</span> : null}
                                 {isLockedPlay ? <span className="candidate-badge play-now">SPELA DENNA</span> : null}
-                                {raceInsights.smoothest?.number === runner.number ? <span className="comment-mark smoothest">J</span> : null}
-                                {raceInsights.biggestDrop?.number === runner.number ? <span className="comment-mark drop">S</span> : null}
-                                {!isWatched && !isLockedPlay ? <span className="candidate-badge neutral">-</span> : null}
+                                {isSmoothest ? (
+                                  <span className="candidate-badge strategy-badge smoothest">
+                                    JÄMNAST
+                                  </span>
+                                ) : null}
+
+                                {isBiggestDrop ? (
+                                  <span className="candidate-badge strategy-badge drop">
+                                    MEST SÄNKT
+                                  </span>
+                                ) : null}
+
+                                {!isWatched && !isLockedPlay && !isSmoothest && !isBiggestDrop ? (
+                                  <span className="candidate-badge neutral">-</span>
+                                ) : null}
                               </span>
                             </div>
 

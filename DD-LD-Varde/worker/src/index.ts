@@ -41,6 +41,10 @@ import {
   completeResearchRacesForDay,
 } from "./researchCompletion";
 import {
+  extractVpPlaceOddsRawByRunner,
+  mergeVpPayloadIntoWinnerPayload,
+} from "../../src/atg/vpPayload";
+import {
   extractRunnerStats,
 } from "./runnerStatistics";
 
@@ -167,6 +171,19 @@ type LiveOddsPointRow = {
 type ExistingEvalKeyRow = {
   race_id: string;
   rule_version: string;
+};
+
+type MissingResearchPlacePayoutRow = {
+  race_key: string;
+  runner_number: number;
+};
+
+type ResearchPlacePayoutRaceRow = {
+  race_key: string;
+  race_date: string;
+  track_id: number;
+  track_name: string;
+  race_number: number;
 };
 
 type DbBetRow = {
@@ -832,6 +849,20 @@ async function fetchJson(url: string, signal?: AbortSignal) {
   });
 }
 
+async function fetchJsonOptional(
+  url: string,
+  signal?: AbortSignal,
+): Promise<unknown | null> {
+  try {
+    return await fetchJson(
+      url,
+      signal,
+    );
+  } catch {
+    return null;
+  }
+}
+
 async function loadTracksAndMeetings(args: { apiBaseUrl: string; raceDate: string; signal?: AbortSignal }) {
   const { apiBaseUrl, raceDate, signal } = args;
   const payload = await fetchJson(`${apiBaseUrl}/calendar/day/${raceDate}`, signal);
@@ -872,10 +903,24 @@ async function fetchRaceForTrack(args: {
     signal,
   } = args;
 
-  const payload = await fetchJson(
-    `${apiBaseUrl}/games/vinnare_${raceDate}_${trackId}_${raceNumber}`,
-    signal,
-  );
+  const [winnerPayload, vpPayload] =
+    await Promise.all([
+      fetchJson(
+        `${apiBaseUrl}/games/vinnare_${raceDate}_${trackId}_${raceNumber}`,
+        signal,
+      ),
+
+      fetchJsonOptional(
+        `${apiBaseUrl}/games/vp_${raceDate}_${trackId}_${raceNumber}`,
+        signal,
+      ),
+    ]);
+
+  const payload =
+    mergeVpPayloadIntoWinnerPayload(
+      winnerPayload,
+      vpPayload,
+    );
 
   const parsed = parseRace(
     payload,
@@ -916,6 +961,326 @@ async function fetchRaceForTrack(args: {
 function toDecimalOdds(raw: number | null): number | null {
   if (!isValidRawWinOdds(raw)) return null;
   return raw / 100;
+}
+
+type ResearchPlacePayoutBackfillSummary = {
+  racesChecked: number;
+  racesUpdated: number;
+  payoutsUpdated: number;
+  failures: number;
+  errors: string[];
+};
+
+async function backfillMissingResearchPlacePayouts(args: {
+  supabase: ReturnType<typeof createSupabaseClient>;
+  apiBaseUrl: string;
+  signal: AbortSignal;
+  nowIso: string;
+  maxRaces?: number;
+}): Promise<ResearchPlacePayoutBackfillSummary> {
+  const summary: ResearchPlacePayoutBackfillSummary = {
+    racesChecked: 0,
+    racesUpdated: 0,
+    payoutsUpdated: 0,
+    failures: 0,
+    errors: [],
+  };
+
+  const appendError = (message: string) => {
+    if (summary.errors.length < 10) {
+      summary.errors.push(message);
+    }
+  };
+
+  const {
+    data: missingRowsData,
+    error: missingRowsError,
+  } = await args.supabase
+    .from("research_runner_results")
+    .select("race_key,runner_number")
+    .eq("placed_official", true)
+    .is("official_place_odds_decimal", null)
+    .limit(100);
+
+  if (missingRowsError) {
+    throw new Error(
+      `Kunde inte läsa saknade forskningsutdelningar: ${missingRowsError.message}`,
+    );
+  }
+
+  const missingRows =
+    (missingRowsData ?? []) as MissingResearchPlacePayoutRow[];
+
+  if (!missingRows.length) {
+    return summary;
+  }
+
+  const selectedRaceKeys = [
+    ...new Set(
+      missingRows.map(
+        (row) => row.race_key,
+      ),
+    ),
+  ].slice(
+    0,
+    args.maxRaces ?? 3,
+  );
+
+  const {
+    data: raceRowsData,
+    error: raceRowsError,
+  } = await args.supabase
+    .from("research_races")
+    .select(
+      [
+        "race_key",
+        "race_date",
+        "track_id",
+        "track_name",
+        "race_number",
+      ].join(","),
+    )
+    .in(
+      "race_key",
+      selectedRaceKeys,
+    );
+
+  if (raceRowsError) {
+    throw new Error(
+      `Kunde inte läsa lopp för V/P-backfill: ${raceRowsError.message}`,
+    );
+  }
+
+  const raceRows =
+    (raceRowsData ?? []) as ResearchPlacePayoutRaceRow[];
+
+  for (const raceRow of raceRows) {
+    summary.racesChecked += 1;
+
+    try {
+      const vpPayload =
+        await fetchJsonOptional(
+          `${args.apiBaseUrl}/games/vp_${raceRow.race_date}_${raceRow.track_id}_${raceRow.race_number}`,
+          args.signal,
+        );
+
+      if (!vpPayload) {
+        continue;
+      }
+
+      const placeOddsByRunner =
+        extractVpPlaceOddsRawByRunner(
+          vpPayload,
+        );
+
+      if (!placeOddsByRunner.size) {
+        continue;
+      }
+
+      const raceMissingRows =
+        missingRows.filter(
+          (row) =>
+            row.race_key ===
+            raceRow.race_key,
+        );
+
+      let updatedForRace = 0;
+
+      for (const resultRow of raceMissingRows) {
+        const rawPlaceOdds =
+          placeOddsByRunner.get(
+            resultRow.runner_number,
+          );
+
+        const placeOddsDecimal =
+          rawPlaceOdds === undefined
+            ? null
+            : toDecimalOdds(
+                rawPlaceOdds,
+              );
+
+        if (placeOddsDecimal === null) {
+          continue;
+        }
+
+        const {
+          error: resultUpdateError,
+        } = await args.supabase
+          .from("research_runner_results")
+          .update({
+            official_place_odds_decimal:
+              placeOddsDecimal,
+
+            result_source:
+              "ATG_VP",
+
+            updated_at:
+              args.nowIso,
+          })
+          .eq(
+            "race_key",
+            raceRow.race_key,
+          )
+          .eq(
+            "runner_number",
+            resultRow.runner_number,
+          )
+          .eq(
+            "placed_official",
+            true,
+          )
+          .is(
+            "official_place_odds_decimal",
+            null,
+          );
+
+        if (resultUpdateError) {
+          throw new Error(
+            `Kunde inte uppdatera resultat för häst ${resultRow.runner_number}: ${resultUpdateError.message}`,
+          );
+        }
+
+        const {
+          error: snapshotUpdateError,
+        } = await args.supabase
+          .from("research_runner_snapshots")
+          .update({
+            current_place_odds:
+              placeOddsDecimal,
+
+            updated_at:
+              args.nowIso,
+          })
+          .eq(
+            "race_key",
+            raceRow.race_key,
+          )
+          .eq(
+            "runner_number",
+            resultRow.runner_number,
+          )
+          .like(
+            "snapshot_key",
+            "%:LIVE:RESULT",
+          );
+
+        if (snapshotUpdateError) {
+          appendError(
+            `${raceRow.track_name} lopp ${raceRow.race_number}, snapshot häst ${resultRow.runner_number}: ${snapshotUpdateError.message}`,
+          );
+        }
+
+        const {
+          error: oddsPointUpdateError,
+        } = await args.supabase
+          .from("research_odds_points")
+          .update({
+            place_odds_decimal:
+              placeOddsDecimal,
+
+            updated_at:
+              args.nowIso,
+          })
+          .eq(
+            "race_key",
+            raceRow.race_key,
+          )
+          .eq(
+            "runner_number",
+            resultRow.runner_number,
+          )
+          .eq(
+            "capture_type",
+            "FINAL",
+          );
+
+        if (oddsPointUpdateError) {
+          appendError(
+            `${raceRow.track_name} lopp ${raceRow.race_number}, slutodds häst ${resultRow.runner_number}: ${oddsPointUpdateError.message}`,
+          );
+        }
+
+        updatedForRace += 1;
+        summary.payoutsUpdated += 1;
+      }
+
+      if (!updatedForRace) {
+        continue;
+      }
+
+      summary.racesUpdated += 1;
+
+      const {
+        count: remainingCount,
+        error: remainingError,
+      } = await args.supabase
+        .from("research_runner_results")
+        .select(
+          "result_key",
+          {
+            count: "exact",
+            head: true,
+          },
+        )
+        .eq(
+          "race_key",
+          raceRow.race_key,
+        )
+        .eq(
+          "placed_official",
+          true,
+        )
+        .is(
+          "official_place_odds_decimal",
+          null,
+        );
+
+      if (remainingError) {
+        throw new Error(
+          `Kunde inte verifiera kvarvarande platsodds: ${remainingError.message}`,
+        );
+      }
+
+      if ((remainingCount ?? 0) === 0) {
+        const {
+          error: raceUpdateError,
+        } = await args.supabase
+          .from("research_races")
+          .update({
+            archive_status:
+              "COMPLETE",
+
+            missing_fields:
+              [],
+
+            updated_at:
+              args.nowIso,
+          })
+          .eq(
+            "race_key",
+            raceRow.race_key,
+          );
+
+        if (raceUpdateError) {
+          throw new Error(
+            `Kunde inte slutmarkera forskningsloppet: ${raceUpdateError.message}`,
+          );
+        }
+      }
+    } catch (error) {
+      summary.failures += 1;
+
+      appendError(
+        `${raceRow.track_name} lopp ${raceRow.race_number}: ${
+          error instanceof Error
+            ? error.message
+            : String(error)
+        }`,
+      );
+    }
+  }
+
+  return summary;
 }
 
 type PlaceOddsContext = {
@@ -1085,6 +1450,12 @@ async function runCron(env: Env) {
     researchResultSnapshotsArchived: 0,
     researchCompletionFailures: 0,
     researchCompletionErrors: [] as string[],
+
+    researchPlacePayoutBackfillRacesChecked: 0,
+    researchPlacePayoutBackfillRacesUpdated: 0,
+    researchPlacePayoutsBackfilled: 0,
+    researchPlacePayoutBackfillFailures: 0,
+    researchPlacePayoutBackfillErrors: [] as string[],
 
     evaluationsCreated: 0,
     betsCreated: 0,
@@ -1367,6 +1738,41 @@ async function runCron(env: Env) {
 
     summary.researchCompletionErrors =
       researchCompletionSummary.errors;
+
+    try {
+      const placePayoutBackfill =
+        await backfillMissingResearchPlacePayouts({
+          supabase,
+          apiBaseUrl,
+          signal:
+            runController.signal,
+          nowIso,
+          maxRaces: 3,
+        });
+
+      summary.researchPlacePayoutBackfillRacesChecked =
+        placePayoutBackfill.racesChecked;
+
+      summary.researchPlacePayoutBackfillRacesUpdated =
+        placePayoutBackfill.racesUpdated;
+
+      summary.researchPlacePayoutsBackfilled =
+        placePayoutBackfill.payoutsUpdated;
+
+      summary.researchPlacePayoutBackfillFailures =
+        placePayoutBackfill.failures;
+
+      summary.researchPlacePayoutBackfillErrors =
+        placePayoutBackfill.errors;
+    } catch (error) {
+      summary.researchPlacePayoutBackfillFailures += 1;
+
+      summary.researchPlacePayoutBackfillErrors.push(
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
 
     const vapidSubject = env.VAPID_SUBJECT?.trim();
     const vapidPublicKey = env.VAPID_PUBLIC_KEY?.trim();
