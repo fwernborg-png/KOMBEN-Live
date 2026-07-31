@@ -725,6 +725,11 @@ export function ResearchHistoryPanel() {
     string | null
   >(null);
 
+  const [
+    filtersOpen,
+    setFiltersOpen,
+  ] = useState(true);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -915,6 +920,8 @@ export function ResearchHistoryPanel() {
         new Date()
           .toISOString(),
       );
+
+      setFiltersOpen(false);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -959,9 +966,183 @@ export function ResearchHistoryPanel() {
       filters,
     );
 
+  const activeFilterLabels: string[] = [
+    `Strategi: ${selectionLabel(filters.selection)}`,
+    `Datum: ${filters.dateFrom || "–"} – ${filters.dateTo || "–"}`,
+    `Startmetod: ${filters.startMethod || "Alla"}`,
+  ];
+
+  if (filters.distanceMeters !== null) {
+    activeFilterLabels.push(
+      `Distans: ${filters.distanceMeters} m`,
+    );
+  }
+
+  if (filters.trackName) {
+    activeFilterLabels.push(
+      `Bana: ${filters.trackName}`,
+    );
+  }
+
+  if (filters.driverName) {
+    activeFilterLabels.push(
+      `Kusk: ${filters.driverName}`,
+    );
+  }
+
+  if (filters.startLane !== null) {
+    activeFilterLabels.push(
+      `Spår: ${filters.startLane}`,
+    );
+  } else if (filters.laneGroup !== "ALL") {
+    activeFilterLabels.push(
+      `Spår: ${laneGroupLabel(filters.laneGroup)}`,
+    );
+  }
+
+  if (
+    filters.minLockOdds !== null ||
+    filters.maxLockOdds !== null
+  ) {
+    activeFilterLabels.push(
+      `Låsodds: ${filters.minLockOdds ?? "lägst"}–${filters.maxLockOdds ?? "högst"}`,
+    );
+  }
+
+  if (
+    filters.minDropPercent !== null ||
+    filters.maxDropPercent !== null
+  ) {
+    activeFilterLabels.push(
+      `Sänkning: ${filters.minDropPercent ?? "lägst"}–${filters.maxDropPercent ?? "högst"} %`,
+    );
+  }
+
+  if (filters.raceClassCode) {
+    activeFilterLabels.push(
+      `Loppklass: ${filters.raceClassCode}`,
+    );
+  }
+
+  const completedRows =
+    rows.filter(
+      (row) =>
+        row.betVoid ||
+        row.finishPositionOfficial !== null,
+    ).length;
+
+  const dataQualityPercent =
+    rows.length > 0
+      ? Math.round(
+          completedRows /
+          rows.length *
+          100,
+        )
+      : 0;
+
+  const qualityStars =
+    rows.length >= 100 &&
+    dataQualityPercent >= 95
+      ? 5
+      : rows.length >= 50
+        ? 4
+        : rows.length >= 20
+          ? 3
+          : rows.length >= 10
+            ? 2
+            : 1;
+
   return (
-    <section className="tab-section research-history">
-      <div className="panel-header-row research-history-header">
+    <section className="tab-section research-history research-dashboard-light">
+      <div className="research-dashboard-hero">
+        <div>
+          <p className="research-kicker">
+            PLATSJÄGAREN
+          </p>
+
+          <h2 className="research-title">
+            Historik & analys
+          </h2>
+
+          <p className="research-subtitle">
+            Analysera tidigare lopp och filtrera fram
+            mönster, träffprocent, netto och ROI.
+          </p>
+        </div>
+
+        <div className="research-dashboard-actions">
+          <button
+            type="button"
+            className="research-reset-primary"
+            onClick={resetFilters}
+            disabled={loading}
+          >
+            Återställ filter
+          </button>
+
+          <button
+            type="button"
+            className="research-run-primary"
+            onClick={() => void runAnalysis()}
+            disabled={loading}
+          >
+            {loading
+              ? "Analyserar…"
+              : "Kör analys"}
+          </button>
+        </div>
+      </div>
+
+      <div className="research-filter-summary-bar">
+        <button
+          type="button"
+          className="research-filter-toggle"
+          onClick={() =>
+            setFiltersOpen(
+              (current) => !current,
+            )
+          }
+          aria-expanded={filtersOpen}
+        >
+          <span className="research-filter-symbol">
+            ◇
+          </span>
+
+          <strong>
+            Filter ({activeFilterLabels.length} aktiva)
+          </strong>
+        </button>
+
+        <div className="research-active-filter-chips">
+          {activeFilterLabels.map(
+            (label) => (
+              <span key={label}>
+                {label}
+              </span>
+            ),
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="research-filter-toggle-secondary"
+          onClick={() =>
+            setFiltersOpen(
+              (current) => !current,
+            )
+          }
+        >
+          {filtersOpen
+            ? "Dölj filter"
+            : "Visa / ändra filter"}
+
+          <span aria-hidden="true">
+            {filtersOpen ? "⌃" : "⌄"}
+          </span>
+        </button>
+      </div>
+
+      <div className="panel-header-row research-history-header research-old-header">
         <div>
           <p className="research-kicker">
             FORSKNINGSARKIV
@@ -1017,7 +1198,14 @@ export function ResearchHistoryPanel() {
         <strong>{question}</strong>
       </div>
 
-      <div className="research-filter-panel research-filter-panel-v2">
+      <div
+        className={`research-filter-collapse ${
+          filtersOpen
+            ? "is-open"
+            : "is-closed"
+        }`}
+      >
+        <div className="research-filter-panel research-filter-panel-v2">
         <fieldset className="research-filter-section">
           <legend>
             1. Strategi och period
@@ -1930,6 +2118,10 @@ export function ResearchHistoryPanel() {
         </div>
       </div>
 
+        </div>
+
+      {/* research-filter-collapse-end */}
+
       {error ? (
         <div className="research-error">
           <strong>
@@ -1968,6 +2160,29 @@ export function ResearchHistoryPanel() {
           för slutsatser. Minst 50 ger ett mer
           användbart första underlag.
         </p>
+      </div>
+
+      <div className="research-dashboard-section-heading">
+        <div>
+          <span>Sammanfattning av resultat</span>
+
+          <small>
+            Resultatet bygger på de valda filtren.
+          </small>
+        </div>
+
+        <div className="research-data-quality-inline">
+          <span>Datakvalitet</span>
+
+          <strong>
+            {"★".repeat(qualityStars)}
+            {"☆".repeat(5 - qualityStars)}
+          </strong>
+
+          <small>
+            {rows.length} lopp · {dataQualityPercent} % kompletta
+          </small>
+        </div>
       </div>
 
       <div className="research-summary-grid">
