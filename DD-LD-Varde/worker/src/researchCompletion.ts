@@ -1579,16 +1579,6 @@ function buildResultSnapshotRows(
   const finalMarket =
     buildFinalMarket(race);
 
-  const currentByRunner =
-    new Map(
-      race.runners.map(
-        (runner) => [
-          runner.number,
-          runner,
-        ],
-      ),
-    );
-
   const activeRunners =
     race.runners.filter(
       (runner) =>
