@@ -133,6 +133,10 @@ type ResearchOddsPointRow =
     win_odds_decimal: number | string | null;
   };
 
+type ResearchMissingPlaceResultRow = {
+  race_key: string;
+};
+
 const LARGE_ODDS_MOVE_PERCENT = 20;
 
 function emptySummary(
@@ -2021,10 +2025,6 @@ export async function completeResearchRacesForDay(
     .eq(
       "race_date",
       args.raceDate,
-    )
-    .neq(
-      "archive_status",
-      "COMPLETE",
     );
 
   if (raceRowsError) {
@@ -2033,10 +2033,69 @@ export async function completeResearchRacesForDay(
     );
   }
 
-  const raceRows =
+  const allRaceRows =
     (
       raceRowsData ?? []
     ) as ResearchRaceRow[];
+
+  if (allRaceRows.length === 0) {
+    return summary;
+  }
+
+  const allRaceKeys =
+    allRaceRows.map(
+      (row) => row.race_key,
+    );
+
+  const {
+    data: missingPlaceRowsData,
+    error: missingPlaceRowsError,
+  } = await args.supabase
+    .from(
+      "research_runner_results",
+    )
+    .select("race_key")
+    .in(
+      "race_key",
+      allRaceKeys,
+    )
+    .eq(
+      "placed_official",
+      true,
+    )
+    .is(
+      "official_place_odds_decimal",
+      null,
+    );
+
+  if (missingPlaceRowsError) {
+    throw new Error(
+      `Kunde inte läsa saknade platsutdelningar: ${missingPlaceRowsError.message}`,
+    );
+  }
+
+  const retryPlaceRaceKeys =
+    new Set(
+      (
+        missingPlaceRowsData ?? []
+      ).map(
+        (row) =>
+          (
+            row as
+              ResearchMissingPlaceResultRow
+          ).race_key,
+      ),
+    );
+
+  const raceRows =
+    allRaceRows.filter(
+      (row) =>
+        row.archive_status !==
+          "COMPLETE" ||
+        retryPlaceRaceKeys.has(
+          row.race_key,
+        ),
+    );
 
   if (raceRows.length === 0) {
     return summary;
@@ -2479,6 +2538,16 @@ export async function completeResearchRacesForDay(
             !runner.scratched,
         ).length;
 
+      const missingOfficialPlacePayouts =
+        resultRows.filter(
+          (row) =>
+            row.placed_official ===
+              true &&
+            row
+              .official_place_odds_decimal ===
+              null,
+        ).length;
+
       const {
         error: raceUpdateError,
       } = await args.supabase
@@ -2509,9 +2578,18 @@ export async function completeResearchRacesForDay(
 
           archive_status:
             resultRows.length ===
-            race.runners.length
+              race.runners.length &&
+            missingOfficialPlacePayouts ===
+              0
               ? "COMPLETE"
               : "INCOMPLETE",
+
+          missing_fields:
+            missingOfficialPlacePayouts > 0
+              ? [
+                  "officialPlaceOdds",
+                ]
+              : [],
 
           archived_at:
             args.nowIso,
