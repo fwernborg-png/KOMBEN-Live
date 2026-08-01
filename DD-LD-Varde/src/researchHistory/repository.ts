@@ -532,7 +532,7 @@ export async function loadResearchHistoryRows(
     data,
     error,
   } = await supabase.rpc(
-    "research_history_rows_v2",
+    "research_history_rows_v3",
     {
       p_date_from:
         filters.dateFrom || null,
@@ -585,6 +585,24 @@ export async function loadResearchHistoryRows(
       p_max_strength:
         filters.maxStrength,
 
+      p_kr_top4:
+        filters.krTopFour,
+
+      p_st_top4:
+        filters.stTopFour,
+
+      p_driver_top4:
+        filters.driverTopFour,
+
+      p_sp_top4:
+        filters.spTopFour,
+
+      p_gallop_top4:
+        filters.gallopTopFour,
+
+      p_odds_indicator_top4:
+        filters.oddsIndicatorTopFour,
+
       p_min_drop_percent:
         filters.minDropPercent,
 
@@ -613,7 +631,7 @@ export async function loadResearchHistoryRows(
 
   if (error) {
     throw new Error(
-      `Kunde inte läsa historiken V2: ${error.message}`,
+      `Kunde inte läsa historiken V3: ${error.message}`,
     );
   }
 

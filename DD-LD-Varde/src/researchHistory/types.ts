@@ -3,6 +3,9 @@ export type ResearchSelection =
   | "SMOOTHEST"
   | "FAVORITE";
 
+export type ResearchIndicatorFilter =
+  boolean | null;
+
 export type ResearchLaneGroup =
   | "ALL"
   | "AUTO_INNER_1_5"
@@ -48,6 +51,13 @@ export type ResearchHistoryFilters = {
 
   minStrength: number | null;
   maxStrength: number | null;
+
+  krTopFour: ResearchIndicatorFilter;
+  stTopFour: ResearchIndicatorFilter;
+  driverTopFour: ResearchIndicatorFilter;
+  spTopFour: ResearchIndicatorFilter;
+  gallopTopFour: ResearchIndicatorFilter;
+  oddsIndicatorTopFour: ResearchIndicatorFilter;
 
   minDropPercent: number | null;
   maxDropPercent: number | null;

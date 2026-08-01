@@ -21,6 +21,7 @@ import type {
   ResearchHistoryFilters,
   ResearchHistoryOptions,
   ResearchHistoryRow,
+  ResearchIndicatorFilter,
   ResearchLaneGroup,
   ResearchSelection,
   SimulatedMarketSummary,
@@ -62,6 +63,14 @@ type NumericFilterKey =
   | "minLockOdds"
   | "maxLockOdds";
 
+type IndicatorFilterKey =
+  | "krTopFour"
+  | "stTopFour"
+  | "driverTopFour"
+  | "spTopFour"
+  | "gallopTopFour"
+  | "oddsIndicatorTopFour";
+
 type GroupSort =
   | "BETS"
   | "WIN_RATE"
@@ -69,6 +78,43 @@ type GroupSort =
   | "WINNER_ROI"
   | "PLACE_ROI"
   | "COMBINED_ROI";
+
+const INDICATOR_FILTER_DEFINITIONS = [
+  {
+    key: "krTopFour",
+    label: "KR – kronor per start",
+    chipLabel: "KR",
+  },
+  {
+    key: "stTopFour",
+    label: "ST – segerprocent",
+    chipLabel: "ST",
+  },
+  {
+    key: "driverTopFour",
+    label: "K – kuskprocent",
+    chipLabel: "Kusk",
+  },
+  {
+    key: "spTopFour",
+    label: "SP – startpoäng",
+    chipLabel: "Startpoäng",
+  },
+  {
+    key: "gallopTopFour",
+    label: "G – galopp",
+    chipLabel: "Galopp",
+  },
+  {
+    key: "oddsIndicatorTopFour",
+    label: "ODD – oddsmodell",
+    chipLabel: "ODD",
+  },
+] as const satisfies ReadonlyArray<{
+  key: IndicatorFilterKey;
+  label: string;
+  chipLabel: string;
+}>;
 
 function isoDateOffset(
   dateValue: string,
@@ -153,6 +199,13 @@ function buildInitialFilters(
 
     minStrength: null,
     maxStrength: null,
+
+    krTopFour: null,
+    stTopFour: null,
+    driverTopFour: null,
+    spTopFour: null,
+    gallopTopFour: null,
+    oddsIndicatorTopFour: null,
 
     minDropPercent: null,
     maxDropPercent: null,
@@ -244,6 +297,48 @@ function laneGroupLabel(
   }
 
   return "Alla spår";
+}
+
+function indicatorFilterSelectValue(
+  value: ResearchIndicatorFilter,
+): "ALL" | "YES" | "NO" {
+  if (value === true) {
+    return "YES";
+  }
+
+  if (value === false) {
+    return "NO";
+  }
+
+  return "ALL";
+}
+
+function parseIndicatorFilter(
+  value: string,
+): ResearchIndicatorFilter {
+  if (value === "YES") {
+    return true;
+  }
+
+  if (value === "NO") {
+    return false;
+  }
+
+  return null;
+}
+
+function indicatorFilterLabel(
+  value: ResearchIndicatorFilter,
+): string {
+  if (value === true) {
+    return "Ja";
+  }
+
+  if (value === false) {
+    return "Nej";
+  }
+
+  return "Alla";
 }
 
 function formatNumber(
@@ -577,6 +672,22 @@ function activeQuestion(
     parts.push(
       filters.raceCategory,
     );
+  }
+
+  for (
+    const indicator of
+    INDICATOR_FILTER_DEFINITIONS
+  ) {
+    const value =
+      filters[indicator.key];
+
+    if (value !== null) {
+      parts.push(
+        `${indicator.chipLabel} topp 4: ${
+          indicatorFilterLabel(value)
+        }`,
+      );
+    }
   }
 
   return parts.join(" · ");
@@ -1022,6 +1133,22 @@ export function ResearchHistoryPanel() {
     activeFilterLabels.push(
       `Loppklass: ${filters.raceClassCode}`,
     );
+  }
+
+  for (
+    const indicator of
+    INDICATOR_FILTER_DEFINITIONS
+  ) {
+    const value =
+      filters[indicator.key];
+
+    if (value !== null) {
+      activeFilterLabels.push(
+        `${indicator.chipLabel} topp 4: ${
+          indicatorFilterLabel(value)
+        }`,
+      );
+    }
   }
 
   const completedRows =
@@ -2026,9 +2153,64 @@ export function ResearchHistoryPanel() {
           </div>
         </fieldset>
 
+        <fieldset className="research-filter-section research-indicator-filter-section">
+          <legend>
+            7. Indikatorer – grön / topp 4
+          </legend>
+
+          <div className="research-filter-grid">
+            {INDICATOR_FILTER_DEFINITIONS.map(
+              (indicator) => (
+                <label key={indicator.key}>
+                  <span>
+                    {indicator.label}
+                  </span>
+
+                  <select
+                    value={
+                      indicatorFilterSelectValue(
+                        filters[indicator.key],
+                      )
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      updateFilter(
+                        indicator.key,
+                        parseIndicatorFilter(
+                          event.target.value,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="ALL">
+                      Alla
+                    </option>
+
+                    <option value="YES">
+                      Ja – grön / topp 4
+                    </option>
+
+                    <option value="NO">
+                      Nej – inte topp 4
+                    </option>
+                  </select>
+                </label>
+              ),
+            )}
+          </div>
+
+          <p className="research-filter-help">
+            Ja betyder att den valda hästen var
+            rankad topp 4 i loppet för indikatorn.
+            Nej betyder att indikatorn fanns men
+            inte var topp 4.
+          </p>
+        </fieldset>
+
         <fieldset className="research-filter-section">
           <legend>
-            7. Datakvalitet
+            8. Datakvalitet
           </legend>
 
           <div className="research-filter-grid">

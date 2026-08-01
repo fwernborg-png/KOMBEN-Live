@@ -993,7 +993,7 @@
 }
 
 .research-filter-collapse.is-open {
-  max-height: 3200px;
+  max-height: 5000px;
   margin-bottom: 14px;
   opacity: 1;
 }
@@ -1477,5 +1477,57 @@
 
   .research-dashboard-light label > span {
     white-space: normal;
+  }
+}
+
+/* KOMBEN RESEARCH INDICATOR FILTERS V3 */
+
+/* Indikatorerna får två tredjedelar av sista raden. */
+.research-dashboard-light
+.research-filter-section:nth-of-type(7) {
+  grid-column: span 8;
+}
+
+/* Datakvalitet ligger bredvid indikatorerna. */
+.research-dashboard-light
+.research-filter-section:nth-of-type(8) {
+  grid-column: span 4;
+}
+
+.research-dashboard-light
+.research-indicator-filter-section
+.research-filter-grid {
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 1250px) {
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(7),
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(8) {
+    grid-column: span 6;
+  }
+
+  .research-dashboard-light
+  .research-indicator-filter-section
+  .research-filter-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(7),
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(8) {
+    grid-column: 1 / -1;
+  }
+
+  .research-dashboard-light
+  .research-indicator-filter-section
+  .research-filter-grid {
+    grid-template-columns: 1fr;
   }
 }
