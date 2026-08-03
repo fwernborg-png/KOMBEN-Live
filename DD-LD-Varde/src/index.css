@@ -2096,3 +2096,88 @@ body,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* PLATSJÄGAREN FINAL MOBILE FIT V4 */
+
+@media (max-width: 720px) {
+  .top-nav-shell {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 0 5px;
+    padding: 5px 6px 4px;
+  }
+
+  .top-nav-shell *,
+  .race-toolbar *,
+  .selector-panels * {
+    box-sizing: border-box;
+  }
+
+  .top-nav-shell .app-headline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .top-nav-shell .top-status-group {
+    justify-self: end;
+    width: auto;
+    max-width: 78px;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .top-nav-shell .top-status-group button {
+    flex: 0 0 31px;
+  }
+
+  .top-nav-shell .live-pill {
+    flex: 0 0 auto;
+    padding-inline: 7px;
+    font-size: 9px;
+  }
+
+  .top-nav-shell .top-toolbar-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .top-nav-shell .top-toolbar-controls > button:first-of-type {
+    min-width: 94px;
+    padding-inline: 9px !important;
+    font-size: 11px !important;
+  }
+
+  .top-nav-shell .top-nav-tabs {
+    width: 100%;
+    max-width: 100%;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .top-nav-shell .top-nav-tab {
+    min-width: 0 !important;
+    max-width: 100%;
+    padding-inline: 1px !important;
+    font-size: 8.5px !important;
+    white-space: nowrap;
+  }
+
+  .race-toolbar,
+  .selector-panels,
+  .race-status-grid,
+  .race-side-panel {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .track-tabs,
+  .race-chip-row {
+    width: 100%;
+    max-width: 100%;
+  }
+}
