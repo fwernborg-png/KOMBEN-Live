@@ -2,9 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SmoothestCandidate } from "../../src/placeModel/types";
 import type { WinPlaceCandidate } from "../../src/winPlaceModel/types";
 import {
-  FINAL_SIGNAL_NOTIFICATION_VERSION,
+  type FinalSignalMode,
   buildFinalSignalNotification,
   buildFinalSignalNotificationKey,
+  notificationVersionForMode,
 } from "./finalSignalNotifications";
 import { sendWebPush } from "./webPush";
 
@@ -48,6 +49,7 @@ export async function deliverFinalSignalNotification(args: {
   plannedStartTime: string;
   winPlaceCandidate: WinPlaceCandidate | null;
   placeCandidate: SmoothestCandidate | null;
+  signalMode?: FinalSignalMode;
   nowIso: string;
 }): Promise<FinalSignalDeliveryResult> {
   const {
@@ -61,6 +63,7 @@ export async function deliverFinalSignalNotification(args: {
     plannedStartTime,
     winPlaceCandidate,
     placeCandidate,
+    signalMode = "LEGACY",
     nowIso,
   } = args;
 
@@ -75,6 +78,7 @@ export async function deliverFinalSignalNotification(args: {
     raceDate,
     trackId,
     raceNumber,
+    signalMode,
   });
 
   const notification = buildFinalSignalNotification({
@@ -84,6 +88,7 @@ export async function deliverFinalSignalNotification(args: {
     raceNumber,
     winPlaceCandidate,
     placeCandidate,
+    signalMode,
   });
 
   if (!notification) {
@@ -149,8 +154,14 @@ export async function deliverFinalSignalNotification(args: {
 
   const claimPayload = {
     notification_key: notificationKey,
-    notification_type: "FINAL_SIGNAL",
-    rule_version: FINAL_SIGNAL_NOTIFICATION_VERSION,
+    notification_type:
+      signalMode === "RESEARCH_TRIAL"
+        ? "RESEARCH_TRIAL_SIGNAL"
+        : "FINAL_SIGNAL",
+    rule_version:
+      notificationVersionForMode(
+        signalMode,
+      ),
     race_id: raceId,
     race_date: raceDate,
     track_id: trackId,
@@ -167,6 +178,7 @@ export async function deliverFinalSignalNotification(args: {
     subscriptions_failed: 0,
     payload_json: {
       ...notification,
+      signalMode,
       winPlaceCandidate,
       placeCandidate,
     },
