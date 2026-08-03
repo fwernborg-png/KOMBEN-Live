@@ -1155,7 +1155,8 @@ export function ResearchHistoryPanel() {
     rows.filter(
       (row) =>
         row.betVoid ||
-        row.finishPositionOfficial !== null,
+        row.resultStatus === "OFFICIAL" ||
+        row.resultStatus === "VOID",
     ).length;
 
   const dataQualityPercent =
@@ -2362,7 +2363,7 @@ export function ResearchHistoryPanel() {
           </strong>
 
           <small>
-            {rows.length} lopp · {dataQualityPercent} % kompletta
+            {rows.length} lopp · {dataQualityPercent} % resultat klara
           </small>
         </div>
       </div>
