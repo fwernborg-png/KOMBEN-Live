@@ -17,7 +17,7 @@ describe(
   "researchResultBackfill",
   () => {
     it(
-      "hämtar äldre lopp utan resultat och färdigställer dem grupperade per datum",
+      "tar med delresultat och roterar valda äldre lopp innan de behandlas",
       async () => {
         const pendingRows = [
           {
@@ -62,7 +62,7 @@ describe(
             archive_status:
               "INCOMPLETE",
 
-            archived_result_count: null,
+            archived_result_count: 4,
           },
           {
             race_key:
@@ -88,6 +88,12 @@ describe(
           },
         ];
 
+        const orderedBy:
+          string[] = [];
+
+        const touchedRaceKeys:
+          string[] = [];
+
         const query = {
           select() {
             return this;
@@ -97,15 +103,17 @@ describe(
             return this;
           },
 
-          or() {
-            return this;
-          },
-
           lt() {
             return this;
           },
 
-          order() {
+          order(
+            field: string,
+          ) {
+            orderedBy.push(
+              field,
+            );
+
             return this;
           },
 
@@ -125,7 +133,40 @@ describe(
               "research_races",
             );
 
-            return query;
+            return {
+              select() {
+                return query.select();
+              },
+
+              update(
+                values:
+                  Record<string, unknown>,
+              ) {
+                expect(values).toEqual({
+                  updated_at:
+                    "2026-08-01T10:00:00.000Z",
+                });
+
+                return {
+                  async in(
+                    column: string,
+                    values: string[],
+                  ) {
+                    expect(column).toBe(
+                      "race_key",
+                    );
+
+                    touchedRaceKeys.push(
+                      ...values,
+                    );
+
+                    return {
+                      error: null,
+                    };
+                  },
+                };
+              },
+            };
           },
         } as unknown as SupabaseClient;
 
@@ -184,6 +225,21 @@ describe(
 
             completeDate,
           });
+
+        expect(orderedBy).toEqual([
+          "updated_at",
+          "race_date",
+          "planned_start_time",
+        ]);
+
+        expect(
+          touchedRaceKeys,
+        ).toEqual(
+          pendingRows.map(
+            (row) =>
+              row.race_key,
+          ),
+        );
 
         expect(loadRace).toHaveBeenCalledTimes(
           3,
