@@ -1752,3 +1752,432 @@ button { cursor: pointer; }
     flex-wrap: wrap;
   }
 }
+
+/* PLATSJÄGAREN COMPACT RESPONSIVE LAYOUT V2 */
+
+.place-app-page {
+  padding: 10px 6px !important;
+}
+
+.place-app-card {
+  padding: 10px !important;
+  border-radius: 16px !important;
+}
+
+.top-nav-shell {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "headline toolbar"
+    "tabs tabs";
+  align-items: end;
+  gap: 5px 10px;
+  margin: -10px -10px 7px;
+  padding: 6px 9px 4px;
+}
+
+.top-nav-shell .app-headline {
+  grid-area: headline;
+  min-width: 0;
+  align-items: center;
+}
+
+.top-nav-shell .top-toolbar-row {
+  grid-area: toolbar;
+  justify-content: flex-end;
+}
+
+.top-nav-shell .top-nav-tabs {
+  grid-area: tabs;
+  display: flex;
+  grid-template-columns: none;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.top-nav-shell .top-nav-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.top-nav-shell .top-nav-tab {
+  flex: 0 0 auto;
+  min-height: 27px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.tab-section > .track-tabs {
+  display: none;
+}
+
+.strategy-selection-card,
+.compact-signal-card {
+  padding: 9px;
+}
+
+.strategy-card-heading {
+  margin-bottom: 4px;
+}
+
+.strategy-empty-state {
+  padding: 2px 0;
+  line-height: 1.3;
+}
+
+.lock-time-card {
+  padding: 8px 10px;
+}
+
+.refresh-race-primary,
+.indicator-help-card summary {
+  min-height: 38px;
+}
+
+@media (max-width: 900px) {
+  .top-nav-shell {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "headline"
+      "toolbar"
+      "tabs";
+  }
+
+  .race-hero-side {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .place-app-page {
+    padding: 4px 2px !important;
+  }
+
+  .place-app-card {
+    padding: 6px !important;
+    border-radius: 12px !important;
+  }
+
+  .top-nav-shell {
+    margin: -6px -6px 5px;
+    padding: 5px 6px 4px;
+  }
+
+  .top-nav-shell .app-headline {
+    min-height: 27px;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .app-title-compact {
+    font-size: 17px;
+  }
+
+  .top-nav-shell .top-status-group {
+    flex-wrap: nowrap;
+    margin-left: auto;
+  }
+
+  .top-nav-shell .top-status-text {
+    display: none;
+  }
+
+  .top-nav-shell .top-status-group button {
+    width: 31px;
+    min-width: 31px;
+    padding: 0 !important;
+    overflow: hidden;
+    font-size: 0 !important;
+  }
+
+  .top-nav-shell .top-status-group button::before {
+    content: "🔔";
+    font-size: 14px;
+  }
+
+  .top-nav-shell .top-toolbar-row {
+    flex-direction: row;
+    align-items: end;
+  }
+
+  .top-nav-shell .top-toolbar-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .top-nav-shell .toolbar-field > span {
+    display: none;
+  }
+
+  .top-nav-shell input,
+  .top-nav-shell button {
+    min-height: 32px !important;
+    height: 32px !important;
+  }
+
+  .top-nav-shell .top-toolbar-controls > button:nth-of-type(2) {
+    display: none;
+  }
+
+  .top-nav-shell .top-nav-tab {
+    min-height: 28px !important;
+    height: 28px !important;
+    font-size: 11px !important;
+  }
+
+  .race-hero-bar {
+    display: none;
+  }
+
+  .tab-section {
+    gap: 7px;
+  }
+
+  .race-toolbar {
+    gap: 6px;
+    padding: 7px;
+  }
+
+  .selector-panels {
+    gap: 6px;
+  }
+
+  .selector-panel {
+    padding: 7px;
+    border-radius: 10px;
+  }
+
+  .race-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px 8px;
+  }
+
+  .race-status-grid span {
+    font-size: 8px;
+  }
+
+  .race-status-grid strong {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+  }
+
+  .race-side-panel {
+    gap: 6px;
+  }
+
+  .strategy-card-heading .side-card-title {
+    font-size: 13px;
+  }
+
+  .strategy-card-icon {
+    width: 23px;
+    height: 23px;
+    font-size: 16px;
+  }
+
+  .strategy-empty-state {
+    font-size: 11px;
+  }
+
+  .signal-status-symbol {
+    width: 31px;
+    height: 31px;
+    font-size: 24px;
+  }
+
+  .compact-signal-main .side-card-title {
+    font-size: 15px;
+  }
+
+  .signal-reason {
+    margin-top: 2px;
+    font-size: 11px;
+  }
+
+  .compact-row-button {
+    min-height: 59px;
+    padding-block: 5px;
+  }
+
+  .footer-compact {
+    display: none;
+  }
+}
+
+/* PLATSJÄGAREN MOBILE WIDTH FIX V3 */
+
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.place-app-page,
+.place-app-card {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@media (max-width: 720px) {
+  .top-nav-shell {
+    width: auto;
+    max-width: none;
+    overflow: hidden;
+  }
+
+  .top-nav-shell .app-headline,
+  .top-nav-shell .top-toolbar-row,
+  .top-nav-shell .top-toolbar-controls {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .top-nav-shell .app-headline {
+    display: flex;
+  }
+
+  .top-nav-shell .top-status-group {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .top-nav-shell .toolbar-field {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .top-nav-shell .top-toolbar-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .top-nav-shell .top-nav-tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1px;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .top-nav-shell .top-nav-tab {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 2px !important;
+    overflow: hidden;
+    font-size: 9px !important;
+    text-overflow: clip;
+  }
+
+  .race-toolbar,
+  .selector-panels,
+  .selector-panel,
+  .race-layout,
+  .race-main-panel,
+  .race-side-panel {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .track-tabs,
+  .race-chip-row {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 430px) {
+  .race-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* PLATSJÄGAREN FINAL MOBILE FIT V4 */
+
+@media (max-width: 720px) {
+  .top-nav-shell {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 0 5px;
+    padding: 5px 6px 4px;
+  }
+
+  .top-nav-shell *,
+  .race-toolbar *,
+  .selector-panels * {
+    box-sizing: border-box;
+  }
+
+  .top-nav-shell .app-headline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .top-nav-shell .top-status-group {
+    justify-self: end;
+    width: auto;
+    max-width: 78px;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .top-nav-shell .top-status-group button {
+    flex: 0 0 31px;
+  }
+
+  .top-nav-shell .live-pill {
+    flex: 0 0 auto;
+    padding-inline: 7px;
+    font-size: 9px;
+  }
+
+  .top-nav-shell .top-toolbar-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .top-nav-shell .top-toolbar-controls > button:first-of-type {
+    min-width: 94px;
+    padding-inline: 9px !important;
+    font-size: 11px !important;
+  }
+
+  .top-nav-shell .top-nav-tabs {
+    width: 100%;
+    max-width: 100%;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .top-nav-shell .top-nav-tab {
+    min-width: 0 !important;
+    max-width: 100%;
+    padding-inline: 1px !important;
+    font-size: 8.5px !important;
+    white-space: nowrap;
+  }
+
+  .race-toolbar,
+  .selector-panels,
+  .race-status-grid,
+  .race-side-panel {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .track-tabs,
+  .race-chip-row {
+    width: 100%;
+    max-width: 100%;
+  }
+}

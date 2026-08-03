@@ -1531,3 +1531,174 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* PLATSJÄGAREN COMPACT RESEARCH LAYOUT V2 */
+
+.research-dashboard-light {
+  padding: 12px;
+}
+
+.research-dashboard-hero {
+  margin: -12px -12px 10px;
+  padding: 14px 16px;
+}
+
+.research-filter-summary-bar {
+  margin-bottom: 9px;
+  padding: 7px 9px;
+}
+
+.research-dashboard-light .research-filter-panel,
+.research-dashboard-light .research-filter-section {
+  padding: 9px;
+}
+
+.research-dashboard-light input,
+.research-dashboard-light select {
+  min-height: 35px;
+}
+
+@media (max-width: 760px) {
+  .research-dashboard-light {
+    padding: 7px;
+  }
+
+  .research-dashboard-hero {
+    align-items: center;
+    flex-direction: row;
+    gap: 7px;
+    margin: -7px -7px 7px;
+    padding: 9px 10px;
+  }
+
+  .research-dashboard-hero .research-kicker,
+  .research-dashboard-hero .research-subtitle {
+    display: none;
+  }
+
+  .research-dashboard-hero .research-title {
+    font-size: 20px;
+  }
+
+  .research-dashboard-actions {
+    grid-template-columns: auto auto;
+    gap: 5px;
+    margin-left: auto;
+  }
+
+  .research-dashboard-actions button {
+    min-height: 31px;
+    padding-inline: 7px;
+    font-size: 9px;
+  }
+
+  .research-filter-summary-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 6px 7px;
+  }
+
+  .research-active-filter-chips {
+    display: none;
+  }
+
+  .research-dashboard-light .research-filter-panel {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 7px;
+    padding: 7px;
+  }
+
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(n) {
+    grid-column: 1;
+    margin: 0;
+    padding: 8px;
+  }
+
+  .research-dashboard-light
+  .research-filter-grid,
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(2)
+  .research-filter-grid,
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(3)
+  .research-filter-grid,
+  .research-dashboard-light
+  .research-indicator-filter-section
+  .research-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .research-dashboard-light input,
+  .research-dashboard-light select {
+    min-height: 33px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 370px) {
+  .research-dashboard-light
+  .research-filter-grid,
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(2)
+  .research-filter-grid,
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(3)
+  .research-filter-grid,
+  .research-dashboard-light
+  .research-indicator-filter-section
+  .research-filter-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* PLATSJÄGAREN FINAL RESEARCH MOBILE FIT V4 */
+
+@media (max-width: 760px) {
+  .research-dashboard-light {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .research-dashboard-hero {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 0 7px;
+    padding: 9px 10px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .research-dashboard-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .research-dashboard-actions button {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 5px;
+  }
+
+  .research-filter-summary-bar,
+  .research-sample-box,
+  .research-dashboard-section-heading,
+  .research-summary-grid {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .research-sample-box,
+  .research-sample-box p,
+  .research-sample-box span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
