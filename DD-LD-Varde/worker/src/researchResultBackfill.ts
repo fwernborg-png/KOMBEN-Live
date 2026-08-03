@@ -139,15 +139,15 @@ export async function backfillMissingResearchResults<
       "archive_status",
       "COMPLETE",
     )
-    .or(
-      [
-        "archived_result_count.is.null",
-        "archived_result_count.eq.0",
-      ].join(","),
-    )
     .lt(
       "race_date",
       args.currentRaceDate,
+    )
+    .order(
+      "updated_at",
+      {
+        ascending: true,
+      },
     )
     .order(
       "race_date",
@@ -178,6 +178,30 @@ export async function backfillMissingResearchResults<
 
   summary.racesSelected =
     rows.length;
+
+  if (rows.length > 0) {
+    const {
+      error: rotationError,
+    } = await args.supabase
+      .from("research_races")
+      .update({
+        updated_at:
+          args.nowIso,
+      })
+      .in(
+        "race_key",
+        rows.map(
+          (row) =>
+            row.race_key,
+        ),
+      );
+
+    if (rotationError) {
+      throw new Error(
+        `Kunde inte rotera forskningskön: ${rotationError.message}`,
+      );
+    }
+  }
 
   const racesByDate =
     new Map<
