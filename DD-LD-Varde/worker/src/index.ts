@@ -41,6 +41,9 @@ import {
   completeResearchRacesForDay,
 } from "./researchCompletion";
 import {
+  backfillMissingResearchResults,
+} from "./researchResultBackfill";
+import {
   extractVpPlaceOddsRawByRunner,
   mergeVpPayloadIntoWinnerPayload,
 } from "../../src/atg/vpPayload";
@@ -1451,6 +1454,13 @@ async function runCron(env: Env) {
     researchCompletionFailures: 0,
     researchCompletionErrors: [] as string[],
 
+    researchResultBackfillRacesSelected: 0,
+    researchResultBackfillRacesFetched: 0,
+    researchResultBackfillDatesCompleted: 0,
+    researchResultBackfillRacesCompleted: 0,
+    researchResultBackfillFailures: 0,
+    researchResultBackfillErrors: [] as string[],
+
     researchPlacePayoutBackfillRacesChecked: 0,
     researchPlacePayoutBackfillRacesUpdated: 0,
     researchPlacePayoutsBackfilled: 0,
@@ -1738,6 +1748,138 @@ async function runCron(env: Env) {
 
     summary.researchCompletionErrors =
       researchCompletionSummary.errors;
+
+    try {
+      const resultBackfill =
+        await backfillMissingResearchResults<{
+          track: Track;
+          race: Race;
+        }>({
+          enabled:
+            researchArchiveEnabled,
+
+          supabase,
+
+          currentRaceDate:
+            raceDate,
+
+          nowIso,
+
+          maxRaces: 3,
+
+          loadRace:
+            async (row) => {
+              const meetingRef:
+                MeetingRaceRef = {
+                  raceNumber:
+                    row.race_number,
+
+                  raceId:
+                    row.source_race_id,
+
+                  startTime:
+                    row.planned_start_time ??
+                    undefined,
+
+                  eventId: null,
+                  meetingId: null,
+                  meetingName: null,
+
+                  products: [],
+
+                  rawJson: {
+                    resultBackfill: true,
+                    raceKey:
+                      row.race_key,
+                  },
+                };
+
+              const race =
+                await fetchRaceForTrack({
+                  apiBaseUrl,
+
+                  raceDate:
+                    row.race_date,
+
+                  trackId:
+                    row.track_id,
+
+                  raceNumber:
+                    row.race_number,
+
+                  meetingRef,
+
+                  signal:
+                    runController.signal,
+                });
+
+              if (!race) {
+                return null;
+              }
+
+              return {
+                track: {
+                  id:
+                    row.track_id,
+
+                  name:
+                    row.track_name,
+
+                  countryCode:
+                    "SE",
+                },
+
+                race,
+              };
+            },
+
+          completeDate:
+            async ({
+              raceDate:
+                backfillRaceDate,
+
+              races,
+            }) =>
+              completeResearchRacesForDay({
+                enabled: true,
+
+                supabase,
+
+                raceDate:
+                  backfillRaceDate,
+
+                races,
+
+                nowIso,
+              }),
+        });
+
+      summary.researchResultBackfillRacesSelected =
+        resultBackfill.racesSelected;
+
+      summary.researchResultBackfillRacesFetched =
+        resultBackfill.racesFetched;
+
+      summary.researchResultBackfillDatesCompleted =
+        resultBackfill.datesCompleted;
+
+      summary.researchResultBackfillRacesCompleted =
+        resultBackfill.racesCompleted;
+
+      summary.researchResultBackfillFailures =
+        resultBackfill.failedRaces;
+
+      summary.researchResultBackfillErrors =
+        resultBackfill.errors;
+    } catch (error) {
+      summary.researchResultBackfillFailures += 1;
+
+      summary.researchResultBackfillErrors.push(
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
 
     try {
       const placePayoutBackfill =
