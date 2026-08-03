@@ -2006,3 +2006,93 @@ button { cursor: pointer; }
     display: none;
   }
 }
+
+/* PLATSJÄGAREN MOBILE WIDTH FIX V3 */
+
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.place-app-page,
+.place-app-card {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@media (max-width: 720px) {
+  .top-nav-shell {
+    width: auto;
+    max-width: none;
+    overflow: hidden;
+  }
+
+  .top-nav-shell .app-headline,
+  .top-nav-shell .top-toolbar-row,
+  .top-nav-shell .top-toolbar-controls {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .top-nav-shell .app-headline {
+    display: flex;
+  }
+
+  .top-nav-shell .top-status-group {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .top-nav-shell .toolbar-field {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .top-nav-shell .top-toolbar-controls {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .top-nav-shell .top-nav-tabs {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1px;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .top-nav-shell .top-nav-tab {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 2px !important;
+    overflow: hidden;
+    font-size: 9px !important;
+    text-overflow: clip;
+  }
+
+  .race-toolbar,
+  .selector-panels,
+  .selector-panel,
+  .race-layout,
+  .race-main-panel,
+  .race-side-panel {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .track-tabs,
+  .race-chip-row {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 430px) {
+  .race-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
