@@ -2,11 +2,21 @@ import { createClient } from "@supabase/supabase-js";
 import { normalizeAtgStartTime, parseAtgStartTimeMs } from "./atgTime";
 import { parsePushSubscription } from "./pushSubscription";
 import { deliverFinalSignalNotification } from "./finalSignalPushDelivery";
+import {
+  evaluateResearchTrialSignals,
+  isResearchTrialSignalDate,
+} from "./researchTrialSignals";
 import { PLACE_RULE_CONFIG_V1 } from "../../src/placeModel/config";
 import { evaluatePlaceModelAtLock } from "../../src/placeModel/engine";
 import { fetchHorseGallopPercentWithRetry } from "./gallopRetry";
 import { buildModelBetFromEvaluation, settleModelBet } from "../../src/placeModel/workflow";
-import type { OddsPoint, PlaceBet, PlaceEvaluation, PlaceRunnerInput } from "../../src/placeModel/types";
+import type {
+  OddsPoint,
+  PlaceBet,
+  PlaceEvaluation,
+  PlaceRunnerInput,
+  SmoothestCandidate,
+} from "../../src/placeModel/types";
 import {
   WIN_PLACE_RULE_CONFIG_V1,
   getWinPlacePlannedLockTimeMs,
@@ -14,6 +24,7 @@ import {
 } from "../../src/winPlaceModel/config";
 import { evaluateWinPlaceModelAtLock } from "../../src/winPlaceModel/engine";
 import type {
+  WinPlaceCandidate,
   WinPlaceEvaluation,
   WinPlaceRunnerInput,
 } from "../../src/winPlaceModel/types";
@@ -1375,6 +1386,132 @@ async function loadPlaceOddsContext(args: {
   };
 }
 
+function buildResearchTrialRunnerInputs(
+  args: {
+    context: PlaceOddsContext;
+    nowMs: number;
+  },
+) {
+  const {
+    context,
+    nowMs,
+  } = args;
+
+  const indicatorsByRunner =
+    computeIndicatorsAndStrength({
+      runners:
+        context.trendLite,
+    });
+
+  const runners:
+    WinPlaceRunnerInput[] =
+      context.trendLite.map(
+        (runner) => {
+          const history =
+            (
+              context.byRunner.get(
+                runner.number,
+              ) ?? []
+            )
+              .filter(
+                (point) =>
+                  point.timestamp >=
+                    context.window
+                      .collectionStartMs &&
+                  point.timestamp <=
+                    nowMs,
+              )
+              .sort(
+                (a, b) =>
+                  a.timestamp -
+                  b.timestamp,
+              );
+
+          const indicators =
+            indicatorsByRunner.get(
+              runner.number,
+            ) ?? {
+              strength: 0,
+              indicatorsGreen: [],
+            };
+
+          return {
+            number:
+              runner.number,
+
+            name:
+              runner.name,
+
+            horseId:
+              runner.horseId,
+
+            startLane:
+              runner.startLane,
+
+            scratched:
+              runner.scratched,
+
+            currentWinOddsDecimal:
+              toDecimalOdds(
+                runner.oddsRaw,
+              ),
+
+            indicatorsGreen:
+              indicators
+                .indicatorsGreen,
+
+            strength:
+              indicators.strength,
+
+            oddsHistory:
+              history,
+          };
+        },
+      );
+
+  const incompleteRunnerNumbers =
+    runners
+      .filter(
+        (runner) =>
+          !runner.scratched,
+      )
+      .filter(
+        (runner) => {
+          if (
+            runner.oddsHistory.length <
+            5
+          ) {
+            return true;
+          }
+
+          if (
+            runner
+              .currentWinOddsDecimal ===
+            null
+          ) {
+            return true;
+          }
+
+          return (
+            runner.oddsHistory[0]
+              .timestamp >
+            context.window
+              .collectionStartMs +
+              2 * 60_000
+          );
+        },
+      )
+      .map(
+        (runner) =>
+          runner.number,
+      );
+
+  return {
+    runners,
+    incompleteRunnerNumbers,
+  };
+}
+
 async function runCron(env: Env) {
   const startMs = Date.now();
   const nowIso = new Date(startMs).toISOString();
@@ -2464,6 +2601,138 @@ async function runCron(env: Env) {
         }
 
         try {
+          if (
+            isResearchTrialSignalDate(
+              raceDate,
+            )
+          ) {
+            const context =
+              await loadPlaceOddsContext({
+                supabase,
+                race,
+                nowMs:
+                  startMs,
+              });
+
+            if (!context) {
+              continue;
+            }
+
+            const trialInput =
+              buildResearchTrialRunnerInputs({
+                context,
+                nowMs:
+                  startMs,
+              });
+
+            const plannedLockTimeMs =
+              getWinPlacePlannedLockTimeMs(
+                plannedStartTime,
+                WIN_PLACE_RULE_CONFIG_V1,
+              );
+
+            const hasFreshCurrentOddsPoint =
+              context.latestPointMs !==
+                null &&
+              Math.abs(
+                plannedLockTimeMs -
+                  context.latestPointMs,
+              ) <= lockGraceMs;
+
+            const trialSignals =
+              evaluateResearchTrialSignals({
+                raceDate,
+
+                trackName:
+                  track.name,
+
+                meetingName:
+                  race.meetingName,
+
+                raceStatus:
+                  race.status,
+
+                isMonte:
+                  race.isMonte,
+
+                runners:
+                  trialInput.runners,
+
+                hasCompleteOddsHistory:
+                  trialInput
+                    .incompleteRunnerNumbers
+                    .length === 0,
+
+                hasFreshCurrentOddsPoint,
+              });
+
+            const winPlaceCandidate:
+              WinPlaceCandidate | null =
+                trialSignals
+                  .winnerCandidate;
+
+            const placeCandidate:
+              SmoothestCandidate | null =
+                trialSignals
+                  .placeCandidate;
+
+            if (
+              !winPlaceCandidate &&
+              !placeCandidate
+            ) {
+              continue;
+            }
+
+            const delivery =
+              await deliverFinalSignalNotification({
+                supabase,
+                vapid,
+
+                raceDate,
+                raceId:
+                  race.id,
+
+                trackId:
+                  track.id,
+
+                trackName:
+                  track.name,
+
+                raceNumber:
+                  race.raceNumber,
+
+                plannedStartTime,
+                winPlaceCandidate,
+                placeCandidate,
+
+                signalMode:
+                  "RESEARCH_TRIAL",
+
+                nowIso,
+              });
+
+            if (
+              delivery.claimed
+            ) {
+              summary
+                .notificationsClaimed +=
+                1;
+            }
+
+            summary.notificationsSent +=
+              delivery.sent;
+
+            summary
+              .notificationSubscriptionsAttempted +=
+              delivery.attempted;
+
+            summary
+              .notificationSubscriptionsFailed +=
+              delivery.failed;
+
+            continue;
+          }
+
           const [
             winPlaceResult,
             placeResult,
