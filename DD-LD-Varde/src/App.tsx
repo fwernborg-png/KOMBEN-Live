@@ -4988,7 +4988,7 @@ export default function App() {
                 </div>
               </div>
               <div className="race-hero-side">
-                <strong>Platssignal låses 1 min före start</strong>
+                <strong>Platssignal låses 90 sek före start</strong>
                 <span>Regelversion: {PLACE_RULE_CONFIG_V1.ruleVersion}</span>
                 <span>Första mätning: {formatTime(firstOddsRegisteredAt ?? undefined)} · Nu: {formatClockTime(nowMs)} · {minutesToLock === null ? "-" : `${minutesToLock} min kvar`}</span>
               </div>
@@ -5686,8 +5686,11 @@ export default function App() {
 
   if (ACTIVE_PLACE_UI_ONLY) {
     return (
-      <main style={s.page}>
-        <section style={{ ...s.card, maxWidth: 1480, padding: 18 }}>
+      <main className="place-app-page" style={s.page}>
+        <section
+          className="place-app-card"
+          style={{ ...s.card, maxWidth: 1480, padding: 18 }}
+        >
           <div className="top-nav-shell">
             <div className="app-headline">
               <div>

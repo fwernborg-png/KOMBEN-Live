@@ -839,7 +839,7 @@ export function ResearchHistoryPanel() {
   const [
     filtersOpen,
     setFiltersOpen,
-  ] = useState(true);
+  ] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
