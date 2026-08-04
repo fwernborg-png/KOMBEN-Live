@@ -2181,3 +2181,194 @@ body,
     max-width: 100%;
   }
 }
+
+
+/* NEXT TRACK AND FINISHED RACES */
+
+.race-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.selector-track-chip {
+  min-width: 92px;
+}
+
+.selector-track-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.next-race-badge,
+.next-race-mark,
+.race-finished-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.next-race-badge {
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 224, 128, 0.78);
+  border-radius: 999px;
+  background: rgba(255, 209, 102, 0.19);
+  color: #fff1ad;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.next-race-mark {
+  min-height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 224, 128, 0.2);
+  color: #fff1ad;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+}
+
+.race-finished-mark {
+  color: #fff0f2;
+  font-size: 11px;
+}
+
+.selector-track-chip.is-next-track {
+  border-color: rgba(255, 209, 102, 0.96);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(120, 96, 29, 0.84),
+      rgba(55, 48, 22, 0.9)
+    );
+  color: #fff7cf;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 224, 128, 0.42),
+    0 0 17px rgba(255, 209, 102, 0.43);
+  animation: next-track-pulse 2.8s ease-in-out infinite;
+}
+
+.selector-track-chip.is-next-track.is-active {
+  border-color: rgba(255, 224, 128, 1);
+  box-shadow:
+    inset 0 0 0 2px rgba(85, 232, 154, 0.72),
+    0 0 20px rgba(255, 209, 102, 0.52);
+}
+
+.race-chip.is-next-race {
+  border-color: rgba(255, 224, 128, 1);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(141, 105, 25, 0.92),
+      rgba(71, 54, 20, 0.94)
+    );
+  color: #fff8d6;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 235, 160, 0.55),
+    0 0 21px rgba(255, 209, 102, 0.55);
+  animation: next-race-pulse 2.5s ease-in-out infinite;
+}
+
+.race-chip.is-next-race.is-active {
+  border-color: rgba(255, 235, 160, 1);
+  box-shadow:
+    inset 0 0 0 2px rgba(85, 232, 154, 0.76),
+    0 0 24px rgba(255, 209, 102, 0.62);
+}
+
+.race-chip.is-finished {
+  border-color: rgba(255, 125, 138, 0.68);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(118, 29, 40, 0.84),
+      rgba(72, 21, 29, 0.9)
+    );
+  color: #ffd9dd;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 125, 138, 0.16);
+  animation: none;
+}
+
+.race-chip.is-finished:hover {
+  border-color: rgba(255, 156, 166, 0.92);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(139, 35, 48, 0.9),
+      rgba(83, 24, 33, 0.94)
+    );
+}
+
+.race-chip.is-finished.is-active {
+  border-color: rgba(255, 156, 166, 0.96);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(128, 31, 44, 0.92),
+      rgba(76, 22, 31, 0.96)
+    );
+  box-shadow:
+    inset 0 0 0 2px rgba(85, 232, 154, 0.76),
+    0 0 13px rgba(85, 232, 154, 0.25);
+}
+
+@keyframes next-track-pulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 224, 128, 0.4),
+      0 0 11px rgba(255, 209, 102, 0.32);
+  }
+
+  50% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 235, 160, 0.62),
+      0 0 21px rgba(255, 209, 102, 0.58);
+  }
+}
+
+@keyframes next-race-pulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 235, 160, 0.48),
+      0 0 14px rgba(255, 209, 102, 0.4);
+  }
+
+  50% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 244, 195, 0.76),
+      0 0 25px rgba(255, 209, 102, 0.7);
+  }
+}
+
+@media (max-width: 720px) {
+  .race-chip {
+    min-height: 44px;
+  }
+
+  .selector-track-chip {
+    min-width: max-content;
+    max-width: 190px;
+  }
+
+  .next-race-badge {
+    padding-inline: 5px;
+    font-size: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selector-track-chip.is-next-track,
+  .race-chip.is-next-race {
+    animation: none;
+  }
+}

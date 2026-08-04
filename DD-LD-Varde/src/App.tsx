@@ -41,6 +41,7 @@ import type {
 import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 import { ResearchHistoryPanel } from "./researchHistory/ResearchHistoryPanel";
 import { mergeVpPayloadIntoWinnerPayload } from "./atg/vpPayload";
+import { findNextUpcomingRace, isRaceFinished } from "./raceNavigation";
 
 type Track = {
   id: number;
@@ -2077,6 +2078,16 @@ export default function App() {
   const selectableTracks = useMemo(
     () => tracksByCountry[countryFilter],
     [tracksByCountry, countryFilter],
+  );
+
+  const nextUpcomingRace = useMemo(
+    () =>
+      findNextUpcomingRace({
+        tracks,
+        racesByTrack,
+        nowMs,
+      }),
+    [tracks, racesByTrack, nowMs],
   );
 
   const selectedRace = useMemo(
@@ -4999,16 +5010,44 @@ export default function App() {
                 <div className="selector-panel">
                   <span className="selector-label">Bana</span>
                   <div className="race-chip-row">
-                    {tracks.map((track) => (
-                      <button
-                        key={`toolbar-${track.id}`}
-                        type="button"
-                        className={`race-chip selector-track-chip ${String(track.id) === trackId ? "is-active" : ""}`}
-                        onClick={() => selectTrack(String(track.id))}
-                      >
-                        {track.name}
-                      </button>
-                    ))}
+                    {tracks.map((track) => {
+                      const nextTrackRace =
+                        nextUpcomingRace?.trackId === track.id
+                          ? nextUpcomingRace
+                          : null;
+
+                      const isActiveTrack =
+                        String(track.id) === trackId;
+
+                      return (
+                        <button
+                          key={`toolbar-${track.id}`}
+                          type="button"
+                          className={`race-chip selector-track-chip ${isActiveTrack ? "is-active" : ""} ${nextTrackRace ? "is-next-track" : ""}`}
+                          onClick={() => selectTrack(String(track.id))}
+                          title={
+                            nextTrackRace
+                              ? `Bana ${track.name}, nästa lopp ${nextTrackRace.raceNumber} klockan ${formatTime(nextTrackRace.startTime)}`
+                              : `Bana ${track.name}`
+                          }
+                          aria-label={
+                            nextTrackRace
+                              ? `Bana ${track.name}, nästa lopp ${nextTrackRace.raceNumber} klockan ${formatTime(nextTrackRace.startTime)}`
+                              : `Bana ${track.name}`
+                          }
+                        >
+                          <span className="selector-track-name">
+                            {track.name}
+                          </span>
+
+                          {nextTrackRace ? (
+                            <span className="next-race-badge">
+                              NÄSTA {formatTime(nextTrackRace.startTime)}
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 <div className="selector-panel">
@@ -5020,15 +5059,66 @@ export default function App() {
                       const mappedRace = selectedTrackRaces.find((race) =>
                         (raceRefId && race.id === raceRefId) || race.raceNumber === number,
                       );
-                      const raceIdentity = mappedRace?.id ?? String(number);
+                      const raceIdentity =
+                        mappedRace?.id ?? String(number);
+
+                      const finished =
+                        mappedRace
+                          ? isRaceFinished(mappedRace)
+                          : false;
+
+                      const nextRace =
+                        nextUpcomingRace?.trackId === selectedTrack.id &&
+                        (
+                          nextUpcomingRace.raceId ===
+                            (mappedRace?.id ?? raceRefId) ||
+                          nextUpcomingRace.raceNumber === number
+                        )
+                          ? nextUpcomingRace
+                          : null;
+
+                      const isActiveRace =
+                        String(number) === raceNumber;
+
+                      const raceLabel = finished
+                        ? `Lopp ${number}, kört`
+                        : nextRace
+                          ? `Lopp ${number}, nästa lopp klockan ${formatTime(nextRace.startTime)}`
+                          : `Lopp ${number}`;
+
                       return (
                         <button
                           key={`${selectedTrack.id}-${number}`}
                           type="button"
-                          className={`race-chip ${String(number) === raceNumber ? "is-active" : ""}`}
-                          onClick={() => selectRaceForTrack(selectedTrack, raceIdentity)}
+                          className={`race-chip ${isActiveRace ? "is-active" : ""} ${finished ? "is-finished" : ""} ${nextRace ? "is-next-race" : ""}`}
+                          onClick={() =>
+                            selectRaceForTrack(
+                              selectedTrack,
+                              raceIdentity,
+                            )
+                          }
+                          title={raceLabel}
+                          aria-label={raceLabel}
                         >
-                          {number}
+                          <span>{number}</span>
+
+                          {finished ? (
+                            <span
+                              className="race-finished-mark"
+                              aria-hidden="true"
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+
+                          {nextRace ? (
+                            <span
+                              className="next-race-mark"
+                              aria-hidden="true"
+                            >
+                              NÄSTA
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })}
