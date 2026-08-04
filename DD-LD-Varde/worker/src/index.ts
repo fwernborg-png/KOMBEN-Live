@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { normalizeAtgStartTime, parseAtgStartTimeMs } from "./atgTime";
 import { parsePushSubscription } from "./pushSubscription";
+import {
+  authorizeAppRequest,
+  isProtectedAppPath,
+} from "./appAuthorization";
 import { deliverFinalSignalNotification } from "./finalSignalPushDelivery";
 import {
   evaluateResearchTrialSignals,
@@ -3131,7 +3135,10 @@ function withCors(headers?: HeadersInit) {
   const result = new Headers(headers);
   result.set("Access-Control-Allow-Origin", "*");
   result.set("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS");
-  result.set("Access-Control-Allow-Headers", "Content-Type");
+  result.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization",
+  );
   return result;
 }
 
@@ -3416,6 +3423,34 @@ export default {
 
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (
+      request.method !== "OPTIONS" &&
+      isProtectedAppPath(
+        url.pathname,
+      )
+    ) {
+      const authorization =
+        await authorizeAppRequest({
+          request,
+
+          supabase:
+            createSupabaseClient(
+              env,
+            ),
+        });
+
+      if (!authorization.ok) {
+        return jsonWithCors(
+          {
+            ok: false,
+            error:
+              authorization.error,
+          },
+          authorization.status,
+        );
+      }
+    }
 
     if (
       url.pathname === ATG_PROXY_PREFIX ||
