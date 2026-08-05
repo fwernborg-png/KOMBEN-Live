@@ -1,20 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
   SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
 } from "./config";
+
 import {
   computeWinPlaceStats,
   type WinPlaceBetRecord,
   type WinPlaceMarket,
   type WinPlaceStats,
 } from "./journal";
-import { loadWinPlaceBetsByDate } from "./repository";
+
+import {
+  loadWinPlaceBetsByRange,
+} from "./repository";
 
 type Props = {
   date: string;
   mode: "journal" | "stats";
 };
+
+type PeriodMode = "DAY" | "TEST_PERIOD";
+
+const TEST_START_DATE = "2026-08-03";
+const TEST_END_DATE = "2026-08-16";
+const REFRESH_INTERVAL_MS = 60_000;
 
 function kronor(oren: number) {
   return new Intl.NumberFormat("sv-SE", {
@@ -22,151 +38,329 @@ function kronor(oren: number) {
   }).format(oren / 100);
 }
 
-function decimal(value: number | null, digits = 1) {
+function decimal(
+  value: number | null,
+  digits = 1,
+) {
   return value === null
     ? "-"
     : value.toFixed(digits).replace(".", ",");
 }
 
-function resultLabel(bet: WinPlaceBetRecord | null) {
+function formatUpdatedAt(value: Date | null) {
+  if (!value) return "Inte hämtad";
+
+  return value.toLocaleTimeString("sv-SE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function resultLabel(
+  bet: WinPlaceBetRecord | null,
+) {
   if (!bet) return "Saknas";
-  if (bet.resultOutcome === "PENDING") return "Väntar";
-  if (bet.resultOutcome === "VOID") return "Void";
+
+  if (bet.resultOutcome === "PENDING") {
+    return "Väntar på resultat";
+  }
+
+  if (bet.resultOutcome === "VOID") {
+    return "Void";
+  }
+
   if (
     bet.resultOutcome === "HIT" &&
     bet.resultStatus === "SAKNAR_ODDS"
   ) {
-    return "Träff – odds saknas";
+    return "Träff – väntar på odds";
   }
 
-  return bet.resultOutcome === "HIT" ? "Träff" : "Miss";
+  return bet.resultOutcome === "HIT"
+    ? "Träff"
+    : "Miss";
 }
 
-function resultColor(bet: WinPlaceBetRecord | null) {
-  if (!bet || bet.resultOutcome === "PENDING") return "#facc15";
-  if (bet.resultOutcome === "VOID") return "#94a3b8";
-  return bet.resultOutcome === "HIT" ? "#4ade80" : "#fb7185";
+function resultClass(
+  bet: WinPlaceBetRecord | null,
+) {
+  if (!bet || bet.resultOutcome === "PENDING") {
+    return "is-pending";
+  }
+
+  if (bet.resultOutcome === "VOID") {
+    return "is-void";
+  }
+
+  return bet.resultOutcome === "HIT"
+    ? "is-hit"
+    : "is-miss";
 }
 
-function strategyLabel(ruleVersion: string) {
-  return ruleVersion === SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion
-    ? "🎉 Smällkaramellen · S2 · odds högst 7,00"
-    : "Mest sänkta · minst 30 % · odds högst 6,00";
+function strategyInformation(
+  ruleVersion: string,
+) {
+  if (
+    ruleVersion ===
+    SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion
+  ) {
+    return {
+      title: "🎉 Smällkaramellen",
+      description:
+        "S2 · näst mest sänkt · vinnarodds högst 7,00",
+      className: "is-smallkaramell",
+    };
+  }
+
+  return {
+    title: "Mest sänkta",
+    description:
+      "Minst 30 % sänkning · vinnarodds högst 6,00",
+    className: "is-most-shortened",
+  };
 }
 
-function StatsCards(args: {
-  title: string;
-  market?: WinPlaceMarket;
-  stats: WinPlaceStats;
+function SummaryCard(args: {
+  label: string;
+  value: string;
+  tone?: "normal" | "positive" | "negative" | "warning";
 }) {
-  const { title, market, stats } = args;
+  const {
+    label,
+    value,
+    tone = "normal",
+  } = args;
 
   return (
-    <div
-      style={{
-        padding: 14,
-        border:
-          market === "WIN"
-            ? "1px solid rgba(250,204,21,.45)"
-            : market === "PLACE"
-              ? "1px solid rgba(74,222,128,.4)"
-              : "1px solid rgba(96,165,250,.45)",
-        borderRadius: 14,
-        background: "rgba(15,23,42,.62)",
-      }}
-    >
-      <h3
-        style={{
-          margin: "0 0 12px",
-          color:
-            market === "WIN"
-              ? "#facc15"
-              : market === "PLACE"
-                ? "#4ade80"
-                : "#60a5fa",
-        }}
-      >
-        {title}
-      </h3>
-
-      <div className="mini-stats-grid">
-        <div className="mini-stat-card"><span>Spel</span><strong>{stats.count}</strong></div>
-        <div className="mini-stat-card"><span>Fastställda</span><strong>{stats.settled}</strong></div>
-        <div className="mini-stat-card"><span>Träffar</span><strong>{stats.hits}</strong></div>
-        <div className="mini-stat-card"><span>Träffprocent</span><strong>{decimal(stats.hitRate)} %</strong></div>
-        <div className="mini-stat-card"><span>Insats</span><strong>{kronor(stats.totalStakeOren)} kr</strong></div>
-        <div className="mini-stat-card"><span>Åter</span><strong>{kronor(stats.totalReturnOren)} kr</strong></div>
-        <div className="mini-stat-card">
-          <span>Netto</span>
-          <strong>{stats.totalNetOren >= 0 ? "+" : ""}{kronor(stats.totalNetOren)} kr</strong>
-        </div>
-        <div className="mini-stat-card"><span>ROI</span><strong>{decimal(stats.roiPct)} %</strong></div>
-      </div>
+    <div className={`signal-summary-card tone-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
 
-export function WinPlaceJournalPanel({ date, mode }: Props) {
-  const [bets, setBets] = useState<WinPlaceBetRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+function StatsBlock(args: {
+  title: string;
+  market?: WinPlaceMarket;
+  stats: WinPlaceStats;
+}) {
+  const {
+    title,
+    market,
+    stats,
+  } = args;
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  return (
+    <section
+      className={`strategy-stats-block ${
+        market === "WIN"
+          ? "is-win"
+          : market === "PLACE"
+            ? "is-place"
+            : "is-total"
+      }`}
+    >
+      <div className="strategy-stats-heading">
+        <strong>{title}</strong>
+        <span>
+          {stats.hits} träffar av {stats.settled} fastställda
+        </span>
+      </div>
 
-    void loadWinPlaceBetsByDate(date, "LIVE")
-      .then((rows) => {
-        if (cancelled) return;
+      <div className="strategy-stats-grid">
+        <SummaryCard
+          label="Spelrader"
+          value={String(stats.count)}
+        />
+
+        <SummaryCard
+          label="Väntande"
+          value={String(stats.pending)}
+          tone={stats.pending ? "warning" : "normal"}
+        />
+
+        <SummaryCard
+          label="Låst insats"
+          value={`${kronor(stats.lockedStakeOren)} kr`}
+        />
+
+        <SummaryCard
+          label="Fastställd insats"
+          value={`${kronor(stats.totalStakeOren)} kr`}
+        />
+
+        <SummaryCard
+          label="Återbetalning"
+          value={`${kronor(stats.totalReturnOren)} kr`}
+        />
+
+        <SummaryCard
+          label="Netto"
+          value={`${
+            stats.totalNetOren >= 0 ? "+" : ""
+          }${kronor(stats.totalNetOren)} kr`}
+          tone={
+            stats.totalNetOren > 0
+              ? "positive"
+              : stats.totalNetOren < 0
+                ? "negative"
+                : "normal"
+          }
+        />
+
+        <SummaryCard
+          label="ROI"
+          value={`${decimal(stats.roiPct)} %`}
+          tone={
+            stats.roiPct > 0
+              ? "positive"
+              : stats.roiPct < 0
+                ? "negative"
+                : "normal"
+          }
+        />
+
+        <SummaryCard
+          label="Träffprocent"
+          value={`${decimal(stats.hitRate)} %`}
+        />
+      </div>
+    </section>
+  );
+}
+
+export function WinPlaceJournalPanel({
+  date,
+  mode,
+}: Props) {
+  const [periodMode, setPeriodMode] =
+    useState<PeriodMode>("DAY");
+
+  const [bets, setBets] =
+    useState<WinPlaceBetRecord[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [refreshing, setRefreshing] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [lastUpdatedAt, setLastUpdatedAt] =
+    useState<Date | null>(null);
+
+  const dateRange = useMemo(() => {
+    if (periodMode === "TEST_PERIOD") {
+      return {
+        from: TEST_START_DATE,
+        to: TEST_END_DATE,
+        label: "3–16 augusti 2026",
+      };
+    }
+
+    return {
+      from: date,
+      to: date,
+      label: date,
+    };
+  }, [date, periodMode]);
+
+  const loadBets = useCallback(
+    async (silent = false) => {
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      try {
+        const rows =
+          await loadWinPlaceBetsByRange(
+            dateRange.from,
+            dateRange.to,
+            "LIVE",
+          );
+
         setBets(rows);
         setError("");
-      })
-      .catch((loadError) => {
-        if (cancelled) return;
-        setBets([]);
+        setLastUpdatedAt(new Date());
+      } catch (loadError) {
         setError(
           loadError instanceof Error
             ? loadError.message
-            : "Kunde inte läsa vinnare- och platsjournalen.",
+            : "Kunde inte läsa speljournalen.",
         );
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [dateRange.from, dateRange.to],
+  );
+
+  useEffect(() => {
+    void loadBets();
+
+    const interval = window.setInterval(() => {
+      void loadBets(true);
+    }, REFRESH_INTERVAL_MS);
 
     return () => {
-      cancelled = true;
+      window.clearInterval(interval);
     };
-  }, [date]);
+  }, [loadBets]);
 
-  const strategyGroups = useMemo(() => {
-    const definitions = [
+  const strategyDefinitions = useMemo(
+    () => [
       {
-        ruleVersion: WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
-        title: "Mest sänkta – vinnare + plats",
-        description: "Minst 30 % sänkning · vinnarodds högst 6,00",
+        ruleVersion:
+          SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
+        title: "🎉 Smällkaramellen",
+        description:
+          "S2 · näst mest sänkt · vinnarodds högst 7,00",
+        className: "is-smallkaramell",
       },
       {
-        ruleVersion: SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
-        title: "🎉 Smällkaramellen – vinnare + plats",
-        description: "S2 · näst mest sänkt · vinnarodds högst 7,00",
+        ruleVersion:
+          WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
+        title: "Mest sänkta",
+        description:
+          "Minst 30 % sänkning · vinnarodds högst 6,00",
+        className: "is-most-shortened",
       },
-    ];
+    ],
+    [],
+  );
 
-    return definitions.map((definition) => {
-      const strategyBets = bets.filter(
-        (bet) => bet.ruleVersion === definition.ruleVersion,
-      );
+  const strategyGroups = useMemo(
+    () =>
+      strategyDefinitions.map((definition) => {
+        const strategyBets = bets.filter(
+          (bet) =>
+            bet.ruleVersion ===
+            definition.ruleVersion,
+        );
 
-      return {
-        ...definition,
-        bets: strategyBets,
-        winStats: computeWinPlaceStats(strategyBets, "WIN"),
-        placeStats: computeWinPlaceStats(strategyBets, "PLACE"),
-        combinedStats: computeWinPlaceStats(strategyBets),
-      };
-    });
-  }, [bets]);
+        return {
+          ...definition,
+          bets: strategyBets,
+          winStats: computeWinPlaceStats(
+            strategyBets,
+            "WIN",
+          ),
+          placeStats: computeWinPlaceStats(
+            strategyBets,
+            "PLACE",
+          ),
+          combinedStats:
+            computeWinPlaceStats(strategyBets),
+        };
+      }),
+    [bets, strategyDefinitions],
+  );
 
   const combinedStats = useMemo(
     () => computeWinPlaceStats(bets),
@@ -183,160 +377,487 @@ export function WinPlaceJournalPanel({ date, mode }: Props) {
     >();
 
     for (const bet of bets) {
-      const key = `${bet.raceId}:${bet.ruleVersion}:${bet.signalPhase}`;
-      const group = groups.get(key) ?? { win: null, place: null };
-      if (bet.market === "WIN") group.win = bet;
-      if (bet.market === "PLACE") group.place = bet;
+      const key = [
+        bet.raceId,
+        bet.ruleVersion,
+        bet.signalPhase,
+      ].join(":");
+
+      const group = groups.get(key) ?? {
+        win: null,
+        place: null,
+      };
+
+      if (bet.market === "WIN") {
+        group.win = bet;
+      }
+
+      if (bet.market === "PLACE") {
+        group.place = bet;
+      }
+
       groups.set(key, group);
     }
 
-    return [...groups.values()].sort((a, b) => {
-      const firstA = a.win ?? a.place;
-      const firstB = b.win ?? b.place;
-      if (!firstA || !firstB) return 0;
-      const track = firstA.trackName.localeCompare(firstB.trackName, "sv");
-      return track !== 0
-        ? track
-        : firstA.raceNumber - firstB.raceNumber;
-    });
+    return [...groups.values()].sort(
+      (a, b) => {
+        const firstA = a.win ?? a.place;
+        const firstB = b.win ?? b.place;
+
+        if (!firstA || !firstB) {
+          return 0;
+        }
+
+        const dateCompare =
+          firstB.date.localeCompare(firstA.date);
+
+        if (dateCompare !== 0) {
+          return dateCompare;
+        }
+
+        const trackCompare =
+          firstA.trackName.localeCompare(
+            firstB.trackName,
+            "sv",
+          );
+
+        return trackCompare !== 0
+          ? trackCompare
+          : firstA.raceNumber -
+              firstB.raceNumber;
+      },
+    );
   }, [bets]);
 
-  if (mode === "stats") {
-    return (
-      <section style={{ display: "grid", gap: 18, margin: "14px 0 22px" }}>
-        <div className="panel-header-row">
-          <div>
-            <p style={{ margin: 0, color: "#facc15" }}>T−90 · SEPARAT UPPFÖLJNING</p>
-            <h2 style={{ margin: "4px 0" }}>Vinnare + plats-strategier</h2>
-          </div>
-          <div className="panel-meta-row"><span>LIVE</span><span>2 strategier</span></div>
-        </div>
-
-        {error ? (
-          <div style={{ padding: 12, border: "1px solid #7f1d1d", borderRadius: 12, color: "#fecaca" }}>
-            {error}
-          </div>
-        ) : null}
-
-        {loading ? <p>Läser statistik...</p> : null}
-
-        {!loading
-          ? strategyGroups.map((strategy) => (
-              <div key={strategy.ruleVersion} style={{ display: "grid", gap: 10 }}>
-                <div className="panel-header-row">
-                  <div>
-                    <h3 style={{ margin: 0 }}>{strategy.title}</h3>
-                    <small>{strategy.description}</small>
-                  </div>
-                  <div className="panel-meta-row"><span>{strategy.ruleVersion}</span><span>{strategy.bets.length} spelrader</span></div>
-                </div>
-                <StatsCards title="VINNARE" market="WIN" stats={strategy.winStats} />
-                <StatsCards title="PLATS" market="PLACE" stats={strategy.placeStats} />
-                <StatsCards title="TOTALT" stats={strategy.combinedStats} />
-              </div>
-            ))
-          : null}
-      </section>
-    );
-  }
-
   return (
-    <section
-      style={{
-        display: "grid",
-        gap: 12,
-        margin: "12px 0 24px",
-        padding: 14,
-        border: "1px solid rgba(250,204,21,.45)",
-        borderRadius: 14,
-        background: "linear-gradient(135deg,rgba(113,63,18,.22),rgba(15,23,42,.88))",
-      }}
-    >
-      <div className="panel-header-row">
+    <section className="signal-journal-shell">
+      <div className="signal-journal-toolbar">
         <div>
-          <p style={{ margin: 0, color: "#facc15" }}>VINNARE + PLATS</p>
-          <h3 style={{ margin: "4px 0" }}>Automatiska T−90-signaler</h3>
-        </div>
-        <div className="panel-meta-row"><span>{raceGroups.length} signaler</span><span>2 strategier</span></div>
-      </div>
+          <p className="signal-journal-kicker">
+            T−90 · VINNARE + PLATS
+          </p>
 
-      <div className="mini-stats-grid">
-        <div className="mini-stat-card"><span>Spelrader</span><strong>{combinedStats.count}</strong></div>
-        <div className="mini-stat-card"><span>Fastställda</span><strong>{combinedStats.settled}</strong></div>
-        <div className="mini-stat-card"><span>Total insats</span><strong>{kronor(combinedStats.totalStakeOren)} kr</strong></div>
-        <div className="mini-stat-card">
-          <span>Totalt netto</span>
-          <strong style={{ color: combinedStats.totalNetOren >= 0 ? "#4ade80" : "#fb7185" }}>
-            {combinedStats.totalNetOren >= 0 ? "+" : ""}{kronor(combinedStats.totalNetOren)} kr
-          </strong>
+          <h2>
+            {mode === "stats"
+              ? "Strategistatistik"
+              : "Automatiska spel"}
+          </h2>
+
+          <span className="signal-journal-period">
+            Period: {dateRange.label}
+          </span>
+        </div>
+
+        <div className="signal-journal-actions">
+          <div
+            className="period-switch"
+            role="group"
+            aria-label="Välj period"
+          >
+            <button
+              type="button"
+              className={
+                periodMode === "DAY"
+                  ? "is-active"
+                  : ""
+              }
+              onClick={() =>
+                setPeriodMode("DAY")
+              }
+            >
+              Valt datum
+            </button>
+
+            <button
+              type="button"
+              className={
+                periodMode === "TEST_PERIOD"
+                  ? "is-active"
+                  : ""
+              }
+              onClick={() =>
+                setPeriodMode("TEST_PERIOD")
+              }
+            >
+              Hela testperioden
+            </button>
+          </div>
+
+          <button
+            type="button"
+            className="journal-refresh-button"
+            onClick={() => void loadBets(true)}
+            disabled={refreshing}
+          >
+            {refreshing
+              ? "Uppdaterar..."
+              : "Uppdatera nu"}
+          </button>
+
+          <small>
+            Senast uppdaterad{" "}
+            {formatUpdatedAt(lastUpdatedAt)}
+          </small>
         </div>
       </div>
 
       {error ? (
-        <div style={{ padding: 12, border: "1px solid #7f1d1d", borderRadius: 12, color: "#fecaca" }}>
+        <div className="signal-journal-error">
           {error}
         </div>
       ) : null}
 
-      {loading ? <p>Läser journal...</p> : null}
+      <div className="signal-overall-summary">
+        <SummaryCard
+          label="Signaler"
+          value={String(raceGroups.length)}
+        />
 
-      <div className="history-list-compact">
-        {!loading && !raceGroups.length && !error ? <p>Inga LIVE-signaler för valt datum.</p> : null}
+        <SummaryCard
+          label="Spelrader"
+          value={String(combinedStats.count)}
+        />
 
-        {raceGroups.map(({ win, place }) => {
-          const base = win ?? place;
-          if (!base) return null;
+        <SummaryCard
+          label="Väntande"
+          value={String(combinedStats.pending)}
+          tone={
+            combinedStats.pending
+              ? "warning"
+              : "normal"
+          }
+        />
 
-          const rows = [win, place].filter(
-            (bet): bet is WinPlaceBetRecord => bet !== null,
-          );
-          const allReturnsKnown = rows.every((bet) => bet.returnOren !== null);
-          const totalStake = rows.reduce((sum, bet) => sum + bet.stakeOren, 0);
-          const totalReturn = allReturnsKnown
-            ? rows.reduce((sum, bet) => sum + (bet.returnOren ?? 0), 0)
-            : null;
-          const totalNet = totalReturn === null ? null : totalReturn - totalStake;
-          const isSmallkaramell =
-            base.ruleVersion === SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion;
+        <SummaryCard
+          label="Låst insats"
+          value={`${kronor(
+            combinedStats.lockedStakeOren,
+          )} kr`}
+        />
 
-          return (
+        <SummaryCard
+          label="Fastställd insats"
+          value={`${kronor(
+            combinedStats.totalStakeOren,
+          )} kr`}
+        />
+
+        <SummaryCard
+          label="Återbetalning"
+          value={`${kronor(
+            combinedStats.totalReturnOren,
+          )} kr`}
+        />
+
+        <SummaryCard
+          label="Netto"
+          value={`${
+            combinedStats.totalNetOren >= 0
+              ? "+"
+              : ""
+          }${kronor(
+            combinedStats.totalNetOren,
+          )} kr`}
+          tone={
+            combinedStats.totalNetOren > 0
+              ? "positive"
+              : combinedStats.totalNetOren < 0
+                ? "negative"
+                : "normal"
+          }
+        />
+
+        <SummaryCard
+          label="ROI"
+          value={`${decimal(
+            combinedStats.roiPct,
+          )} %`}
+        />
+      </div>
+
+      <div className="test-period-note">
+        <strong>Testperiod 3–16 augusti:</strong>
+        <span>
+          Smällkaramellen och den ordinarie
+          mest-sänkta-regeln redovisas separat.
+          Fristående forskningsnotiser som inte
+          skapade spelrader visas inte som spel i
+          denna journal.
+        </span>
+      </div>
+
+      {loading ? (
+        <div className="signal-journal-loading">
+          Läser speljournal...
+        </div>
+      ) : null}
+
+      {!loading && mode === "stats" ? (
+        <div className="strategy-statistics-list">
+          {strategyGroups.map((strategy) => (
             <article
-              key={`${base.raceId}:${base.ruleVersion}`}
-              className="history-row-card"
-              style={{ borderLeft: `5px solid ${isSmallkaramell ? "#f59e0b" : "#facc15"}` }}
+              key={strategy.ruleVersion}
+              className={`strategy-statistics-card ${strategy.className}`}
             >
-              <div>
-                <strong>{base.date} · {base.trackName} · Lopp {base.raceNumber}</strong>
-                <span style={{ color: isSmallkaramell ? "#fbbf24" : "#facc15", fontWeight: 850 }}>
-                  {strategyLabel(base.ruleVersion)}
-                </span>
-                <span>Häst {base.horseNumber}. {base.horseName}</span>
-                <span>
-                  {decimal(base.startOdds, 2)} → {decimal(base.lockedWinOdds, 2)} · Sänkning {decimal(base.oddsDropPercent)} % · Låst {decimal(base.secondsBeforeStart, 0)} sek före
-                </span>
+              <div className="strategy-statistics-title">
+                <div>
+                  <h3>{strategy.title}</h3>
+                  <span>
+                    {strategy.description}
+                  </span>
+                </div>
+
+                <div className="strategy-meta">
+                  <strong>
+                    {
+                      strategy.combinedStats
+                        .count
+                    }{" "}
+                    spelrader
+                  </strong>
+                  <span>
+                    {strategy.ruleVersion}
+                  </span>
+                </div>
               </div>
 
-              <div style={{ display: "grid", gap: 5 }}>
-                <strong style={{ color: resultColor(win) }}>
-                  VINNARE: {resultLabel(win)}
-                  {win?.officialWinOddsDecimal !== null && win?.officialWinOddsDecimal !== undefined
-                    ? ` · odds ${decimal(win.officialWinOddsDecimal, 2)}`
-                    : ""}
-                </strong>
-                <strong style={{ color: resultColor(place) }}>
-                  PLATS: {resultLabel(place)}
-                  {place?.placeOddsDecimal !== null && place?.placeOddsDecimal !== undefined
-                    ? ` · odds ${decimal(place.placeOddsDecimal, 2)}`
-                    : ""}
-                </strong>
-                <span>
-                  Placering {base.finishPositionOfficial ?? "-"} · Insats {kronor(totalStake)} kr · Netto {totalNet === null ? "-" : `${totalNet >= 0 ? "+" : ""}${kronor(totalNet)} kr`}
-                </span>
+              <div className="strategy-market-columns">
+                <StatsBlock
+                  title="VINNARE"
+                  market="WIN"
+                  stats={strategy.winStats}
+                />
+
+                <StatsBlock
+                  title="PLATS"
+                  market="PLACE"
+                  stats={strategy.placeStats}
+                />
+
+                <StatsBlock
+                  title="TOTALT"
+                  stats={
+                    strategy.combinedStats
+                  }
+                />
               </div>
             </article>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      ) : null}
+
+      {!loading && mode === "journal" ? (
+        <div className="signal-journal-list">
+          {!raceGroups.length ? (
+            <div className="signal-journal-empty">
+              Inga automatiska T−90-spel hittades
+              för vald period.
+            </div>
+          ) : null}
+
+          {raceGroups.map(({ win, place }) => {
+            const base = win ?? place;
+
+            if (!base) {
+              return null;
+            }
+
+            const strategy =
+              strategyInformation(
+                base.ruleVersion,
+              );
+
+            const rows = [win, place].filter(
+              (
+                bet,
+              ): bet is WinPlaceBetRecord =>
+                bet !== null,
+            );
+
+            const allReturnsKnown =
+              rows.every(
+                (bet) =>
+                  bet.returnOren !== null,
+              );
+
+            const lockedStake = rows.reduce(
+              (sum, bet) =>
+                sum + bet.stakeOren,
+              0,
+            );
+
+            const totalReturn =
+              allReturnsKnown
+                ? rows.reduce(
+                    (sum, bet) =>
+                      sum +
+                      (bet.returnOren ?? 0),
+                    0,
+                  )
+                : null;
+
+            const totalNet =
+              totalReturn === null
+                ? null
+                : totalReturn -
+                  lockedStake;
+
+            return (
+              <article
+                key={`${base.raceId}:${base.ruleVersion}`}
+                className={`signal-journal-row ${strategy.className}`}
+              >
+                <div className="signal-journal-race">
+                  <div className="signal-journal-row-top">
+                    <strong>
+                      {base.date} ·{" "}
+                      {base.trackName} · Lopp{" "}
+                      {base.raceNumber}
+                    </strong>
+
+                    <span className="strategy-chip">
+                      {strategy.title}
+                    </span>
+                  </div>
+
+                  <span className="strategy-description">
+                    {strategy.description}
+                  </span>
+
+                  <strong className="signal-horse-name">
+                    Häst {base.horseNumber}.{" "}
+                    {base.horseName}
+                  </strong>
+
+                  <span>
+                    {decimal(
+                      base.startOdds,
+                      2,
+                    )}{" "}
+                    →{" "}
+                    {decimal(
+                      base.lockedWinOdds,
+                      2,
+                    )}{" "}
+                    · Sänkning{" "}
+                    {decimal(
+                      base.oddsDropPercent,
+                    )}{" "}
+                    % · Styrka{" "}
+                    {base.strength}/6
+                  </span>
+
+                  <span>
+                    Låst{" "}
+                    {decimal(
+                      base.secondsBeforeStart,
+                      0,
+                    )}{" "}
+                    sekunder före start
+                  </span>
+                </div>
+
+                <div className="signal-result-column">
+                  <div
+                    className={`market-result ${resultClass(
+                      win,
+                    )}`}
+                  >
+                    <span>VINNARE</span>
+                    <strong>
+                      {resultLabel(win)}
+                    </strong>
+
+                    {win
+                      ?.officialWinOddsDecimal !==
+                        null &&
+                    win
+                      ?.officialWinOddsDecimal !==
+                        undefined ? (
+                      <small>
+                        Odds{" "}
+                        {decimal(
+                          win.officialWinOddsDecimal,
+                          2,
+                        )}
+                      </small>
+                    ) : null}
+                  </div>
+
+                  <div
+                    className={`market-result ${resultClass(
+                      place,
+                    )}`}
+                  >
+                    <span>PLATS</span>
+                    <strong>
+                      {resultLabel(place)}
+                    </strong>
+
+                    {place
+                      ?.placeOddsDecimal !==
+                        null &&
+                    place
+                      ?.placeOddsDecimal !==
+                        undefined ? (
+                      <small>
+                        Odds{" "}
+                        {decimal(
+                          place.placeOddsDecimal,
+                          2,
+                        )}
+                      </small>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="signal-money-column">
+                  <span>
+                    Placering{" "}
+                    {base.finishPositionOfficial ??
+                      "-"}
+                  </span>
+
+                  <span>
+                    Låst insats{" "}
+                    {kronor(lockedStake)} kr
+                  </span>
+
+                  <span>
+                    Åter{" "}
+                    {totalReturn === null
+                      ? "-"
+                      : `${kronor(
+                          totalReturn,
+                        )} kr`}
+                  </span>
+
+                  <strong
+                    className={
+                      totalNet === null
+                        ? ""
+                        : totalNet >= 0
+                          ? "money-positive"
+                          : "money-negative"
+                    }
+                  >
+                    Netto{" "}
+                    {totalNet === null
+                      ? "-"
+                      : `${
+                          totalNet >= 0
+                            ? "+"
+                            : ""
+                        }${kronor(
+                          totalNet,
+                        )} kr`}
+                  </strong>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
     </section>
   );
 }

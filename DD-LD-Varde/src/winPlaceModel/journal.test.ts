@@ -120,6 +120,8 @@ describe("win-place journal statistics", () => {
     expect(stats.misses).toBe(1);
     expect(stats.pending).toBe(1);
     expect(stats.hitRate).toBe(50);
+    expect(stats.lockedStakeOren).toBe(30_000);
+    expect(stats.pendingStakeOren).toBe(10_000);
     expect(stats.totalStakeOren).toBe(20_000);
     expect(stats.totalReturnOren).toBe(50_000);
     expect(stats.totalNetOren).toBe(30_000);
@@ -132,6 +134,8 @@ describe("win-place journal statistics", () => {
     expect(stats.hits).toBe(1);
     expect(stats.misses).toBe(1);
     expect(stats.voids).toBe(1);
+    expect(stats.lockedStakeOren).toBe(20_000);
+    expect(stats.pendingStakeOren).toBe(0);
     expect(stats.totalStakeOren).toBe(20_000);
     expect(stats.totalReturnOren).toBe(20_000);
     expect(stats.totalNetOren).toBe(0);
@@ -141,6 +145,8 @@ describe("win-place journal statistics", () => {
   it("räknar kombinerad ekonomi utan pending och void", () => {
     const stats = computeWinPlaceStats(bets);
 
+    expect(stats.lockedStakeOren).toBe(50_000);
+    expect(stats.pendingStakeOren).toBe(10_000);
     expect(stats.totalStakeOren).toBe(40_000);
     expect(stats.totalReturnOren).toBe(70_000);
     expect(stats.totalNetOren).toBe(30_000);

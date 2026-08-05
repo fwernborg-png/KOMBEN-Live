@@ -2415,3 +2415,464 @@ body,
   background: linear-gradient(180deg, #fff3a8, #ffd43b);
   box-shadow: 0 0 14px rgba(250, 204, 21, 0.42);
 }
+
+
+/* SIGNAL JOURNAL V2 */
+
+.signal-journal-shell {
+  display: grid;
+  gap: 16px;
+  margin: 14px 0 24px;
+  padding: 18px;
+  border: 1px solid rgba(123, 178, 151, 0.34);
+  border-radius: 18px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(53, 119, 91, 0.24),
+      transparent 34%
+    ),
+    linear-gradient(
+      145deg,
+      rgba(23, 40, 34, 0.98),
+      rgba(17, 29, 26, 0.98)
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 18px 42px rgba(0, 0, 0, 0.18);
+}
+
+.signal-journal-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.signal-journal-toolbar h2 {
+  margin: 3px 0;
+  color: #ffffff;
+  font-size: clamp(22px, 2.2vw, 31px);
+}
+
+.signal-journal-kicker {
+  margin: 0;
+  color: #72f0a8;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.signal-journal-period {
+  color: #c5d8ce;
+  font-size: 13px;
+}
+
+.signal-journal-actions {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.signal-journal-actions small {
+  color: #a9c2b5;
+}
+
+.period-switch {
+  display: inline-flex;
+  padding: 4px;
+  border: 1px solid rgba(154, 200, 176, 0.3);
+  border-radius: 12px;
+  background: rgba(8, 20, 16, 0.66);
+}
+
+.period-switch button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #a9c2b5;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.period-switch button.is-active {
+  background: #d5ffe5;
+  color: #102218;
+  box-shadow: 0 4px 14px rgba(105, 240, 163, 0.2);
+}
+
+.journal-refresh-button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(93, 194, 139, 0.55);
+  border-radius: 10px;
+  background: rgba(41, 115, 76, 0.5);
+  color: #e9fff2;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.journal-refresh-button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.signal-overall-summary,
+.strategy-stats-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.signal-summary-card {
+  display: grid;
+  gap: 5px;
+  min-height: 69px;
+  padding: 12px 13px;
+  border: 1px solid rgba(151, 196, 172, 0.25);
+  border-radius: 13px;
+  background: rgba(35, 55, 47, 0.9);
+}
+
+.signal-summary-card span {
+  color: #b9cec2;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.signal-summary-card strong {
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.signal-summary-card.tone-positive strong,
+.money-positive {
+  color: #6cf0a5;
+}
+
+.signal-summary-card.tone-negative strong,
+.money-negative {
+  color: #ff9185;
+}
+
+.signal-summary-card.tone-warning strong {
+  color: #ffd36b;
+}
+
+.test-period-note {
+  display: flex;
+  gap: 8px;
+  padding: 11px 13px;
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  border-radius: 12px;
+  background: rgba(30, 69, 105, 0.28);
+  color: #dbeafe;
+  font-size: 12px;
+}
+
+.signal-journal-error {
+  padding: 12px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 12px;
+  background: rgba(127, 29, 29, 0.3);
+  color: #fecaca;
+}
+
+.signal-journal-loading,
+.signal-journal-empty {
+  padding: 18px;
+  border: 1px dashed rgba(165, 205, 184, 0.35);
+  border-radius: 13px;
+  color: #c4d7cd;
+  text-align: center;
+}
+
+.strategy-statistics-list {
+  display: grid;
+  gap: 18px;
+}
+
+.strategy-statistics-card {
+  display: grid;
+  gap: 13px;
+  padding: 15px;
+  border: 1px solid rgba(159, 202, 179, 0.28);
+  border-radius: 16px;
+  background: rgba(27, 45, 38, 0.88);
+}
+
+.strategy-statistics-card.is-smallkaramell {
+  border-color: rgba(251, 191, 36, 0.48);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(120, 82, 20, 0.26),
+      rgba(27, 45, 38, 0.9)
+    );
+}
+
+.strategy-statistics-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+}
+
+.strategy-statistics-title h3 {
+  margin: 0 0 4px;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.strategy-statistics-title span,
+.strategy-meta span {
+  color: #b8cdc1;
+  font-size: 12px;
+}
+
+.strategy-meta {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+}
+
+.strategy-meta strong {
+  color: #ffffff;
+}
+
+.strategy-market-columns {
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.strategy-stats-block {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 13px;
+  background: rgba(15, 30, 24, 0.58);
+}
+
+.strategy-stats-block.is-win {
+  border: 1px solid rgba(250, 204, 21, 0.38);
+}
+
+.strategy-stats-block.is-place {
+  border: 1px solid rgba(74, 222, 128, 0.38);
+}
+
+.strategy-stats-block.is-total {
+  border: 1px solid rgba(96, 165, 250, 0.38);
+}
+
+.strategy-stats-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #ffffff;
+}
+
+.strategy-stats-heading span {
+  color: #abc2b6;
+  font-size: 11px;
+}
+
+.signal-journal-list {
+  display: grid;
+  gap: 11px;
+}
+
+.signal-journal-row {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.5fr)
+    minmax(250px, 0.8fr)
+    minmax(145px, 0.42fr);
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid rgba(151, 196, 172, 0.27);
+  border-left: 6px solid #67d994;
+  border-radius: 14px;
+  background: rgba(33, 53, 45, 0.92);
+}
+
+.signal-journal-row.is-smallkaramell {
+  border-left-color: #fbbf24;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(121, 82, 20, 0.24),
+      rgba(33, 53, 45, 0.94) 38%
+    );
+}
+
+.signal-journal-race {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  color: #cfdfd6;
+}
+
+.signal-journal-row-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.signal-journal-row-top > strong {
+  color: #ffffff;
+  font-size: 17px;
+}
+
+.strategy-chip {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(104, 220, 151, 0.17);
+  color: #9ff4bd;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.is-smallkaramell .strategy-chip {
+  background: rgba(251, 191, 36, 0.16);
+  color: #ffd565;
+}
+
+.strategy-description {
+  color: #a9c0b4;
+  font-size: 12px;
+}
+
+.signal-horse-name {
+  margin-top: 4px;
+  color: #ffffff;
+}
+
+.signal-result-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.market-result {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-height: 88px;
+  padding: 11px;
+  border-radius: 11px;
+  background: rgba(13, 27, 21, 0.62);
+}
+
+.market-result > span {
+  color: #a9c0b4;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.market-result strong {
+  color: #ffffff;
+}
+
+.market-result small {
+  color: #c5d7cd;
+}
+
+.market-result.is-pending {
+  border: 1px solid rgba(250, 204, 21, 0.38);
+}
+
+.market-result.is-pending strong {
+  color: #ffd568;
+}
+
+.market-result.is-hit {
+  border: 1px solid rgba(74, 222, 128, 0.42);
+}
+
+.market-result.is-hit strong {
+  color: #6cf0a5;
+}
+
+.market-result.is-miss {
+  border: 1px solid rgba(251, 113, 133, 0.4);
+}
+
+.market-result.is-miss strong {
+  color: #ff9185;
+}
+
+.market-result.is-void {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.market-result.is-void strong {
+  color: #cbd5e1;
+}
+
+.signal-money-column {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding-left: 13px;
+  border-left: 1px solid rgba(161, 198, 178, 0.2);
+  color: #c9dbd1;
+}
+
+.signal-money-column strong {
+  font-size: 16px;
+}
+
+@media (max-width: 1100px) {
+  .strategy-market-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-journal-row {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-money-column {
+    padding-left: 0;
+    padding-top: 10px;
+    border-left: 0;
+    border-top: 1px solid rgba(161, 198, 178, 0.2);
+  }
+}
+
+@media (max-width: 720px) {
+  .signal-journal-toolbar,
+  .strategy-statistics-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .signal-journal-actions,
+  .strategy-meta {
+    justify-items: stretch;
+  }
+
+  .period-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .signal-result-column {
+    grid-template-columns: 1fr;
+  }
+
+  .test-period-note {
+    display: grid;
+  }
+}

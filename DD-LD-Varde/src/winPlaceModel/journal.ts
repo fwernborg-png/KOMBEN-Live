@@ -67,6 +67,9 @@ export type WinPlaceStats = {
   misses: number;
   hitRate: number;
   economicBets: number;
+  lockedStakeOren: number;
+  pendingStakeOren: number;
+  awaitingOdds: number;
   totalStakeOren: number;
   totalReturnOren: number;
   totalNetOren: number;
@@ -108,6 +111,23 @@ export function computeWinPlaceStats(
       bet.netOren !== null,
   );
 
+  const activeBets = selected.filter(
+    (bet) => bet.resultOutcome !== "VOID",
+  );
+
+  const lockedStakeOren = activeBets.reduce(
+    (sum, bet) => sum + bet.stakeOren,
+    0,
+  );
+
+  const pendingStakeOren = selected
+    .filter((bet) => bet.resultOutcome === "PENDING")
+    .reduce((sum, bet) => sum + bet.stakeOren, 0);
+
+  const awaitingOdds = selected.filter(
+    (bet) => bet.resultStatus === "SAKNAR_ODDS",
+  ).length;
+
   const totalStakeOren = economic.reduce(
     (sum, bet) => sum + bet.stakeOren,
     0,
@@ -148,6 +168,9 @@ export function computeWinPlaceStats(
     hitRate:
       settled.length > 0 ? (hits / settled.length) * 100 : 0,
     economicBets: economic.length,
+    lockedStakeOren,
+    pendingStakeOren,
+    awaitingOdds,
     totalStakeOren,
     totalReturnOren,
     totalNetOren,

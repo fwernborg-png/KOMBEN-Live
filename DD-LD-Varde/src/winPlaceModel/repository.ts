@@ -111,15 +111,18 @@ function parseRow(row: DbWinPlaceBetRow): WinPlaceBetRecord {
   };
 }
 
-export async function loadWinPlaceBetsByDate(
-  date: string,
+export async function loadWinPlaceBetsByRange(
+  dateFrom: string,
+  dateTo: string,
   signalPhase: WinPlaceSignalPhase = "LIVE",
 ) {
   const { data, error } = await supabase
     .from("win_place_model_bets")
     .select("*")
-    .eq("date", date)
+    .gte("date", dateFrom)
+    .lte("date", dateTo)
     .eq("signal_phase", signalPhase)
+    .order("date", { ascending: false })
     .order("track_name", { ascending: true })
     .order("race_number", { ascending: true })
     .order("market", { ascending: true });
@@ -131,4 +134,11 @@ export async function loadWinPlaceBetsByDate(
   }
 
   return ((data ?? []) as DbWinPlaceBetRow[]).map(parseRow);
+}
+
+export async function loadWinPlaceBetsByDate(
+  date: string,
+  signalPhase: WinPlaceSignalPhase = "LIVE",
+) {
+  return loadWinPlaceBetsByRange(date, date, signalPhase);
 }
