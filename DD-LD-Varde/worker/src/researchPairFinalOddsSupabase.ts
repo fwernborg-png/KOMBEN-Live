@@ -56,7 +56,9 @@ createSupabaseResearchPairFinalOddsAdapter(
     supabase: SupabaseClient;
 
     fetchGame: (
-      gameId: string,
+      args: {
+        gameId: string;
+      },
     ) => Promise<{
       httpStatus: number;
       payload: unknown;

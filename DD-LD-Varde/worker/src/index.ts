@@ -2089,7 +2089,7 @@ async function runCron(env: Env) {
               maximumAttempts: 10,
 
               fetchGame:
-                async (gameId) => {
+                async ({ gameId }) => {
                   const result =
                     await fetchWithTimeout({
                       url:
@@ -2097,13 +2097,6 @@ async function runCron(env: Env) {
 
                       description:
                         `Research pair market ${gameId}`,
-
-                      init: {
-                        headers: {
-                          Accept: "application/json",
-                          "User-Agent": "Mozilla/5.0",
-                        },
-                      },
 
                       signal:
                         runController.signal,

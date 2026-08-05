@@ -282,5 +282,56 @@ describe(
         expect(items).toEqual([]);
       },
     );
+    it(
+      "vidarebefordrar gameId som namngivet objekt",
+      async () => {
+        const fetchGame =
+          vi.fn(
+            async (
+              args: {
+                gameId: string;
+              },
+            ) => ({
+              httpStatus: 200,
+              payload: {
+                id: args.gameId,
+              },
+            }),
+          );
+
+        const adapter =
+          createSupabaseResearchPairFinalOddsAdapter({
+            supabase: {
+              from: vi.fn(),
+            } as never,
+
+            fetchGame,
+          });
+
+        const gameId =
+          "tvilling_2026-07-29_28_1";
+
+        const result =
+          await adapter.fetchGame({
+            gameId,
+          });
+
+        expect(fetchGame)
+          .toHaveBeenCalledOnce();
+
+        expect(fetchGame)
+          .toHaveBeenCalledWith({
+            gameId,
+          });
+
+        expect(result).toEqual({
+          httpStatus: 200,
+          payload: {
+            id: gameId,
+          },
+        });
+      },
+    );
+
   },
 );
