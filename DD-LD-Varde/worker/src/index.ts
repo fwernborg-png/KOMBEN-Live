@@ -916,7 +916,7 @@ async function fetchRaceForTrack(args: {
   raceDate: string;
   trackId: number;
   raceNumber: number;
-  meetingRef: MeetingRaceRef;
+  meetingRef?: MeetingRaceRef;
   signal?: AbortSignal;
 }) {
   const {
@@ -961,25 +961,31 @@ async function fetchRaceForTrack(args: {
 
     startTime:
       parsed.startTime ??
-      meetingRef.startTime,
+      meetingRef?.startTime,
 
     eventId:
-      meetingRef.eventId,
+      meetingRef?.eventId ??
+      parsed.eventId,
 
     meetingId:
-      meetingRef.meetingId,
+      meetingRef?.meetingId ??
+      parsed.meetingId,
 
     meetingName:
-      meetingRef.meetingName,
+      meetingRef?.meetingName ??
+      parsed.meetingName,
 
     products:
-      mergeResearchProducts(
-        parsed.products,
-        meetingRef.products,
-      ),
+      meetingRef
+        ? mergeResearchProducts(
+            parsed.products,
+            meetingRef.products,
+          )
+        : parsed.products,
 
     rawMeetingJson:
-      meetingRef.rawJson,
+      meetingRef?.rawJson ??
+      parsed.rawMeetingJson,
   };
 }
 
@@ -3631,8 +3637,29 @@ async function getPlaceOddsHistory(
 }
 
 export default {
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(runCron(env));
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ) {
+    ctx.waitUntil(
+      runCron(env)
+        .then((result) => {
+          console.log(
+            "Cron summary",
+            JSON.stringify(result.summary),
+          );
+        })
+        .catch((error) => {
+          console.error(
+            "Cron failed",
+            error instanceof Error
+              ? error.message
+              : String(error),
+          );
+          throw error;
+        }),
+    );
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {
