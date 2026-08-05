@@ -43,6 +43,24 @@ grant select
     service_role;
 
 
+-- Säkerställ att appägaren inte låses ute
+-- när PostgREST-skyddet aktiveras.
+
+insert into
+  public.app_allowed_users (
+    email,
+    active
+  )
+values (
+  'fwernborg@gmail.com',
+  true
+)
+on conflict (email)
+do update set
+  active = excluded.active,
+  updated_at = now();
+
+
 create or replace function
   public.check_komben_app_request()
 returns void

@@ -59,6 +59,12 @@ import {
   backfillMissingResearchResults,
 } from "./researchResultBackfill";
 import {
+  runResearchPairFinalOddsBackfill,
+} from "./researchPairFinalOddsBackfill";
+import {
+  createSupabaseResearchPairFinalOddsAdapter,
+} from "./researchPairFinalOddsSupabase";
+import {
   extractVpPlaceOddsRawByRunner,
   mergeVpPayloadIntoWinnerPayload,
 } from "../../src/atg/vpPayload";
@@ -1608,6 +1614,15 @@ async function runCron(env: Env) {
     researchPlacePayoutBackfillFailures: 0,
     researchPlacePayoutBackfillErrors: [] as string[],
 
+    researchPairBackfillItemsSelected: 0,
+    researchPairBackfillFetchesAttempted: 0,
+    researchPairMarketsCompleted: 0,
+    researchPairMarketsMissing: 0,
+    researchPairMarketsRetrying: 0,
+    researchPairMarketsFailed: 0,
+    researchPairOddsRowsArchived: 0,
+    researchPairBackfillErrors: [] as string[],
+
     evaluationsCreated: 0,
     betsCreated: 0,
     winPlaceEvaluationsCreated: 0,
@@ -2051,6 +2066,112 @@ async function runCron(env: Env) {
       summary.researchPlacePayoutBackfillFailures += 1;
 
       summary.researchPlacePayoutBackfillErrors.push(
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
+
+    try {
+      const pairFinalOddsBackfill =
+        await runResearchPairFinalOddsBackfill({
+          enabled:
+            researchArchiveEnabled,
+
+          nowIso,
+
+          maxRaces: 2,
+
+          adapter:
+            createSupabaseResearchPairFinalOddsAdapter({
+              supabase,
+
+              maximumAttempts: 10,
+
+              fetchGame:
+                async (gameId) => {
+                  const result =
+                    await fetchWithTimeout({
+                      url:
+                        `${apiBaseUrl}/games/${gameId}`,
+
+                      description:
+                        `Research pair market ${gameId}`,
+
+                      signal:
+                        runController.signal,
+
+                      parseResponse:
+                        async (response) => {
+                          const bodyText =
+                            await response.text();
+
+                          let payload: unknown =
+                            null;
+
+                          if (
+                            bodyText.trim() !== ""
+                          ) {
+                            try {
+                              payload =
+                                JSON.parse(
+                                  bodyText,
+                                );
+                            } catch {
+                              payload = {
+                                rawText:
+                                  bodyText.slice(
+                                    0,
+                                    2_000,
+                                  ),
+                              };
+                            }
+                          }
+
+                          return {
+                            httpStatus:
+                              response.status,
+
+                            payload,
+                          };
+                        },
+                    });
+
+                  return result as {
+                    httpStatus: number;
+                    payload: unknown;
+                  };
+                },
+            }),
+        });
+
+      summary.researchPairBackfillItemsSelected =
+        pairFinalOddsBackfill.itemsSelected;
+
+      summary.researchPairBackfillFetchesAttempted =
+        pairFinalOddsBackfill.fetchesAttempted;
+
+      summary.researchPairMarketsCompleted =
+        pairFinalOddsBackfill.marketsCompleted;
+
+      summary.researchPairMarketsMissing =
+        pairFinalOddsBackfill.marketsMissing;
+
+      summary.researchPairMarketsRetrying =
+        pairFinalOddsBackfill.marketsRetrying;
+
+      summary.researchPairMarketsFailed =
+        pairFinalOddsBackfill.marketsFailed;
+
+      summary.researchPairOddsRowsArchived =
+        pairFinalOddsBackfill.oddsRowsArchived;
+
+      summary.researchPairBackfillErrors =
+        pairFinalOddsBackfill.errors;
+    } catch (error) {
+      summary.researchPairMarketsFailed += 1;
+
+      summary.researchPairBackfillErrors.push(
         error instanceof Error
           ? error.message
           : String(error),
