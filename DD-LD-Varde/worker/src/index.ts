@@ -2098,6 +2098,13 @@ async function runCron(env: Env) {
                       description:
                         `Research pair market ${gameId}`,
 
+                      init: {
+                        headers: {
+                          Accept: "application/json",
+                          "User-Agent": "Mozilla/5.0",
+                        },
+                      },
+
                       signal:
                         runController.signal,
 
