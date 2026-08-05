@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WIN_PLACE_RULE_CONFIG_V1 } from "../../src/winPlaceModel/config";
+import { SMALLKARAMELL_RULE_CONFIG_V1, WIN_PLACE_RULE_CONFIG_V1 } from "../../src/winPlaceModel/config";
 import type { WinPlaceEvaluation } from "../../src/winPlaceModel/types";
 import { buildWinPlaceBetRows } from "./winPlacePersistence";
 
@@ -82,4 +82,33 @@ describe("win-place persistence", () => {
 
     expect(rows).toEqual([]);
   });
+
+  it("sparar Smällkaramellen som en egen regelversion med vinnare och plats", () => {
+    const evaluation = makeEvaluation("PLAY");
+    const candidate = evaluation.mostShortened;
+
+    if (!candidate) {
+      throw new Error("Testkandidat saknas");
+    }
+
+    const rows = buildWinPlaceBetRows({
+      evaluation: {
+        ...evaluation,
+        ruleVersion: SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
+        configSnapshot: SMALLKARAMELL_RULE_CONFIG_V1,
+        selectedCandidate: {
+          ...candidate,
+          runnerNumber: 9,
+          runnerName: "Epic S2",
+          currentWinOdds: 7,
+        },
+      },
+      nowIso: "2026-07-29T17:58:30.000Z",
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.rule_version === "SMALLKARAMELL_S2_V1.0")).toBe(true);
+    expect(rows.every((row) => row.horse_number === 9)).toBe(true);
+  });
+
 });

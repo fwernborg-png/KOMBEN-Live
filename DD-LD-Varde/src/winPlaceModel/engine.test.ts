@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
   isInWinPlaceFinalSignalWindow,
 } from "./config";
@@ -230,5 +231,69 @@ describe("WIN_PLACE_V1.0", () => {
         START_MS - 59_000,
       ),
     ).toBe(false);
+  });
+});
+
+
+describe("SMALLKARAMELL_S2_V1.0", () => {
+  function evaluateSmall(runners: WinPlaceRunnerInput[]) {
+    return evaluateWinPlaceModelAtLock({
+      race: makeRace(),
+      runners,
+      nowMs: LOCK_MS,
+      config: SMALLKARAMELL_RULE_CONFIG_V1,
+    });
+  }
+
+  it("väljer exakt S2 och godkänner odds 7,00", () => {
+    const result = evaluateSmall([
+      runner({ number: 1, values: [20, 18, 16, 14, 12, 10] }),
+      runner({ number: 2, values: [10, 9.5, 9, 8, 7.5, 7] }),
+      runner({ number: 3, values: [10, 9.9, 9.8, 9.7, 9.5, 9.4] }),
+    ]);
+
+    expect(result.decision).toBe("PLAY");
+    expect(result.mostShortened?.runnerNumber).toBe(1);
+    expect(result.selectedCandidate?.runnerNumber).toBe(2);
+    expect(result.selectedCandidate?.currentWinOdds).toBe(7);
+  });
+
+  it("underkänner S2 på odds 7,01 utan att byta till en annan häst", () => {
+    const result = evaluateSmall([
+      runner({ number: 1, values: [20, 18, 16, 14, 12, 10] }),
+      runner({ number: 2, values: [10, 9.5, 9, 8, 7.5, 7.01] }),
+      runner({ number: 3, values: [10, 9.9, 9.8, 9.7, 9.5, 9.4] }),
+    ]);
+
+    expect(result.selectedCandidate?.runnerNumber).toBe(2);
+    expect(result.decision).toBe("NO_PLAY");
+  });
+
+  it("tar bort struken häst före S2-rangordningen", () => {
+    const result = evaluateSmall([
+      runner({
+        number: 1,
+        values: [20, 16, 12, 10, 8, 6],
+        scratched: true,
+      }),
+      runner({ number: 2, values: [12, 11, 10, 9, 8, 6] }),
+      runner({ number: 3, values: [10, 9.7, 9.2, 8.7, 8.2, 7] }),
+    ]);
+
+    expect(result.mostShortened?.runnerNumber).toBe(2);
+    expect(result.selectedCandidate?.runnerNumber).toBe(3);
+    expect(result.decision).toBe("PLAY");
+  });
+
+  it("skapar ingen S2 när hela aktiva fältet inte har giltig historik", () => {
+    const incomplete = runner({ number: 3, values: [10, 9, 8, 7] });
+    const result = evaluateSmall([
+      runner({ number: 1, values: [20, 18, 16, 14, 12, 10] }),
+      runner({ number: 2, values: [10, 9.5, 9, 8, 7.5, 7] }),
+      incomplete,
+    ]);
+
+    expect(result.decision).toBe("INSUFFICIENT_DATA");
+    expect(result.selectedCandidate).toBeNull();
   });
 });

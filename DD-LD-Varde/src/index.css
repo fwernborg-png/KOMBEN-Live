@@ -2372,3 +2372,46 @@ body,
     animation: none;
   }
 }
+
+
+/* SMÄLLKARAMELLEN S2 */
+.compact-row.is-smallkaramell {
+  box-shadow: inset 4px 0 0 #f59e0b;
+  background: linear-gradient(
+    90deg,
+    rgba(245, 158, 11, 0.14),
+    rgba(8, 20, 16, 0) 52%
+  );
+}
+
+.inline-tag.smallkaramell,
+.candidate-badge.smallkaramell {
+  border: 1px solid rgba(251, 191, 36, 0.8);
+  background: linear-gradient(180deg, #fde68a, #f59e0b);
+  color: #2a1700;
+  font-weight: 950;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.28);
+}
+
+.inline-tag.smallkaramell {
+  white-space: nowrap;
+}
+
+
+.compact-row.is-smallkaramell-locked {
+  box-shadow:
+    inset 5px 0 0 #facc15,
+    inset 0 0 0 1px rgba(250, 204, 21, 0.28);
+  background: linear-gradient(
+    90deg,
+    rgba(250, 204, 21, 0.2),
+    rgba(8, 20, 16, 0) 58%
+  );
+}
+
+.inline-tag.smallkaramell.locked,
+.candidate-badge.smallkaramell.locked {
+  border-color: rgba(255, 251, 201, 0.98);
+  background: linear-gradient(180deg, #fff3a8, #ffd43b);
+  box-shadow: 0 0 14px rgba(250, 204, 21, 0.42);
+}

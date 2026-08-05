@@ -49,6 +49,7 @@ export async function deliverFinalSignalNotification(args: {
   plannedStartTime: string;
   winPlaceCandidate: WinPlaceCandidate | null;
   placeCandidate: SmoothestCandidate | null;
+  smallkaramellCandidate?: WinPlaceCandidate | null;
   signalMode?: FinalSignalMode;
   nowIso: string;
 }): Promise<FinalSignalDeliveryResult> {
@@ -63,12 +64,13 @@ export async function deliverFinalSignalNotification(args: {
     plannedStartTime,
     winPlaceCandidate,
     placeCandidate,
+    smallkaramellCandidate = null,
     signalMode = "LEGACY",
     nowIso,
   } = args;
 
   const primaryCandidate =
-    winPlaceCandidate ?? placeCandidate;
+    winPlaceCandidate ?? placeCandidate ?? smallkaramellCandidate;
 
   if (!primaryCandidate) {
     return EMPTY_RESULT;
@@ -88,6 +90,7 @@ export async function deliverFinalSignalNotification(args: {
     raceNumber,
     winPlaceCandidate,
     placeCandidate,
+    smallkaramellCandidate,
     signalMode,
   });
 
@@ -181,6 +184,7 @@ export async function deliverFinalSignalNotification(args: {
       signalMode,
       winPlaceCandidate,
       placeCandidate,
+      smallkaramellCandidate,
     },
     claimed_at: nowIso,
     sent_at: null,

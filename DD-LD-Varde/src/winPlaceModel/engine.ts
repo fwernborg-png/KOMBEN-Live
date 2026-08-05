@@ -2,13 +2,13 @@ import {
   getWinPlaceCollectionStartMs,
   getWinPlacePlannedLockTimeMs,
 } from "./config";
+import type { WinPlaceRuleConfig } from "./config";
 import type {
   WinPlaceCandidate,
   WinPlaceEvaluation,
   WinPlaceRuleCheck,
   WinPlaceRunnerInput,
 } from "./types";
-import type { WinPlaceRuleConfig } from "./config";
 
 const INVALID_ODDS_DECIMALS = new Set([99.99]);
 
@@ -48,6 +48,29 @@ function containsCancelledStatus(status?: string) {
   return /install|inst[äa]lld|inst[äa]llt|cancel/i.test(status);
 }
 
+export function rankWinPlaceCandidates(
+  candidates: WinPlaceCandidate[],
+) {
+  return [...candidates].sort((a, b) => {
+    if (a.oddsDropPercent !== b.oddsDropPercent) {
+      return b.oddsDropPercent - a.oddsDropPercent;
+    }
+
+    if (a.currentWinOdds !== b.currentWinOdds) {
+      return a.currentWinOdds - b.currentWinOdds;
+    }
+
+    return a.runnerNumber - b.runnerNumber;
+  });
+}
+
+export function selectWinPlaceCandidate(
+  candidates: WinPlaceCandidate[],
+  selectionRank: 1 | 2,
+) {
+  return rankWinPlaceCandidates(candidates)[selectionRank - 1] ?? null;
+}
+
 function buildCandidates(args: {
   runners: WinPlaceRunnerInput[];
   plannedStartTime: string;
@@ -60,8 +83,9 @@ function buildCandidates(args: {
     config,
   );
 
-  return runners
-    .filter((runner) => !runner.scratched)
+  const activeRunners = runners.filter((runner) => !runner.scratched);
+
+  const candidates = activeRunners
     .map((runner): WinPlaceCandidate | null => {
       const validHistory = runner.oddsHistory
         .filter(
@@ -117,18 +141,19 @@ function buildCandidates(args: {
     .filter(
       (candidate): candidate is WinPlaceCandidate =>
         candidate !== null,
-    )
-    .sort((a, b) => {
-      if (a.oddsDropPercent !== b.oddsDropPercent) {
-        return b.oddsDropPercent - a.oddsDropPercent;
-      }
+    );
 
-      if (a.currentWinOdds !== b.currentWinOdds) {
-        return a.currentWinOdds - b.currentWinOdds;
-      }
+  // Den befintliga S1-regeln behåller tidigare beteende.
+  // För S2 krävs däremot ett komplett aktivt startfält,
+  // annars kan "näst mest sänkt" inte utses säkert.
+  if (
+    config.selectionRank === 2 &&
+    candidates.length !== activeRunners.length
+  ) {
+    return [];
+  }
 
-      return a.runnerNumber - b.runnerNumber;
-    });
+  return rankWinPlaceCandidates(candidates);
 }
 
 function failedReasons(checks: WinPlaceRuleCheck[]) {
@@ -200,6 +225,19 @@ export function evaluateWinPlaceModelAtLock(args: {
       : "INGET SPEL – AKTUELL ODDSPUNKT SAKNAS",
   });
 
+  const baseResult = {
+    raceId: race.raceId,
+    ruleVersion: config.ruleVersion,
+    race,
+    plannedLockTimeMs,
+    actualLockTimeMs: nowMs,
+    lockedAt: nowIso,
+    secondsBeforeStartAtLock,
+    configSnapshot: config,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+
   if (
     excludedByMonte ||
     cancelled ||
@@ -207,21 +245,14 @@ export function evaluateWinPlaceModelAtLock(args: {
     !hasFreshCurrentOddsPoint
   ) {
     return {
-      raceId: race.raceId,
-      ruleVersion: config.ruleVersion,
+      ...baseResult,
       decision: excludedByMonte ? "EXCLUDED" : "NO_PLAY",
       reasons: failedReasons(checks),
-      race,
-      plannedLockTimeMs,
-      actualLockTimeMs: nowMs,
-      lockedAt: nowIso,
-      secondsBeforeStartAtLock,
-      configSnapshot: config,
       checks,
+      selectedCandidate: null,
       mostShortened: null,
-      createdAt: nowIso,
-      updatedAt: nowIso,
       snapshot: {
+        selectionRank: config.selectionRank,
         runnersCount: runners.length,
       },
     };
@@ -235,32 +266,34 @@ export function evaluateWinPlaceModelAtLock(args: {
   });
 
   const mostShortened = candidates[0] ?? null;
+  const selectedCandidate =
+    candidates[config.selectionRank - 1] ?? null;
 
   checks.push({
-    key: "MOST_SHORTENED_FOUND",
-    passed: mostShortened !== null,
-    message: mostShortened
-      ? `Mest sänkt är nummer ${mostShortened.runnerNumber}`
-      : "INGET SPEL – INGEN GILTIG MEST SÄNKT HÄST",
+    key:
+      config.selectionRank === 1
+        ? "MOST_SHORTENED_FOUND"
+        : "SECOND_MOST_SHORTENED_FOUND",
+    passed: selectedCandidate !== null,
+    message: selectedCandidate
+      ? config.selectionRank === 1
+        ? `Mest sänkt är nummer ${selectedCandidate.runnerNumber}`
+        : `Näst mest sänkt är nummer ${selectedCandidate.runnerNumber}`
+      : config.selectionRank === 1
+        ? "INGET SPEL – INGEN GILTIG MEST SÄNKT HÄST"
+        : "INGET SPEL – INGEN GILTIG S2-HÄST",
   });
 
-  if (!mostShortened) {
+  if (!selectedCandidate) {
     return {
-      raceId: race.raceId,
-      ruleVersion: config.ruleVersion,
+      ...baseResult,
       decision: "INSUFFICIENT_DATA",
       reasons: failedReasons(checks),
-      race,
-      plannedLockTimeMs,
-      actualLockTimeMs: nowMs,
-      lockedAt: nowIso,
-      secondsBeforeStartAtLock,
-      configSnapshot: config,
       checks,
-      mostShortened: null,
-      createdAt: nowIso,
-      updatedAt: nowIso,
+      selectedCandidate: null,
+      mostShortened,
       snapshot: {
+        selectionRank: config.selectionRank,
         candidates,
         runnersCount: runners.length,
       },
@@ -269,38 +302,40 @@ export function evaluateWinPlaceModelAtLock(args: {
 
   const originalRunner =
     runners.find(
-      (runner) => runner.number === mostShortened.runnerNumber,
+      (runner) => runner.number === selectedCandidate.runnerNumber,
     ) ?? null;
 
-  // Skyddar exakta gränsvärden mot binär avrundning,
-  // utan att verkliga värden under 30 % godkänns.
   const hasMinimumDrop =
-    mostShortened.oddsDropPercent + 1e-9 >=
-    config.minOddsDropPercentInclusive;
+    config.minOddsDropPercentInclusive === null ||
+    selectedCandidate.oddsDropPercent + 1e-9 >=
+      config.minOddsDropPercentInclusive;
 
   const belowOrEqualMaximumOdds =
-    mostShortened.currentWinOdds <=
+    selectedCandidate.currentWinOdds <=
     config.maxCurrentWinOddsInclusive + Number.EPSILON;
 
   const notScratched = originalRunner?.scratched === false;
 
   const enoughPoints =
-    mostShortened.validOddsPoints >= config.minValidOddsPoints;
+    selectedCandidate.validOddsPoints >= config.minValidOddsPoints;
 
   checks.push({
     key: "MIN_ODDS_DROP",
     passed: hasMinimumDrop,
-    message: hasMinimumDrop
-      ? `Sänkning ${mostShortened.oddsDropPercent.toFixed(1)} % är godkänd`
-      : `Sänkningen är endast ${mostShortened.oddsDropPercent.toFixed(1)} %`,
+    message:
+      config.minOddsDropPercentInclusive === null
+        ? "Inget minikrav på sänkning för strategin"
+        : hasMinimumDrop
+          ? `Sänkning ${selectedCandidate.oddsDropPercent.toFixed(1)} % är godkänd`
+          : `Sänkningen är endast ${selectedCandidate.oddsDropPercent.toFixed(1)} %`,
   });
 
   checks.push({
     key: "MAX_WIN_ODDS",
     passed: belowOrEqualMaximumOdds,
     message: belowOrEqualMaximumOdds
-      ? `Vinnarodds ${mostShortened.currentWinOdds.toFixed(2)} är godkänt`
-      : `Vinnaroddset är ${mostShortened.currentWinOdds.toFixed(2)}`,
+      ? `Vinnarodds ${selectedCandidate.currentWinOdds.toFixed(2)} är godkänt`
+      : `Vinnaroddset är ${selectedCandidate.currentWinOdds.toFixed(2)}`,
   });
 
   checks.push({
@@ -315,7 +350,7 @@ export function evaluateWinPlaceModelAtLock(args: {
     key: "MIN_VALID_POINTS",
     passed: enoughPoints,
     message: enoughPoints
-      ? `${mostShortened.validOddsPoints} giltiga oddspunkter`
+      ? `${selectedCandidate.validOddsPoints} giltiga oddspunkter`
       : "INGET SPEL – FÖR FÅ ODDSPUNKTER",
   });
 
@@ -324,21 +359,16 @@ export function evaluateWinPlaceModelAtLock(args: {
     : "NO_PLAY";
 
   return {
-    raceId: race.raceId,
-    ruleVersion: config.ruleVersion,
+    ...baseResult,
     decision,
     reasons: failedReasons(checks),
-    race,
-    plannedLockTimeMs,
-    actualLockTimeMs: nowMs,
-    lockedAt: nowIso,
-    secondsBeforeStartAtLock,
-    configSnapshot: config,
     checks,
+    selectedCandidate,
     mostShortened,
-    createdAt: nowIso,
-    updatedAt: nowIso,
     snapshot: {
+      strategyCode: config.strategyCode,
+      selectionRank: config.selectionRank,
+      selectedCandidate,
       mostShortened,
       candidates,
       runnersCount: runners.length,

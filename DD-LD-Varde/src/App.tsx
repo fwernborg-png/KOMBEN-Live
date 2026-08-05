@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "./lib/supabase";
 import { PLACE_RULE_CONFIG_V1, getRaceLockTimeMs } from "./placeModel/config";
+import { SMALLKARAMELL_RULE_CONFIG_V1 } from "./winPlaceModel/config";
 import { applySettledResult, computePlaceStats, orenToSek, sekToOren } from "./placeModel/economy";
 import { buildPlaceBetsCsv, buildPlaceEvaluationsCsv } from "./placeModel/csv";
 import { evaluatePlaceModelAtLock } from "./placeModel/engine";
@@ -39,6 +40,7 @@ import type {
   PlaceRunnerInput,
 } from "./placeModel/types";
 import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
+import { loadWinPlaceBetsByDate } from "./winPlaceModel/repository";
 import { ResearchHistoryPanel } from "./researchHistory/ResearchHistoryPanel";
 import { mergeVpPayloadIntoWinnerPayload } from "./atg/vpPayload";
 import { findNextUpcomingRace, isRaceFinished } from "./raceNavigation";
@@ -306,6 +308,7 @@ type RaceInsights = {
   byRunner: Record<number, RunnerInsights>;
   smoothest: TrendRunner | null;
   biggestDrop: TrendRunner | null;
+  secondBiggestDrop: TrendRunner | null;
 };
 
 type RaceOddsCollectionMeta = {
@@ -1240,14 +1243,34 @@ function buildRaceInsights(runners: TrendRunner[]) {
   const smoothest = [...activeRunners]
     .filter((runner) => byRunner[runner.number]?.consistency !== null)
     .sort((a, b) => (byRunner[a.number]?.consistency ?? Number.POSITIVE_INFINITY) - (byRunner[b.number]?.consistency ?? Number.POSITIVE_INFINITY))[0] ?? null;
-  const biggestDrop = [...activeRunners]
+  const dropRanking = [...activeRunners]
     .filter((runner) => runner.dropPercent !== null)
-    .sort((a, b) => (b.dropPercent ?? Number.NEGATIVE_INFINITY) - (a.dropPercent ?? Number.NEGATIVE_INFINITY))[0] ?? null;
+    .sort((a, b) => {
+      const dropDifference =
+        (b.dropPercent ?? Number.NEGATIVE_INFINITY) -
+        (a.dropPercent ?? Number.NEGATIVE_INFINITY);
+
+      if (dropDifference !== 0) return dropDifference;
+
+      const oddsDifference =
+        (a.odds ?? Number.POSITIVE_INFINITY) -
+        (b.odds ?? Number.POSITIVE_INFINITY);
+
+      if (oddsDifference !== 0) return oddsDifference;
+      return a.number - b.number;
+    });
+
+  const biggestDrop = dropRanking[0] ?? null;
+  const secondBiggestDrop =
+    dropRanking.length === activeRunners.length
+      ? dropRanking[1] ?? null
+      : null;
 
   return {
     byRunner,
     smoothest,
     biggestDrop,
+    secondBiggestDrop,
   } satisfies RaceInsights;
 }
 
@@ -1876,6 +1899,8 @@ export default function App() {
   const [raceOddsCollectionMeta, setRaceOddsCollectionMeta] = useState<Record<string, RaceOddsCollectionMeta>>({});
   const [gallopCacheByHorseId, setGallopCacheByHorseId] = useState<Record<number, GallopCacheEntry>>({});
   const [autoSelections, setAutoSelections] = useState<AutoSelection[]>([]);
+  const [lockedSmallkaramellByRace, setLockedSmallkaramellByRace] =
+    useState<Record<string, number>>({});
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
   const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
   const [tvillingMarkets, setTvillingMarkets] = useState<Record<string, TvillingRaceMarket>>({});
@@ -1907,6 +1932,42 @@ export default function App() {
   const gallopCacheRef = useRef<Record<number, GallopCacheEntry>>({});
   const appBootMsRef = useRef(Date.now());
   const placeLoadStartedRef = useRef(false);
+
+  const smallkaramellPollMinute = Math.floor(nowMs / 60_000);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void loadWinPlaceBetsByDate(date, "LIVE")
+      .then((bets) => {
+        if (cancelled) return;
+
+        const next: Record<string, number> = {};
+
+        for (const bet of bets) {
+          if (
+            bet.ruleVersion ===
+              SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion &&
+            bet.market === "WIN"
+          ) {
+            next[bet.raceId] = bet.horseNumber;
+          }
+        }
+
+        setLockedSmallkaramellByRace(next);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        console.warn(
+          "Kunde inte läsa låsta Smällkarameller",
+          loadError,
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [date, smallkaramellPollMinute]);
 
   const activatePushNotifications = useCallback(async () => {
     if (
@@ -5169,6 +5230,18 @@ export default function App() {
                         const isBiggestDrop =
                           raceInsights.biggestDrop?.number === runner.number;
 
+                        const isLockedSmallkaramell =
+                          lockedSmallkaramellByRace[selectedRace.id] ===
+                          runner.number;
+
+                        const isPotentialSmallkaramell =
+                          !isLockedSmallkaramell &&
+                          raceInsights.secondBiggestDrop?.number === runner.number &&
+                          runner.odds !== null &&
+                          runner.odds / 100 <=
+                            SMALLKARAMELL_RULE_CONFIG_V1.maxCurrentWinOddsInclusive +
+                              Number.EPSILON;
+
                         const runnerInfo = raceInsights.byRunner[runner.number];
                         const isExpanded = expandedRunnerKey === rowKey;
                         const consistency = runnerInfo?.consistency;
@@ -5192,7 +5265,7 @@ export default function App() {
                         return (
                           <div
                             key={rowKey}
-                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""} ${podiumPosition ? `is-finish-${podiumPosition}` : ""}`}
+                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""} ${isPotentialSmallkaramell ? "is-smallkaramell" : ""} ${isLockedSmallkaramell ? "is-smallkaramell-locked" : ""} ${podiumPosition ? `is-finish-${podiumPosition}` : ""}`}
                           >
                             <div
                               role="button"
@@ -5206,7 +5279,7 @@ export default function App() {
                                 }
                               }}
                             >
-                              <span className={`number-pill ${isWatched || isLockedPlay || isBiggestDrop ? "is-highlight" : ""}`}>{runner.number}</span>
+                              <span className={`number-pill ${isWatched || isLockedPlay || isBiggestDrop || isPotentialSmallkaramell || isLockedSmallkaramell ? "is-highlight" : ""}`}>{runner.number}</span>
                               <span className="runner-name-cell">
                                 <span className="runner-title-line">
                                   {podiumPosition ? (
@@ -5228,6 +5301,24 @@ export default function App() {
                                   {isLockedPlay ? (
                                     <span className="inline-tag a1">
                                       PLATSSPEL
+                                    </span>
+                                  ) : null}
+
+                                  {isLockedSmallkaramell ? (
+                                    <span
+                                      className="inline-tag smallkaramell locked"
+                                      title="Låst Smällkaramell vid T−90: vinnare + plats."
+                                    >
+                                      🎉 SMÄLLKARAMELLEN
+                                    </span>
+                                  ) : null}
+
+                                  {isPotentialSmallkaramell ? (
+                                    <span
+                                      className="inline-tag smallkaramell"
+                                      title="Näst mest sänkt och aktuellt vinnarodds högst 7,00. Kandidaten låses först vid T−90."
+                                    >
+                                      🎉 MÖJLIG SMÄLLKARAMELL
                                     </span>
                                   ) : null}
 
@@ -5269,7 +5360,25 @@ export default function App() {
                                   </span>
                                 ) : null}
 
-                                {!isWatched && !isLockedPlay && !isSmoothest && !isBiggestDrop ? (
+                                {isLockedSmallkaramell ? (
+                                  <span
+                                    className="candidate-badge strategy-badge smallkaramell locked"
+                                    title="Låst vid T−90 · vinnare + plats"
+                                  >
+                                    🎉 LÅST
+                                  </span>
+                                ) : null}
+
+                                {isPotentialSmallkaramell ? (
+                                  <span
+                                    className="candidate-badge strategy-badge smallkaramell"
+                                    title="S2 · aktuellt vinnarodds högst 7,00"
+                                  >
+                                    🎉 MÖJLIG
+                                  </span>
+                                ) : null}
+
+                                {!isWatched && !isLockedPlay && !isSmoothest && !isBiggestDrop && !isPotentialSmallkaramell && !isLockedSmallkaramell ? (
                                   <span className="candidate-badge neutral">-</span>
                                 ) : null}
                               </span>

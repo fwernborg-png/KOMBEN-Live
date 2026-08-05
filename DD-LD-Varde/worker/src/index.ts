@@ -22,6 +22,7 @@ import type {
   SmoothestCandidate,
 } from "../../src/placeModel/types";
 import {
+  SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
   getWinPlacePlannedLockTimeMs,
   isInWinPlaceFinalSignalWindow,
@@ -1627,6 +1628,8 @@ async function runCron(env: Env) {
     betsCreated: 0,
     winPlaceEvaluationsCreated: 0,
     winPlaceBetsCreated: 0,
+    smallkaramellEvaluationsCreated: 0,
+    smallkaramellBetsCreated: 0,
     winPlaceBetsSettled: 0,
     winPlaceBetsVoided: 0,
     winPlaceSettlementSkipped: 0,
@@ -2200,7 +2203,10 @@ async function runCron(env: Env) {
     } = await supabase
       .from("win_place_race_evaluations")
       .select("race_id,rule_version")
-      .eq("rule_version", WIN_PLACE_RULE_CONFIG_V1.ruleVersion)
+      .in("rule_version", [
+        WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
+        SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
+      ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
 
@@ -2222,14 +2228,7 @@ async function runCron(env: Env) {
       const { track, race } = item;
       const plannedStartTime = race.startTime;
 
-      if (
-        !plannedStartTime ||
-        !isInWinPlaceFinalSignalWindow(
-          plannedStartTime,
-          startMs,
-          WIN_PLACE_RULE_CONFIG_V1,
-        )
-      ) {
+      if (!plannedStartTime) {
         continue;
       }
 
@@ -2237,8 +2236,28 @@ async function runCron(env: Env) {
         race.id,
         WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
       );
+      const smallkaramellRaceKey = raceRuleKey(
+        race.id,
+        SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
+      );
 
-      if (existingWinPlaceEvalKeys.has(winPlaceRaceKey)) {
+      const needsWinPlaceEvaluation =
+        isInWinPlaceFinalSignalWindow(
+          plannedStartTime,
+          startMs,
+          WIN_PLACE_RULE_CONFIG_V1,
+        ) &&
+        !existingWinPlaceEvalKeys.has(winPlaceRaceKey);
+
+      const needsSmallkaramellEvaluation =
+        isInWinPlaceFinalSignalWindow(
+          plannedStartTime,
+          startMs,
+          SMALLKARAMELL_RULE_CONFIG_V1,
+        ) &&
+        !existingWinPlaceEvalKeys.has(smallkaramellRaceKey);
+
+      if (!needsWinPlaceEvaluation && !needsSmallkaramellEvaluation) {
         continue;
       }
 
@@ -2285,9 +2304,7 @@ async function runCron(env: Env) {
             name: runner.name,
             startLane: runner.startLane,
             scratched: runner.scratched,
-            currentWinOddsDecimal: toDecimalOdds(
-              runner.oddsRaw,
-            ),
+            currentWinOddsDecimal: toDecimalOdds(runner.oddsRaw),
             indicatorsGreen: indicators.indicatorsGreen,
             strength: indicators.strength,
             oddsHistory: history,
@@ -2309,116 +2326,154 @@ async function runCron(env: Env) {
           })
           .map((runner) => runner.number);
 
-      const plannedLockTimeMs =
-        getWinPlacePlannedLockTimeMs(
-          plannedStartTime,
-          WIN_PLACE_RULE_CONFIG_V1,
-        );
-
-      const hasFreshCurrentOddsPoint =
-        latestPointMs !== null &&
-        Math.abs(plannedLockTimeMs - latestPointMs) <=
-          lockGraceMs;
-
-      const evaluation = evaluateWinPlaceModelAtLock({
-        race: {
-          raceId: race.id,
-          date: raceDate,
-          trackId: track.id,
-          trackName: track.name,
-          raceNumber: race.raceNumber,
-          plannedStartTime,
-          raceStatus: race.status,
-          isMonte: race.isMonte,
-          startMethod: race.startMethod,
-          distanceMeters: race.distanceMeters,
-          starters: race.runners.filter(
-            (runner) => !runner.scratched,
-          ).length,
-        },
-        runners: winPlaceRunners,
-        nowMs: startMs,
-        config: WIN_PLACE_RULE_CONFIG_V1,
-        hasCompleteOddsHistory:
-          incompleteOddsHistoryRunnerNumbers.length === 0,
-        hasFreshCurrentOddsPoint,
-      });
-
-      const evaluationWithTiming = {
-        ...evaluation,
-        snapshot: {
-          ...evaluation.snapshot,
-          incompleteOddsHistoryRunnerNumbers,
-          lockTiming: {
-            plannedLockTimeMs,
-            actualSignalLockTimeMs: startMs,
-            usedOddsPointTimestampMs: latestPointMs,
-          },
-        },
+      const raceInput = {
+        raceId: race.id,
+        date: raceDate,
+        trackId: track.id,
+        trackName: track.name,
+        raceNumber: race.raceNumber,
+        plannedStartTime,
+        raceStatus: race.status,
+        isMonte: race.isMonte,
+        startMethod: race.startMethod,
+        distanceMeters: race.distanceMeters,
+        starters: race.runners.filter(
+          (runner) => !runner.scratched,
+        ).length,
       };
 
-      const betRows = buildWinPlaceBetRows({
-        evaluation: evaluationWithTiming,
-        nowIso,
-      });
+      const hasCompleteOddsHistory =
+        incompleteOddsHistoryRunnerNumbers.length === 0;
 
-      if (betRows.length) {
-        const { error: winPlaceBetError } = await supabase
-          .from("win_place_model_bets")
-          .upsert(betRows, {
-            onConflict:
-              "race_id,rule_version,market,signal_phase",
-          });
+      const evaluateAndPersist = async (args: {
+        config: typeof WIN_PLACE_RULE_CONFIG_V1;
+        raceKey: string;
+        counter: "WIN_PLACE" | "SMALLKARAMELL";
+      }) => {
+        const plannedLockTimeMs =
+          getWinPlacePlannedLockTimeMs(
+            plannedStartTime,
+            args.config,
+          );
 
-        if (winPlaceBetError) {
+        const hasFreshCurrentOddsPoint =
+          latestPointMs !== null &&
+          Math.abs(plannedLockTimeMs - latestPointMs) <=
+            lockGraceMs;
+
+        const evaluation = evaluateWinPlaceModelAtLock({
+          race: raceInput,
+          runners: winPlaceRunners,
+          nowMs: startMs,
+          config: args.config,
+          hasCompleteOddsHistory,
+          hasFreshCurrentOddsPoint,
+        });
+
+        const evaluationWithTiming: WinPlaceEvaluation = {
+          ...evaluation,
+          snapshot: {
+            ...evaluation.snapshot,
+            incompleteOddsHistoryRunnerNumbers,
+            lockTiming: {
+              plannedLockTimeMs,
+              actualSignalLockTimeMs: startMs,
+              usedOddsPointTimestampMs: latestPointMs,
+            },
+          },
+        };
+
+        const betRows = buildWinPlaceBetRows({
+          evaluation: evaluationWithTiming,
+          nowIso,
+        });
+
+        if (betRows.length) {
+          const { error: betError } = await supabase
+            .from("win_place_model_bets")
+            .upsert(betRows, {
+              onConflict:
+                "race_id,rule_version,market,signal_phase",
+            });
+
+          if (betError) {
+            throw new Error(
+              `Could not upsert ${args.config.strategyCode} bets for race ${race.id}: ${betError.message}`,
+            );
+          }
+
+          if (args.counter === "SMALLKARAMELL") {
+            summary.smallkaramellBetsCreated += betRows.length;
+          } else {
+            summary.winPlaceBetsCreated += betRows.length;
+          }
+        }
+
+        const { error: evaluationError } = await supabase
+          .from("win_place_race_evaluations")
+          .upsert(
+            {
+              race_id: evaluationWithTiming.raceId,
+              rule_version: evaluationWithTiming.ruleVersion,
+              strategy_code: args.config.strategyCode,
+              decision: evaluationWithTiming.decision,
+              reasons: evaluationWithTiming.reasons,
+              race_json: evaluationWithTiming.race,
+              planned_lock_time_ms:
+                evaluationWithTiming.plannedLockTimeMs,
+              actual_lock_time_ms:
+                evaluationWithTiming.actualLockTimeMs,
+              locked_at: evaluationWithTiming.lockedAt,
+              seconds_before_start:
+                evaluationWithTiming.secondsBeforeStartAtLock,
+              config_snapshot:
+                evaluationWithTiming.configSnapshot,
+              checks_json: evaluationWithTiming.checks,
+              candidate_json:
+                evaluationWithTiming.selectedCandidate ?? null,
+              most_shortened_json:
+                evaluationWithTiming.mostShortened,
+              snapshot_json: evaluationWithTiming.snapshot,
+              signal_phase: "LIVE",
+              created_at: evaluationWithTiming.createdAt,
+              updated_at: evaluationWithTiming.updatedAt,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (evaluationError) {
           throw new Error(
-            `Could not upsert win-place bets for race ${race.id}: ${winPlaceBetError.message}`,
+            `Could not upsert ${args.config.strategyCode} evaluation ${race.id}: ${evaluationError.message}`,
           );
         }
 
-        summary.winPlaceBetsCreated += betRows.length;
+        if (args.counter === "SMALLKARAMELL") {
+          summary.smallkaramellEvaluationsCreated += 1;
+        } else {
+          summary.winPlaceEvaluationsCreated += 1;
+        }
+
+        existingWinPlaceEvalKeys.add(args.raceKey);
+      };
+
+      if (needsWinPlaceEvaluation) {
+        await evaluateAndPersist({
+          config: WIN_PLACE_RULE_CONFIG_V1,
+          raceKey: winPlaceRaceKey,
+          counter: "WIN_PLACE",
+        });
       }
 
-      const { error: winPlaceEvalError } = await supabase
-        .from("win_place_race_evaluations")
-        .upsert(
-          {
-            race_id: evaluationWithTiming.raceId,
-            rule_version: evaluationWithTiming.ruleVersion,
-            decision: evaluationWithTiming.decision,
-            reasons: evaluationWithTiming.reasons,
-            race_json: evaluationWithTiming.race,
-            planned_lock_time_ms:
-              evaluationWithTiming.plannedLockTimeMs,
-            actual_lock_time_ms:
-              evaluationWithTiming.actualLockTimeMs,
-            locked_at: evaluationWithTiming.lockedAt,
-            seconds_before_start:
-              evaluationWithTiming.secondsBeforeStartAtLock,
-            config_snapshot:
-              evaluationWithTiming.configSnapshot,
-            checks_json: evaluationWithTiming.checks,
-            most_shortened_json:
-              evaluationWithTiming.mostShortened,
-            snapshot_json: evaluationWithTiming.snapshot,
-            signal_phase: "LIVE",
-            created_at: evaluationWithTiming.createdAt,
-            updated_at: evaluationWithTiming.updatedAt,
-          },
-          {
-            onConflict:
-              "race_id,rule_version,signal_phase",
-          },
-        );
-
-      if (winPlaceEvalError) {
-        throw new Error(
-          `Could not upsert win-place evaluation ${race.id}: ${winPlaceEvalError.message}`,
-        );
+      if (needsSmallkaramellEvaluation) {
+        await evaluateAndPersist({
+          config: SMALLKARAMELL_RULE_CONFIG_V1,
+          raceKey: smallkaramellRaceKey,
+          counter: "SMALLKARAMELL",
+        });
       }
-
-      summary.winPlaceEvaluationsCreated += 1;
-      existingWinPlaceEvalKeys.add(winPlaceRaceKey);
     }
 
     const { data: existingEvalRows, error: existingEvalError } = await supabase
@@ -2801,9 +2856,15 @@ async function runCron(env: Env) {
                 trialSignals
                   .placeCandidate;
 
+            const smallkaramellCandidate:
+              WinPlaceCandidate | null =
+                trialSignals
+                  .smallkaramellCandidate;
+
             if (
               !winPlaceCandidate &&
-              !placeCandidate
+              !placeCandidate &&
+              !smallkaramellCandidate
             ) {
               continue;
             }
@@ -2829,6 +2890,7 @@ async function runCron(env: Env) {
                 plannedStartTime,
                 winPlaceCandidate,
                 placeCandidate,
+                smallkaramellCandidate,
 
                 signalMode:
                   "RESEARCH_TRIAL",
@@ -2861,10 +2923,11 @@ async function runCron(env: Env) {
           const [
             winPlaceResult,
             placeResult,
+            smallkaramellResult,
           ] = await Promise.all([
             supabase
               .from("win_place_race_evaluations")
-              .select("decision,most_shortened_json")
+              .select("decision,candidate_json")
               .eq("race_id", race.id)
               .eq(
                 "rule_version",
@@ -2881,6 +2944,16 @@ async function runCron(env: Env) {
                 PLACE_RULE_CONFIG_V1.ruleVersion,
               )
               .maybeSingle(),
+            supabase
+              .from("win_place_race_evaluations")
+              .select("decision,candidate_json")
+              .eq("race_id", race.id)
+              .eq(
+                "rule_version",
+                SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
+              )
+              .eq("signal_phase", "LIVE")
+              .maybeSingle(),
           ]);
 
           if (winPlaceResult.error) {
@@ -2895,13 +2968,15 @@ async function runCron(env: Env) {
             );
           }
 
+          if (smallkaramellResult.error) {
+            throw new Error(
+              `Could not load final smallkaramell signal: ${smallkaramellResult.error.message}`,
+            );
+          }
+
           const winPlaceRow = winPlaceResult.data as {
             decision: string;
-            most_shortened_json:
-              | NonNullable<
-                  WinPlaceEvaluation["mostShortened"]
-                >
-              | null;
+            candidate_json: WinPlaceCandidate | null;
           } | null;
 
           const placeRow = placeResult.data as {
@@ -2911,9 +2986,14 @@ async function runCron(env: Env) {
               | null;
           } | null;
 
+          const smallkaramellRow = smallkaramellResult.data as {
+            decision: string;
+            candidate_json: WinPlaceCandidate | null;
+          } | null;
+
           const winPlaceCandidate =
             winPlaceRow?.decision === "PLAY"
-              ? winPlaceRow.most_shortened_json
+              ? winPlaceRow.candidate_json
               : null;
 
           const placeCandidate =
@@ -2921,7 +3001,16 @@ async function runCron(env: Env) {
               ? placeRow.smoothest_json
               : null;
 
-          if (!winPlaceCandidate && !placeCandidate) {
+          const smallkaramellCandidate =
+            smallkaramellRow?.decision === "PLAY"
+              ? smallkaramellRow.candidate_json
+              : null;
+
+          if (
+            !winPlaceCandidate &&
+            !placeCandidate &&
+            !smallkaramellCandidate
+          ) {
             continue;
           }
 
@@ -2937,6 +3026,7 @@ async function runCron(env: Env) {
               plannedStartTime,
               winPlaceCandidate,
               placeCandidate,
+              smallkaramellCandidate,
               nowIso,
             });
 
@@ -2972,7 +3062,10 @@ async function runCron(env: Env) {
       .select(
         "id,bet_id,race_id,rule_version,market,signal_phase,date,track_id,track_name,race_number,horse_number,horse_name,stake_oren,result_outcome",
       )
-      .eq("rule_version", WIN_PLACE_RULE_CONFIG_V1.ruleVersion)
+      .in("rule_version", [
+        WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
+        SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
+      ])
       .eq("signal_phase", "LIVE")
       .eq("result_outcome", "PENDING")
       .gte("date", lowerDate)

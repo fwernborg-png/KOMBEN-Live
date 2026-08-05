@@ -43,6 +43,7 @@ export type WinPlaceRuleCheck = {
     | "ODDS_HISTORY_COMPLETE"
     | "CURRENT_ODDS_POINT_AVAILABLE"
     | "MOST_SHORTENED_FOUND"
+    | "SECOND_MOST_SHORTENED_FOUND"
     | "MIN_ODDS_DROP"
     | "MAX_WIN_ODDS"
     | "NOT_SCRATCHED"
@@ -63,6 +64,7 @@ export type WinPlaceEvaluation = {
   secondsBeforeStartAtLock: number;
   configSnapshot: WinPlaceRuleConfig;
   checks: WinPlaceRuleCheck[];
+  selectedCandidate?: WinPlaceCandidate | null;
   mostShortened: WinPlaceCandidate | null;
   createdAt: string;
   updatedAt: string;

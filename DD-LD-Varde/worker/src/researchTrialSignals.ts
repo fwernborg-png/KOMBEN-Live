@@ -7,6 +7,14 @@ import type {
   WinPlaceRunnerInput,
 } from "../../src/winPlaceModel/types";
 
+import {
+  SMALLKARAMELL_RULE_CONFIG_V1,
+} from "../../src/winPlaceModel/config";
+
+import {
+  selectWinPlaceCandidate,
+} from "../../src/winPlaceModel/engine";
+
 export const RESEARCH_TRIAL_SIGNAL_START_DATE =
   "2026-08-03";
 
@@ -14,7 +22,7 @@ export const RESEARCH_TRIAL_SIGNAL_END_DATE =
   "2026-08-16";
 
 export const RESEARCH_TRIAL_SIGNAL_VERSION =
-  "RESEARCH_TRIAL_2026-08-03_2026-08-16_V1.0";
+  "RESEARCH_TRIAL_2026-08-03_2026-08-16_V1.1";
 
 export const RESEARCH_TRIAL_WINNER_RULE = {
   minStartOddsInclusive: 3,
@@ -329,6 +337,7 @@ export function evaluateResearchTrialSignals(
       active: false,
       winnerCandidate: null,
       placeCandidate: null,
+      smallkaramellCandidate: null,
       excludedReason:
         "Utanför testperioden",
     };
@@ -348,6 +357,7 @@ export function evaluateResearchTrialSignals(
       active: true,
       winnerCandidate: null,
       placeCandidate: null,
+      smallkaramellCandidate: null,
       excludedReason:
         "Loppet uppfyller inte grundkraven",
     };
@@ -361,6 +371,7 @@ export function evaluateResearchTrialSignals(
       active: true,
       winnerCandidate: null,
       placeCandidate: null,
+      smallkaramellCandidate: null,
       excludedReason:
         "Otillräcklig oddshistorik",
     };
@@ -449,10 +460,25 @@ export function evaluateResearchTrialSignals(
         )
       : null;
 
+  const rankedS2 =
+    selectWinPlaceCandidate(
+      candidates,
+      SMALLKARAMELL_RULE_CONFIG_V1.selectionRank,
+    );
+
+  const smallkaramellCandidate =
+    rankedS2 !== null &&
+    rankedS2.currentWinOdds <=
+      SMALLKARAMELL_RULE_CONFIG_V1.maxCurrentWinOddsInclusive +
+        Number.EPSILON
+      ? rankedS2
+      : null;
+
   return {
     active: true,
     winnerCandidate,
     placeCandidate,
+    smallkaramellCandidate,
     excludedReason: null,
   };
 }

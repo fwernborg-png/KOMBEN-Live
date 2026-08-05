@@ -256,7 +256,7 @@ describe(
               "RESEARCH_TRIAL",
           }),
         ).toBe(
-          "2026-08-10:33:5:RESEARCH_TRIAL_2026-08-03_2026-08-16_V1.0",
+          "2026-08-10:33:5:RESEARCH_TRIAL_2026-08-03_2026-08-16_V1.1",
         );
       },
     );
@@ -269,9 +269,55 @@ describe(
             base,
           ),
         ).toBe(
-          "2026-08-10:33:5:FINAL_SIGNAL_V1.0",
+          "2026-08-10:33:5:FINAL_SIGNAL_V1.1",
         );
       },
     );
+
+    it(
+      "skriver Smällkaramellen som vinnare plus plats",
+      () => {
+        const notification =
+          buildFinalSignalNotification({
+            ...base,
+            winPlaceCandidate: null,
+            placeCandidate: null,
+            smallkaramellCandidate: {
+              ...winPlaceCandidate(9),
+              runnerName: "Epic S2",
+              currentWinOdds: 7,
+              strength: 2,
+            },
+          });
+
+        expect(notification?.title).toBe(
+          "SMÄLLKARAMELLEN – Mantorp lopp 5",
+        );
+        expect(notification?.body).toContain("100 kr vinnare + 100 kr plats");
+        expect(notification?.body).toContain("S2");
+        expect(notification?.body).toContain("låsodds 7,00");
+      },
+    );
+
+    it(
+      "samlar Smällkaramellen med andra signaler i en gemensam notis",
+      () => {
+        const notification =
+          buildFinalSignalNotification({
+            ...base,
+            winPlaceCandidate: winPlaceCandidate(6),
+            placeCandidate: placeCandidate(4),
+            smallkaramellCandidate: winPlaceCandidate(9),
+          });
+
+        expect(notification?.title).toBe(
+          "FLERA SPELSIGNALER – Mantorp lopp 5",
+        );
+        expect(notification?.body).toContain("SMÄLLKARAMELLEN");
+        expect(notification?.body).toContain("Vinnare + plats");
+        expect(notification?.body).toContain("Plats:");
+      },
+    );
+
   },
 );

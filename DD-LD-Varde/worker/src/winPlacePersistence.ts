@@ -7,7 +7,8 @@ export function buildWinPlaceBetRows(args: {
   nowIso: string;
 }) {
   const { evaluation, nowIso } = args;
-  const candidate = evaluation.mostShortened;
+  const candidate =
+    evaluation.selectedCandidate ?? evaluation.mostShortened;
 
   if (evaluation.decision !== "PLAY" || !candidate) {
     return [];
