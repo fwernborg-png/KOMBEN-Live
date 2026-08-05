@@ -584,21 +584,34 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
   };
 }
 
-function parseFinishPosition(value: unknown) {
+export function parseFinishPosition(value: unknown) {
   const rec = asRecord(value);
   if (!rec) return null;
+
   const result = getRecord(rec, "result");
 
-  const position =
-    asNumber(rec.finishPosition) ??
-    asNumber(rec.position) ??
-    asNumber(rec.place) ??
-    asNumber(rec.rank) ??
-    (result
-      ? asNumber(result.finishPosition) ?? asNumber(result.position) ?? asNumber(result.place) ?? asNumber(result.rank)
-      : null);
+  const candidates = [
+    rec.finishPosition,
+    rec.position,
+    rec.place,
+    rec.rank,
+    rec.finishOrder,
+    result?.finishPosition,
+    result?.position,
+    result?.place,
+    result?.rank,
+    result?.finishOrder,
+  ];
 
-  return position && position > 0 ? position : null;
+  return (
+    candidates
+      .map(asNumber)
+      .find(
+        (position): position is number =>
+          position !== null &&
+          position > 0,
+      ) ?? null
+  );
 }
 
 function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
