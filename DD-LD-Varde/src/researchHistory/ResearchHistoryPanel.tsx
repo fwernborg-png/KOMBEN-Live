@@ -224,6 +224,10 @@ function buildInitialFilters(
 function selectionLabel(
   value: ResearchSelection,
 ): string {
+  if (value === "ALL_RUNNERS") {
+    return "Alla startande hästar";
+  }
+
   if (value === "SMOOTHEST") {
     return "Jämnaste hästen";
   }
@@ -1078,7 +1082,7 @@ export function ResearchHistoryPanel() {
     );
 
   const activeFilterLabels: string[] = [
-    `Strategi: ${selectionLabel(filters.selection)}`,
+    `Urval: ${selectionLabel(filters.selection)}`,
     `Datum: ${filters.dateFrom || "–"} – ${filters.dateTo || "–"}`,
     `Startmetod: ${filters.startMethod || "Alla"}`,
   ];
@@ -1281,7 +1285,9 @@ export function ResearchHistoryPanel() {
           </h2>
 
           <p className="research-subtitle">
-            En vald häst per lopp. Simulerad insats{" "}
+            Analysera en strategihäst per lopp eller
+            alla matchande startande hästar. Simulerad
+            insats{" "}
             {RESEARCH_STAKE_SEK} kr per marknad.
           </p>
         </div>
@@ -1295,7 +1301,7 @@ export function ResearchHistoryPanel() {
           </span>
 
           <span>
-            Visade lopp
+            Visade hästar
             <strong>
               {rows.length}
             </strong>
@@ -1336,12 +1342,12 @@ export function ResearchHistoryPanel() {
         <div className="research-filter-panel research-filter-panel-v2">
         <fieldset className="research-filter-section">
           <legend>
-            1. Strategi och period
+            1. Urval och period
           </legend>
 
           <div className="research-filter-grid">
             <label>
-              <span>Strategi</span>
+              <span>Urval av hästar</span>
 
               <select
                 value={
@@ -1357,6 +1363,10 @@ export function ResearchHistoryPanel() {
                   )
                 }
               >
+                <option value="ALL_RUNNERS">
+                  Alla startande hästar
+                </option>
+
                 <option value="MOST_SHORTENED">
                   Mest sänkta
                 </option>
@@ -1828,8 +1838,9 @@ export function ResearchHistoryPanel() {
           </div>
 
           <p className="research-filter-help">
-            Exempel: Mest sänkta hästen, låsodds
-            10–15 och autostart framspår 1–8.
+            Exempel: Alla startande hästar, Mantorp
+            och exakt startspår 1 visar spår 1-hästen
+            från varje matchande lopp.
           </p>
         </fieldset>
 
@@ -2202,7 +2213,7 @@ export function ResearchHistoryPanel() {
           </div>
 
           <p className="research-filter-help">
-            Ja betyder att den valda hästen var
+            Ja betyder att den matchande hästen var
             rankad topp 4 i loppet för indikatorn.
             Nej betyder att indikatorn fanns men
             inte var topp 4.
@@ -2363,7 +2374,8 @@ export function ResearchHistoryPanel() {
           </strong>
 
           <small>
-            {rows.length} lopp · {dataQualityPercent} % resultat klara
+            {summary.races} lopp · {rows.length} hästar ·{" "}
+            {dataQualityPercent} % resultat klara
           </small>
         </div>
       </div>
@@ -2713,7 +2725,7 @@ export function ResearchHistoryPanel() {
           </div>
 
           <small>
-            {rows.length} valda hästar
+            {rows.length} matchande hästar
           </small>
         </div>
 

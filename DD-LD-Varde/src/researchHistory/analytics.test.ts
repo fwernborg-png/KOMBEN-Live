@@ -200,6 +200,45 @@ describe(
     );
 
     it(
+      "räknar flera hästar i samma lopp som ett lopp",
+      () => {
+        const summary =
+          computeResearchHistorySummary([
+            row({
+              selectionKind:
+                "ALL_RUNNERS",
+
+              runnerNumber: 1,
+              horseName:
+                "Häst ett",
+            }),
+
+            row({
+              selectionKind:
+                "ALL_RUNNERS",
+
+              runnerNumber: 2,
+              horseName:
+                "Häst två",
+
+              finishPositionOfficial: 5,
+
+              winnerOfficial: false,
+              placedOfficial: false,
+            }),
+          ]);
+
+        expect(
+          summary.races,
+        ).toBe(1);
+
+        expect(
+          summary.bets,
+        ).toBe(2);
+      },
+    );
+
+    it(
       "räknar inte ett VOID-lopp som insats",
       () => {
         const summary =

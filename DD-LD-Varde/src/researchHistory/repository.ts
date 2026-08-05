@@ -146,7 +146,8 @@ function parseSelection(
 ): ResearchSelection {
   if (
     value === "SMOOTHEST" ||
-    value === "FAVORITE"
+    value === "FAVORITE" ||
+    value === "ALL_RUNNERS"
   ) {
     return value;
   }
@@ -532,7 +533,7 @@ export async function loadResearchHistoryRows(
     data,
     error,
   } = await supabase.rpc(
-    "research_history_rows_v3",
+    "research_history_rows_v4",
     {
       p_date_from:
         filters.dateFrom || null,
@@ -631,7 +632,7 @@ export async function loadResearchHistoryRows(
 
   if (error) {
     throw new Error(
-      `Kunde inte läsa historiken V3: ${error.message}`,
+      `Kunde inte läsa historiken V4: ${error.message}`,
     );
   }
 

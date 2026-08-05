@@ -102,6 +102,13 @@ export function computeResearchHistorySummary(
   rows: ResearchHistoryRow[],
   stakeSek = RESEARCH_STAKE_SEK,
 ): ResearchHistorySummary {
+  const raceCount =
+    new Set(
+      rows.map(
+        (row) => row.raceKey,
+      ),
+    ).size;
+
   const activeBets =
     rows.filter(
       (row) =>
@@ -202,7 +209,7 @@ export function computeResearchHistorySummary(
 
   return {
     races:
-      rows.length,
+      raceCount,
 
     bets:
       activeBets.length,

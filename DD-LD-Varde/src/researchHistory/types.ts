@@ -1,7 +1,8 @@
 export type ResearchSelection =
   | "MOST_SHORTENED"
   | "SMOOTHEST"
-  | "FAVORITE";
+  | "FAVORITE"
+  | "ALL_RUNNERS";
 
 export type ResearchIndicatorFilter =
   boolean | null;
