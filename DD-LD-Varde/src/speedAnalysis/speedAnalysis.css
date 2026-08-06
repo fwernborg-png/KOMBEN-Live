@@ -1,0 +1,530 @@
+.speed-analysis-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.speed-analysis-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid #365447;
+  border-radius: 18px;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(19, 78, 52, .68),
+      rgba(9, 20, 31, .98)
+    );
+}
+
+.speed-analysis-header h2 {
+  margin: 3px 0 8px;
+}
+
+.speed-analysis-header p {
+  max-width: 760px;
+  margin: 0;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+
+.speed-analysis-kicker {
+  margin: 0;
+  color: #55e89a;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .14em;
+}
+
+.speed-analysis-upload {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 145px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  background: #55e89a;
+  color: #052e20;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.speed-analysis-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.speed-analysis-message,
+.speed-analysis-validation {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid #317858;
+  border-radius: 12px;
+  background: rgba(23, 106, 73, .18);
+  color: #d1fae5;
+}
+
+.speed-analysis-message.is-error,
+.speed-analysis-validation.is-error {
+  border-color: #9f3434;
+  background: rgba(127, 29, 29, .22);
+  color: #fecaca;
+}
+
+.speed-analysis-validation.is-warning {
+  border-color: #a16207;
+  background: rgba(113, 63, 18, .24);
+  color: #fef3c7;
+}
+
+.speed-analysis-validation.is-ok {
+  border-color: #317858;
+  background: rgba(23, 106, 73, .18);
+}
+
+.speed-analysis-preview,
+.speed-analysis-existing {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #31483d;
+  border-radius: 16px;
+  background: rgba(10, 25, 19, .76);
+}
+
+.speed-analysis-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #31443b;
+}
+
+.speed-analysis-preview-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.speed-analysis-preview-heading span {
+  color: #55e89a;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: .1em;
+}
+
+.speed-analysis-preview-heading button {
+  min-height: 40px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 10px;
+  background: #55e89a;
+  color: #052e20;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.speed-analysis-preview-heading button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.speed-analysis-metadata {
+  display: grid;
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(170px, 1fr)
+    );
+  gap: 10px;
+}
+
+.speed-analysis-metadata label,
+.speed-analysis-source {
+  display: grid;
+  gap: 6px;
+  color: #b9cdc3;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.speed-analysis-metadata input,
+.speed-analysis-metadata select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid #436052;
+  border-radius: 10px;
+  background: #0d1b16;
+  color: #f8fafc;
+  font-size: 15px;
+}
+
+.speed-analysis-source {
+  align-content: center;
+  padding: 10px 12px;
+  border: 1px solid #344b40;
+  border-radius: 10px;
+  background: #12251e;
+}
+
+.speed-analysis-source strong {
+  overflow-wrap: anywhere;
+}
+
+.speed-analysis-summary {
+  display: grid;
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(115px, 1fr)
+    );
+  gap: 10px;
+}
+
+.speed-analysis-summary article {
+  display: grid;
+  gap: 5px;
+  padding: 13px;
+  border: 1px solid #344b40;
+  border-radius: 13px;
+  background: #12251e;
+}
+
+.speed-analysis-summary span {
+  color: #9db3a8;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.speed-analysis-summary strong {
+  font-size: 20px;
+}
+
+.speed-analysis-leg-list {
+  display: grid;
+  gap: 10px;
+}
+
+.speed-analysis-leg {
+  overflow: hidden;
+  border: 1px solid #31483d;
+  border-radius: 13px;
+  background: #0e1d17;
+}
+
+.speed-analysis-leg summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  color: #f8fafc;
+  cursor: pointer;
+}
+
+.speed-analysis-leg summary span {
+  color: #9db3a8;
+  font-size: 12px;
+}
+
+.speed-analysis-table-wrap {
+  overflow-x: auto;
+  border-top: 1px solid #31483d;
+}
+
+.speed-analysis-table {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: collapse;
+}
+
+.speed-analysis-table th,
+.speed-analysis-table td {
+  padding: 8px;
+  border-right: 1px solid rgba(93, 126, 109, .19);
+  border-bottom: 1px solid rgba(93, 126, 109, .19);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.speed-analysis-table th {
+  background: #172a22;
+  color: #a9c1b5;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.speed-analysis-table td {
+  color: #f8fafc;
+  font-size: 12px;
+}
+
+.speed-analysis-table td.is-green {
+  background: rgba(22, 163, 74, .24);
+}
+
+.speed-analysis-table td.is-yellow {
+  background: rgba(202, 138, 4, .22);
+}
+
+.speed-analysis-table td.is-red {
+  background: rgba(185, 28, 28, .22);
+}
+
+.speed-analysis-table select,
+.speed-analysis-table input {
+  min-height: 34px;
+  border: 1px solid #496256;
+  border-radius: 8px;
+  background: #0b1712;
+  color: #f8fafc;
+}
+
+.speed-analysis-table select {
+  width: 88px;
+  padding: 0 7px;
+}
+
+.speed-analysis-table small {
+  display: block;
+  margin-top: 4px;
+  color: #a7bbb1;
+}
+
+.speed-analysis-horse-input {
+  box-sizing: border-box;
+  width: 190px;
+  padding: 0 8px;
+}
+
+.speed-analysis-rank-input {
+  box-sizing: border-box;
+  width: 65px;
+  padding: 0 8px;
+}
+
+.speed-analysis-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.speed-analysis-existing-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(255px, 1fr)
+    );
+  gap: 12px;
+}
+
+.speed-analysis-existing-card {
+  overflow: hidden;
+  border: 1px solid #31483d;
+  border-radius: 14px;
+  background: #102019;
+}
+
+.speed-analysis-existing-card h3 {
+  margin: 0;
+  padding: 11px 13px;
+  border-bottom: 1px solid #31483d;
+  color: #55e89a;
+  font-size: 14px;
+}
+
+.speed-analysis-existing-runner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(94, 126, 110, .22);
+}
+
+.speed-analysis-existing-runner:last-child {
+  border-bottom: 0;
+}
+
+.speed-analysis-existing-runner > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.speed-analysis-existing-runner small {
+  color: #9db3a8;
+}
+
+.speed-analysis-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.speed-analysis-badge,
+.inline-tag.speed-analysis-tag {
+  padding: 3px 6px;
+  border: 1px solid rgba(85, 232, 154, .52);
+  border-radius: 999px;
+  background: rgba(18, 113, 72, .28);
+  color: #9ff7c7;
+  font-size: 9px;
+  font-weight: 950;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.speed-analysis-badge.is-double,
+.inline-tag.speed-analysis-tag.is-double {
+  border-color: #facc15;
+  background: rgba(133, 77, 14, .34);
+  color: #fef08a;
+}
+
+.speed-analysis-badge.is-hot,
+.inline-tag.speed-analysis-tag.is-hot {
+  border-color: #fb923c;
+  background: rgba(154, 52, 18, .42);
+  color: #ffedd5;
+}
+
+.speed-analysis-badge.is-bot,
+.inline-tag.speed-analysis-tag.is-bot {
+  border-color: #38bdf8;
+  background: rgba(3, 105, 161, .26);
+  color: #bae6fd;
+}
+
+.speed-analysis-badge.is-spets,
+.inline-tag.speed-analysis-tag.is-spets {
+  border-color: #4ade80;
+  background: rgba(22, 101, 52, .35);
+  color: #bbf7d0;
+}
+
+.speed-analysis-badge.is-rank,
+.inline-tag.speed-analysis-tag.is-rank {
+  border-color: #c084fc;
+  background: rgba(107, 33, 168, .28);
+  color: #e9d5ff;
+}
+
+.compact-row.is-speed-analysis-hot {
+  box-shadow:
+    inset 5px 0 0 #fb923c;
+}
+
+.compact-row.is-speed-analysis-extra {
+  box-shadow:
+    inset 4px 0 0 #facc15;
+}
+
+.speed-analysis-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed #426052;
+  border-radius: 12px;
+  color: #9db3a8;
+}
+
+@media (max-width: 700px) {
+  .speed-analysis-header {
+    display: grid;
+  }
+
+  .speed-analysis-upload {
+    box-sizing: border-box;
+    width: 100%;
+  }
+
+  .speed-analysis-preview-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .speed-analysis-preview-heading button {
+    width: 100%;
+  }
+
+  .speed-analysis-existing-runner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .speed-analysis-badge-row {
+    justify-content: flex-start;
+  }
+}
+
+
+.speed-analysis-badge.is-own-spets,
+.inline-tag.speed-analysis-tag.is-own-spets {
+  border-color: #f472b6;
+  background: rgba(157, 23, 77, .3);
+  color: #fbcfe8;
+}
+
+.speed-analysis-pdf-spets {
+  display: grid;
+  gap: 3px;
+}
+
+.speed-analysis-muted {
+  color: #6f897d;
+}
+
+.speed-analysis-own-choice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.speed-analysis-own-choice input {
+  width: 17px;
+  height: 17px;
+  accent-color: #f472b6;
+}
+
+.speed-analysis-own-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 13px;
+  border-top: 1px solid #31483d;
+  background: rgba(18, 37, 30, .7);
+  color: #a9c1b5;
+  font-size: 12px;
+}
+
+.speed-analysis-own-toolbar button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #5f7469;
+  border-radius: 8px;
+  background: #14271f;
+  color: #f8fafc;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.speed-analysis-own-toolbar button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}

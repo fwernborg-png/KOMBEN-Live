@@ -42,6 +42,13 @@ import type {
 import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 import { loadWinPlaceBetsByDate } from "./winPlaceModel/repository";
 import { ResearchHistoryPanel } from "./researchHistory/ResearchHistoryPanel";
+import { SpeedAnalysisPanel } from "./speedAnalysis/SpeedAnalysisPanel";
+import {
+  findSpeedAnalysisMarker,
+  getSpeedAnalysisInterest,
+} from "./speedAnalysis/logic";
+import { loadSpeedAnalysisMarkersByDate } from "./speedAnalysis/repository";
+import type { SpeedAnalysisMarker } from "./speedAnalysis/types";
 import { mergeVpPayloadIntoWinnerPayload } from "./atg/vpPayload";
 import { findNextUpcomingRace, isRaceFinished } from "./raceNavigation";
 
@@ -281,7 +288,7 @@ type MeetingRaceRef = {
   startTime?: string;
 };
 type MeetingRacesByTrack = Record<number, MeetingRaceRef[]>;
-type AppTab = "overview" | "race" | "journal" | "stats" | "history";
+type AppTab = "overview" | "race" | "journal" | "stats" | "speed" | "history";
 type StatKey = "KR" | "ST" | "K" | "SP" | "G" | "ODD";
 type StatDefinition = {
   key: StatKey;
@@ -358,6 +365,7 @@ const APP_TABS: Array<{ id: AppTab; label: string }> = [
   { id: "race", label: "Lopp" },
   { id: "journal", label: "Journal" },
   { id: "stats", label: "Statistik" },
+  { id: "speed", label: "Speedanalysen" },
   { id: "history", label: "Historik" },
 ];
 
@@ -2647,6 +2655,48 @@ export default function App() {
       setSecondNumber("");
     }
   }, [countryFilter, selectableTracks, trackId]);
+
+  const [
+    speedAnalysisMarkers,
+    setSpeedAnalysisMarkers,
+  ] = useState<SpeedAnalysisMarker[]>([]);
+
+  const refreshSpeedAnalysisMarkers =
+    useCallback(
+      async (
+        targetDate: string,
+      ) => {
+        try {
+          const markers =
+            await loadSpeedAnalysisMarkersByDate(
+              targetDate,
+            );
+
+          setSpeedAnalysisMarkers(
+            markers,
+          );
+        } catch (speedError) {
+          console.error(
+            "Kunde inte läsa Speedanalysen",
+            speedError,
+          );
+
+          setSpeedAnalysisMarkers(
+            [],
+          );
+        }
+      },
+      [],
+    );
+
+  useEffect(() => {
+    void refreshSpeedAnalysisMarkers(
+      date,
+    );
+  }, [
+    date,
+    refreshSpeedAnalysisMarkers,
+  ]);
 
   
   const candidates = useMemo(() => rankCandidates(trendRunners), [trendRunners]);
@@ -5242,6 +5292,36 @@ export default function App() {
                             SMALLKARAMELL_RULE_CONFIG_V1.maxCurrentWinOddsInclusive +
                               Number.EPSILON;
 
+                        const speedMarker =
+                          selectedTrack
+                            ? findSpeedAnalysisMarker(
+                                speedAnalysisMarkers,
+                                {
+                                  trackName:
+                                    selectedTrack.name,
+
+                                  runnerNumber:
+                                    runner.number,
+
+                                  horseName:
+                                    runner.name,
+                                },
+                              )
+                            : null;
+
+                        const speedInterest =
+                          getSpeedAnalysisInterest(
+                            speedMarker,
+                            (
+                              isSmoothest ||
+                              isBiggestDrop ||
+                              isPotentialSmallkaramell ||
+                              isLockedSmallkaramell ||
+                              isWatched ||
+                              isLockedPlay
+                            ),
+                          );
+
                         const runnerInfo = raceInsights.byRunner[runner.number];
                         const isExpanded = expandedRunnerKey === rowKey;
                         const consistency = runnerInfo?.consistency;
@@ -5265,7 +5345,7 @@ export default function App() {
                         return (
                           <div
                             key={rowKey}
-                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""} ${isPotentialSmallkaramell ? "is-smallkaramell" : ""} ${isLockedSmallkaramell ? "is-smallkaramell-locked" : ""} ${podiumPosition ? `is-finish-${podiumPosition}` : ""}`}
+                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""} ${isPotentialSmallkaramell ? "is-smallkaramell" : ""} ${isLockedSmallkaramell ? "is-smallkaramell-locked" : ""} ${speedInterest === "HOT" ? "is-speed-analysis-hot" : speedInterest === "EXTRA" ? "is-speed-analysis-extra" : ""} ${podiumPosition ? `is-finish-${podiumPosition}` : ""}`}
                           >
                             <div
                               role="button"
@@ -5320,6 +5400,68 @@ export default function App() {
                                     >
                                       🎉 MÖJLIG SMÄLLKARAMELL
                                     </span>
+                                  ) : null}
+
+                                  {speedMarker ? (
+                                    <>
+                                      {speedInterest === "HOT" ? (
+                                        <span
+                                          className="inline-tag speed-analysis-tag is-hot"
+                                          title="Dubbelgrön i Speedanalysen och samtidigt en aktiv oddssignal."
+                                        >
+                                          🔥 SPEED + ODDS
+                                        </span>
+                                      ) : null}
+
+                                      {speedMarker.s1000Color === "GREEN" &&
+                                      speedMarker.s500Color === "GREEN" ? (
+                                        <span
+                                          className="inline-tag speed-analysis-tag is-double"
+                                          title="Grön både på s1000 och s500."
+                                        >
+                                          ⚡ S1000+S500
+                                        </span>
+                                      ) : (
+                                        <>
+                                          {speedMarker.s1000Color === "GREEN" ? (
+                                            <span className="inline-tag speed-analysis-tag">
+                                              S1000
+                                            </span>
+                                          ) : null}
+
+                                          {speedMarker.s500Color === "GREEN" ? (
+                                            <span className="inline-tag speed-analysis-tag">
+                                              S500
+                                            </span>
+                                          ) : null}
+                                        </>
+                                      )}
+
+                                      {speedMarker.botColor === "GREEN" ? (
+                                        <span className="inline-tag speed-analysis-tag is-bot">
+                                          BOT
+                                        </span>
+                                      ) : null}
+
+                                      {speedMarker.probableLeader ? (
+                                        <span className="inline-tag speed-analysis-tag is-spets">
+                                          PDF-SPETS
+                                        </span>
+                                      ) : null}
+
+                                      {speedMarker.ownProbableLeader ? (
+                                        <span className="inline-tag speed-analysis-tag is-own-spets">
+                                          EGEN SPETS
+                                        </span>
+                                      ) : null}
+
+                                      {speedMarker.rankPosition !== null &&
+                                      speedMarker.rankPosition <= 3 ? (
+                                        <span className="inline-tag speed-analysis-tag is-rank">
+                                          R{speedMarker.rankPosition}
+                                        </span>
+                                      ) : null}
+                                    </>
                                   ) : null}
 
                                   <strong title={runner.name}>
@@ -5680,6 +5822,21 @@ export default function App() {
     );
   }
 
+  function renderSpeedTab() {
+    return (
+      <SpeedAnalysisPanel
+        activeDate={date}
+        onImportSaved={(importDate) => {
+          setDate(importDate);
+
+          void refreshSpeedAnalysisMarkers(
+            importDate,
+          );
+        }}
+      />
+    );
+  }
+
   function renderJournalTab() {
     return (
       <section className="tab-section">
@@ -5990,6 +6147,7 @@ export default function App() {
           {activeTab === "race" ? renderRaceTab() : null}
           {activeTab === "journal" ? renderJournalTab() : null}
           {activeTab === "stats" ? renderStatsTab() : null}
+          {activeTab === "speed" ? renderSpeedTab() : null}
           {activeTab === "history" ? <ResearchHistoryPanel /> : null}
 
           <footer className="footer-compact">
