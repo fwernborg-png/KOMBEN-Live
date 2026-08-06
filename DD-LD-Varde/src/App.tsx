@@ -4987,54 +4987,7 @@ export default function App() {
     return raceInsights.byRunner[runner.number]?.strength ?? 0;
   }
 
-  function indicatorForRunner(runner: TrendRunner, key: StatKey) {
-    const indicators = raceInsights.byRunner[runner.number]?.indicators ?? [];
-    return indicators.find((indicator) => indicator.key === key) ?? null;
-  }
-
-  function indicatorStateClass(runner: TrendRunner, key: StatKey) {
-    const indicator = indicatorForRunner(runner, key);
-    if (!indicator || indicator.value === null) return "is-missing";
-    if (indicator.positive) return "is-positive";
-    return "is-neutral";
-  }
-
-  function renderStrengthDots(runner: TrendRunner) {
-    return STAT_DEFINITIONS.map((definition) => (
-      <span
-        key={`strength-${runner.number}-${definition.key}`}
-        className={`strength-dot ${indicatorStateClass(runner, definition.key)}`}
-      />
-    ));
-  }
-
-  function renderIndicatorDotMatrix(runner: TrendRunner) {
-    return (
-      <div className="indicator-matrix" aria-label={`Indikatorstatus för ${runner.name}`}>
-        <div className="indicator-label-row">
-          {STAT_DEFINITIONS.map((definition) => (
-            <span key={`${runner.number}-label-${definition.key}`}>{definition.shortLabel}</span>
-          ))}
-        </div>
-        <div className="indicator-dot-row">
-          {STAT_DEFINITIONS.map((definition) => {
-            const indicator = indicatorForRunner(runner, definition.key);
-            const stateClass = indicatorStateClass(runner, definition.key);
-            return (
-              <span
-                key={`${runner.number}-dot-${definition.key}`}
-                className={`indicator-dot ${stateClass}`}
-                title={indicator?.tooltip ?? `${definition.label}: saknas`}
-                aria-label={indicator?.tooltip ?? `${definition.label}: saknas`}
-              />
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  function renderOverviewTab() {
+          function renderOverviewTab() {
     return (
       <section className="tab-section">
         <div className="panel-header-row">
@@ -5079,6 +5032,29 @@ export default function App() {
   }
 
   function renderRaceTab() {
+    const lockedSmallkaramellNumber = selectedRace
+      ? lockedSmallkaramellByRace[selectedRace.id] ?? null
+      : null;
+
+    const lockedSmallkaramellRunner =
+      lockedSmallkaramellNumber === null
+        ? null
+        : trendRunners.find(
+            (runner) => runner.number === lockedSmallkaramellNumber,
+          ) ?? null;
+
+    const potentialSmallkaramellRunner =
+      raceInsights.secondBiggestDrop &&
+      raceInsights.secondBiggestDrop.odds !== null &&
+      raceInsights.secondBiggestDrop.odds / 100 <=
+        SMALLKARAMELL_RULE_CONFIG_V1.maxCurrentWinOddsInclusive +
+          Number.EPSILON
+        ? raceInsights.secondBiggestDrop
+        : null;
+
+    const smallkaramellRunner =
+      lockedSmallkaramellRunner ?? potentialSmallkaramellRunner;
+
     return (
       <section className="tab-section">
         <div className="track-tabs">
@@ -5240,8 +5216,19 @@ export default function App() {
               <div className="race-status-grid">
                 <div><span>Start</span><strong>{formatTime(selectedRace?.startTime)}</strong></div>
                 <div><span>Nedrakning</span><strong>{countdown.label}</strong></div>
-                <div><span>Status</span><strong>{selectedRaceSignalState.statusText}</strong></div>
-                <div><span>Forsta odds</span><strong>{selectedSignalRunner ? formatOdds(selectedSignalRunner.firstOdds) : "–"}</strong></div>
+                <div>
+                  <span>Status</span>
+                  <strong>
+                    {selectedRaceSignalState.mode === "LOCKED_PLAY"
+                      ? "SPEL LÅST"
+                      : selectedRaceSignalState.mode === "PRELIM_WATCH"
+                        ? "BEVAKAR"
+                        : selectedRace?.isMonte
+                          ? "EXKLUDERAT"
+                          : "INGEN SIGNAL"}
+                  </strong>
+                </div>
+                <div><span>1 h före</span><strong>{selectedSignalRunner ? formatOdds(selectedSignalRunner.firstOdds) : "–"}</strong></div>
                 <div><span>Lasning om</span><strong>{minutesToLock === null ? "-" : `${minutesToLock} min`}</strong></div>
                 <div><span>Live</span><strong>{updated || "-"}</strong></div>
               </div>
@@ -5253,15 +5240,13 @@ export default function App() {
                   <div className="race-main-panel">
                     <div className="compact-table-header compact-grid-row">
                       <span>NR</span>
-                      <span>HAST / KUSK</span>
-                      <span>FORSTA ODDS</span>
-                      <span>V-ODDS</span>
-                      <span>SANKNING %</span>
+                      <span>HÄST / KUSK</span>
+                      <span>1 H FÖRE</span>
+                      <span>NUODDS</span>
+                      <span>SÄNKNING %</span>
                       <span>TREND 60 MIN</span>
-                      <span>JAMNHET CV %</span>
-                      <span>STATISTIKINDIKATORER</span>
+                      <span>JÄMNHET CV %</span>
                       <span>STYRKA</span>
-                      <span>MARKERING</span>
                     </div>
 
                     <div className="compact-table-body">
@@ -5384,23 +5369,7 @@ export default function App() {
                                     </span>
                                   ) : null}
 
-                                  {isLockedSmallkaramell ? (
-                                    <span
-                                      className="inline-tag smallkaramell locked"
-                                      title="Låst Smällkaramell vid T−90: vinnare + plats."
-                                    >
-                                      🎉 SMÄLLKARAMELLEN
-                                    </span>
-                                  ) : null}
 
-                                  {isPotentialSmallkaramell ? (
-                                    <span
-                                      className="inline-tag smallkaramell"
-                                      title="Näst mest sänkt och aktuellt vinnarodds högst 7,00. Kandidaten låses först vid T−90."
-                                    >
-                                      🎉 MÖJLIG SMÄLLKARAMELL
-                                    </span>
-                                  ) : null}
 
                                   {speedMarker ? (
                                     <>
@@ -5464,6 +5433,47 @@ export default function App() {
                                     </>
                                   ) : null}
 
+                                  {isBiggestDrop ? (
+                                    <span
+                                      className="inline-tag row-strategy-tag is-biggest-drop"
+                                      title="Mest sänkt – största oddssänkningen i loppet"
+                                      aria-label="Mest sänkt"
+                                    >
+                                      ↘ MEST SÄNKT
+                                    </span>
+                                  ) : null}
+
+                                  {isSmoothest ? (
+                                    <span
+                                      className="inline-tag row-strategy-tag is-smoothest"
+                                      title="Jämnast oddsutveckling under mätperioden"
+                                      aria-label="Jämnaste häst"
+                                    >
+                                      ≈ JÄMNAST
+                                    </span>
+                                  ) : null}
+
+                                  {isLockedSmallkaramell ||
+                                  isPotentialSmallkaramell ? (
+                                    <span
+                                      className={`inline-tag smallkaramell-row-tag ${
+                                        isLockedSmallkaramell ? "is-locked" : ""
+                                      }`}
+                                      title={
+                                        isLockedSmallkaramell
+                                          ? "Kräfta i buren – låst kandidat"
+                                          : "Kräfta i buren – potentiell vinnare"
+                                      }
+                                      aria-label={
+                                        isLockedSmallkaramell
+                                          ? "Kräfta i buren, låst kandidat"
+                                          : "Kräfta i buren, potentiell vinnare"
+                                      }
+                                    >
+                                      🦞 KRÄFTA I BUREN
+                                    </span>
+                                  ) : null}
+
                                   <strong title={runner.name}>
                                     {runner.name}
                                   </strong>
@@ -5481,49 +5491,21 @@ export default function App() {
                                 </svg>
                               </span>
                               <span>{consistency == null ? "–" : consistency.toFixed(2).replace(".", ",")}</span>
-                              <span>{renderIndicatorDotMatrix(runner)}</span>
-                              <span className="strength-cell" title={`Styrka: ${runnerStrength(runner)} av 6 positiva indikatorer`}>
+                              <span
+                                className={`strength-cell ${
+                                  runnerStrength(runner) >= 6
+                                    ? "strength-cell--strong"
+                                    : runnerStrength(runner) === 5
+                                      ? "strength-cell--good"
+                                      : runnerStrength(runner) === 4
+                                        ? "strength-cell--qualified"
+                                        : "strength-cell--neutral"
+                                }`}
+                                title={`Styrka: ${runnerStrength(runner)} av 6. Klicka på raden för detaljer.`}
+                              >
                                 <strong>{runnerStrength(runner)}/6</strong>
-                                <span className="strength-dots">{renderStrengthDots(runner)}</span>
                               </span>
-                              <span className="candidate-cell">
-                                {isWatched ? <span className="candidate-badge a1">BEVAKAS</span> : null}
-                                {isLockedPlay ? <span className="candidate-badge a1">PLATSSPEL</span> : null}
-                                {isLockedPlay ? <span className="candidate-badge play-now">SPELA DENNA</span> : null}
-                                {isSmoothest ? (
-                                  <span className="candidate-badge strategy-badge smoothest">
-                                    JÄMNAST
-                                  </span>
-                                ) : null}
 
-                                {isBiggestDrop ? (
-                                  <span className="candidate-badge strategy-badge drop">
-                                    MEST SÄNKT
-                                  </span>
-                                ) : null}
-
-                                {isLockedSmallkaramell ? (
-                                  <span
-                                    className="candidate-badge strategy-badge smallkaramell locked"
-                                    title="Låst vid T−90 · vinnare + plats"
-                                  >
-                                    🎉 LÅST
-                                  </span>
-                                ) : null}
-
-                                {isPotentialSmallkaramell ? (
-                                  <span
-                                    className="candidate-badge strategy-badge smallkaramell"
-                                    title="S2 · aktuellt vinnarodds högst 7,00"
-                                  >
-                                    🎉 MÖJLIG
-                                  </span>
-                                ) : null}
-
-                                {!isWatched && !isLockedPlay && !isSmoothest && !isBiggestDrop && !isPotentialSmallkaramell && !isLockedSmallkaramell ? (
-                                  <span className="candidate-badge neutral">-</span>
-                                ) : null}
-                              </span>
                             </div>
 
                             {isExpanded ? (
@@ -5550,6 +5532,68 @@ export default function App() {
                   </div>
 
                   <aside className="race-side-panel">
+                    <section
+                      className={`side-card strategy-selection-card smallkaramell-card ${
+                        lockedSmallkaramellRunner ? "is-locked" : ""
+                      }`}
+                    >
+                      <div className="strategy-card-heading">
+                        <span
+                          className="strategy-card-icon"
+                          aria-hidden="true"
+                        >
+                          🦞
+                        </span>
+
+                        <div>
+                          <div className="side-card-title">Kräfta i buren</div>
+                          <small>Potentiell vinnare</small>
+                        </div>
+                      </div>
+
+                      {smallkaramellRunner ? (
+                        <button
+                          type="button"
+                          className="strategy-horse-button"
+                          onClick={() =>
+                            setExpandedRunnerKey(
+                              `${selectedRace.id}-${smallkaramellRunner.number}`,
+                            )
+                          }
+                          aria-label={`Kräfta i buren: nummer ${smallkaramellRunner.number}, ${smallkaramellRunner.name}`}
+                        >
+                          <span className="strategy-number smallkaramell-number">
+                            {smallkaramellRunner.number}
+                          </span>
+
+                          <span className="strategy-horse-copy">
+                            <strong>{smallkaramellRunner.name}</strong>
+
+                            <span className="strategy-odds-line">
+                              {formatOdds(smallkaramellRunner.firstOdds)}
+                              <span aria-hidden="true">→</span>
+                              {formatOdds(smallkaramellRunner.odds)}
+                            </span>
+
+                            <span className="strategy-strength-line">
+                              {lockedSmallkaramellRunner ? "Låst · " : ""}
+                              Styrka {runnerStrength(smallkaramellRunner)}/6
+                            </span>
+                          </span>
+
+                          <strong className="strategy-change smallkaramell-change">
+                            {formatDropPercent(
+                              smallkaramellRunner.dropPercent,
+                            )}
+                          </strong>
+                        </button>
+                      ) : (
+                        <div className="strategy-empty-state">
+                          Ingen kandidat i loppet.
+                        </div>
+                      )}
+                    </section>
+
                     <section className="side-card strategy-selection-card biggest-drop-card">
                       <div className="strategy-card-heading">
                         <span className="strategy-card-icon" aria-hidden="true">↘</span>
@@ -5766,8 +5810,8 @@ export default function App() {
                         ))}
 
                         <small>
-                          Grön punkt betyder topp 4 i det aktuella loppet.
-                          För G är lägst värde bäst.
+                          Styrka visar hur många av KR, ST, K, SP, G och ODD
+                          som är topp 4 i loppet. För G är lägst värde bäst.
                         </small>
                       </div>
                     </details>
