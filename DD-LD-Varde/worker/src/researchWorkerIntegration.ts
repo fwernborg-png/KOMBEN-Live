@@ -121,28 +121,144 @@ export function isResearchArchiveEnabled(
   );
 }
 
+function mergeResearchProductPair(
+  primary: ParsedResearchProduct,
+  fallback: ParsedResearchProduct,
+): ParsedResearchProduct {
+  return {
+    productCode:
+      primary.productCode,
+    productId:
+      primary.productId ??
+      fallback.productId,
+    legNumber:
+      primary.legNumber ??
+      fallback.legNumber,
+    totalLegs:
+      primary.totalLegs ??
+      fallback.totalLegs,
+    rawProductJson: {
+      ...fallback.rawProductJson,
+      ...primary.rawProductJson,
+    },
+  };
+}
+
 export function mergeResearchProducts(
   ...groups: ParsedResearchProduct[][]
 ): ParsedResearchProduct[] {
-  const unique = new Map<
-    string,
-    ParsedResearchProduct
-  >();
+  const exact =
+    new Map<
+      string,
+      ParsedResearchProduct
+    >();
+
+  const order: string[] = [];
 
   for (const product of groups.flat()) {
-    const key = [
-      product.productCode,
-      product.productId ?? "",
-      product.legNumber ?? "",
-      product.totalLegs ?? "",
-    ].join(":");
+    const key =
+      product.productId
+        ? [
+            product.productCode,
+            "ID",
+            product.productId,
+          ].join(":")
+        : [
+            product.productCode,
+            "ANON",
+            product.legNumber ?? "",
+            product.totalLegs ?? "",
+          ].join(":");
 
-    if (!unique.has(key)) {
-      unique.set(key, product);
+    const existing =
+      exact.get(key);
+
+    if (!existing) {
+      exact.set(
+        key,
+        product,
+      );
+      order.push(key);
+      continue;
     }
+
+    exact.set(
+      key,
+      mergeResearchProductPair(
+        product,
+        existing,
+      ),
+    );
   }
 
-  return [...unique.values()];
+  const values =
+    order
+      .map((key) => exact.get(key))
+      .filter(
+        (
+          product,
+        ): product is ParsedResearchProduct =>
+          Boolean(product),
+      );
+
+  const codeOrder = [
+    ...new Set(
+      values.map(
+        (product) =>
+          product.productCode,
+      ),
+    ),
+  ];
+
+  const merged:
+    ParsedResearchProduct[] = [];
+
+  for (const code of codeOrder) {
+    const sameCode =
+      values.filter(
+        (product) =>
+          product.productCode ===
+          code,
+      );
+
+    const specific =
+      sameCode.filter(
+        (product) =>
+          product.productId !== null,
+      );
+
+    const anonymous =
+      sameCode.filter(
+        (product) =>
+          product.productId === null,
+      );
+
+    if (
+      specific.length === 1 &&
+      anonymous.length > 0
+    ) {
+      let enriched =
+        specific[0];
+
+      for (
+        const fallback
+        of anonymous
+      ) {
+        enriched =
+          mergeResearchProductPair(
+            enriched,
+            fallback,
+          );
+      }
+
+      merged.push(enriched);
+      continue;
+    }
+
+    merged.push(...sameCode);
+  }
+
+  return merged;
 }
 
 export function buildResearchArchiveRaceInput(args: {

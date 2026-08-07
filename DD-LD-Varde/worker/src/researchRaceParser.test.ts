@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   inferResearchMeetingTimeCategory,
+  parseResearchCalendarGameProducts,
   parseResearchProducts,
   parseResearchRaceMeta,
   parseResearchRunnerMeta,
@@ -92,6 +93,78 @@ describe("researchRaceParser", () => {
           product.productCode === "V85",
       )?.legNumber,
     ).toBe(3);
+  });
+
+  it("kopplar calendar.games till rätt produktavdelning", () => {
+    const byRace =
+      parseResearchCalendarGameProducts({
+        V64: [
+          {
+            id:
+              "V64_2026-08-07_19_4",
+            races: [
+              "2026-08-07_19_4",
+              "2026-08-07_19_5",
+              "2026-08-07_19_6",
+              "2026-08-07_19_7",
+              "2026-08-07_19_8",
+              "2026-08-07_19_9",
+            ],
+          },
+        ],
+        V4: [
+          {
+            id:
+              "V4_2026-08-07_19_6",
+            races: [
+              "2026-08-07_19_6",
+              "2026-08-07_19_7",
+              "2026-08-07_19_8",
+              "2026-08-07_19_9",
+            ],
+          },
+        ],
+      });
+
+    expect(
+      byRace[
+        "2026-08-07_19_4"
+      ],
+    ).toEqual([
+      expect.objectContaining({
+        productCode: "V64",
+        productId:
+          "V64_2026-08-07_19_4",
+        legNumber: 1,
+        totalLegs: 6,
+      }),
+    ]);
+
+    expect(
+      byRace[
+        "2026-08-07_19_6"
+      ].map(
+        (product) => ({
+          code:
+            product.productCode,
+          leg:
+            product.legNumber,
+          total:
+            product.totalLegs,
+        }),
+      ),
+    ).toEqual([
+      {
+        code: "V64",
+        leg: 3,
+        total: 6,
+      },
+      {
+        code: "V4",
+        leg: 1,
+        total: 4,
+      },
+    ]);
   });
 
   it("prioriterar uttrycklig lunchmärkning", () => {

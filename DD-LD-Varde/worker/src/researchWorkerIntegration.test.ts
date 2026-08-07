@@ -207,6 +207,48 @@ describe("researchWorkerIntegration", () => {
     ).toEqual(["V85", "V4"]);
   });
 
+  it("låter kalenderprodukt ersätta ospecifik produkt utan dubbelrad", () => {
+    const merged =
+      mergeResearchProducts(
+        [
+          {
+            productCode: "V64",
+            productId: null,
+            legNumber: null,
+            totalLegs: null,
+            rawProductJson: {
+              detectedFromText: true,
+            },
+          },
+        ],
+        [
+          {
+            productCode: "V64",
+            productId:
+              "V64_2026-08-07_19_4",
+            legNumber: 3,
+            totalLegs: 6,
+            rawProductJson: {
+              source:
+                "ATG_CALENDAR_GAMES",
+            },
+          },
+        ],
+      );
+
+    expect(merged).toHaveLength(1);
+
+    expect(merged[0]).toEqual(
+      expect.objectContaining({
+        productCode: "V64",
+        productId:
+          "V64_2026-08-07_19_4",
+        legNumber: 3,
+        totalLegs: 6,
+      }),
+    );
+  });
+
   it("stoppar oddspunkter efter låsningen", () => {
     const mapped = mapResearchArchiveOddsRows({
       race: buildRace(),

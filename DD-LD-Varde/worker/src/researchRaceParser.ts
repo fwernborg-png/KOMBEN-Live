@@ -340,6 +340,131 @@ function parseProductLeg(
   };
 }
 
+function parseCalendarRaceId(
+  value: unknown,
+): string | null {
+  const direct =
+    asString(value);
+
+  if (direct) {
+    return direct;
+  }
+
+  const record =
+    asRecord(value);
+
+  if (!record) {
+    return null;
+  }
+
+  return (
+    asString(record.id) ??
+    asString(record.raceId) ??
+    asString(record.race_id)
+  );
+}
+
+export function parseResearchCalendarGameProducts(
+  value: unknown,
+): Record<string, ParsedResearchProduct[]> {
+  const games =
+    asRecord(value);
+
+  if (!games) {
+    return {};
+  }
+
+  const byRace:
+    Record<string, ParsedResearchProduct[]> = {};
+
+  for (
+    const [
+      rawProductCode,
+      rawEntries,
+    ] of Object.entries(games)
+  ) {
+    const productCode =
+      KNOWN_PRODUCT_CODES.find(
+        (code) =>
+          code.toLowerCase() ===
+          rawProductCode.toLowerCase(),
+      );
+
+    if (!productCode) {
+      continue;
+    }
+
+    const entries =
+      Array.isArray(rawEntries)
+        ? rawEntries
+        : [rawEntries];
+
+    for (const rawEntry of entries) {
+      const entry =
+        asRecord(rawEntry);
+
+      if (!entry) {
+        continue;
+      }
+
+      const productId =
+        asString(entry.id) ??
+        asString(entry.gameId) ??
+        asString(entry.game_id);
+
+      const rawRaces =
+        Array.isArray(entry.races)
+          ? entry.races
+          : [];
+
+      const raceIds =
+        rawRaces
+          .map(parseCalendarRaceId)
+          .filter(
+            (
+              raceId,
+            ): raceId is string =>
+              Boolean(raceId),
+          );
+
+      const totalLegs =
+        raceIds.length > 0
+          ? raceIds.length
+          : null;
+
+      raceIds.forEach(
+        (raceId, index) => {
+          const product:
+            ParsedResearchProduct = {
+              productCode,
+              productId,
+              legNumber:
+                index + 1,
+              totalLegs,
+              rawProductJson: {
+                source:
+                  "ATG_CALENDAR_GAMES",
+                calendarProductKey:
+                  rawProductCode,
+                calendarGameId:
+                  productId,
+                raceId,
+                game: entry,
+              },
+            };
+
+          byRace[raceId] = [
+            ...(byRace[raceId] ?? []),
+            product,
+          ];
+        },
+      );
+    }
+  }
+
+  return byRace;
+}
+
 export function parseResearchProducts(
   value: unknown,
 ): ParsedResearchProduct[] {

@@ -39,6 +39,7 @@ import {
   type WinPlacePendingBetRow,
 } from "./winPlaceSettlement";
 import {
+  parseResearchCalendarGameProducts,
   parseResearchProducts,
   parseResearchRaceMeta,
   parseResearchRunnerMeta,
@@ -906,6 +907,11 @@ async function loadTracksAndMeetings(args: { apiBaseUrl: string; raceDate: strin
   const payload = await fetchJson(`${apiBaseUrl}/calendar/day/${raceDate}`, signal);
   const tracksRaw = getArray(payload, "tracks");
 
+  const calendarProductsByRace =
+    parseResearchCalendarGameProducts(
+      asRecord(payload)?.games,
+    );
+
   const tracks = tracksRaw
     .map(parseTrack)
     .filter((item): item is Track => item !== null)
@@ -915,7 +921,27 @@ async function loadTracksAndMeetings(args: { apiBaseUrl: string; raceDate: strin
   for (const rawTrack of tracksRaw) {
     const parsed = parseTrack(rawTrack);
     if (!parsed) continue;
-    meetingRefs.set(parsed.id, parseMeetingRaceRefs(rawTrack));
+
+    const refs =
+      parseMeetingRaceRefs(
+        rawTrack,
+      ).map((ref) => ({
+        ...ref,
+        products:
+          mergeResearchProducts(
+            ref.products,
+            ref.raceId
+              ? calendarProductsByRace[
+                  ref.raceId
+                ] ?? []
+              : [],
+          ),
+      }));
+
+    meetingRefs.set(
+      parsed.id,
+      refs,
+    );
   }
 
   return {
