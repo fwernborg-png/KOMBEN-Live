@@ -25,6 +25,15 @@ export function isRaceFinished(
   return race.finishOrder.length > 0;
 }
 
+export function isTrackFinished(
+  races: RaceNavigationRace[],
+): boolean {
+  return (
+    races.length > 0 &&
+    races.every(isRaceFinished)
+  );
+}
+
 export function findNextUpcomingRace(args: {
   tracks: RaceNavigationTrack[];
   racesByTrack: Record<number, RaceNavigationRace[]>;

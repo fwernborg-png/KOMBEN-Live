@@ -191,6 +191,15 @@ export function buildFinalSignalNotification(args: {
     tab: "race",
   });
 
+  if (smallkaramellCandidate) {
+    params.set(
+      "kraftaRunner",
+      String(
+        smallkaramellCandidate.runnerNumber,
+      ),
+    );
+  }
+
   if (signalMode === "RESEARCH_TRIAL") {
     return {
       ...buildTrialNotification({

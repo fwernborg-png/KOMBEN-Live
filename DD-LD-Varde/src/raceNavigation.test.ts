@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   findNextUpcomingRace,
   isRaceFinished,
+  isTrackFinished,
   type RaceNavigationRace,
 } from "./raceNavigation";
 
@@ -155,5 +156,39 @@ describe("raceNavigation", () => {
 
     expect(JSON.stringify(tracks)).toBe(tracksBefore);
     expect(JSON.stringify(racesByTrack)).toBe(racesBefore);
+  });
+
+  it("markerar banan klar först när alla lopp har officiellt resultat", () => {
+    expect(
+      isTrackFinished([
+        createRace({
+          id: "race-1",
+          raceNumber: 1,
+          finishOrder: [2, 1, 3],
+        }),
+        createRace({
+          id: "race-2",
+          raceNumber: 2,
+          finishOrder: [4, 5, 1],
+        }),
+      ]),
+    ).toBe(true);
+
+    expect(
+      isTrackFinished([
+        createRace({
+          id: "race-1",
+          raceNumber: 1,
+          finishOrder: [2, 1, 3],
+        }),
+        createRace({
+          id: "race-2",
+          raceNumber: 2,
+          finishOrder: [],
+        }),
+      ]),
+    ).toBe(false);
+
+    expect(isTrackFinished([])).toBe(false);
   });
 });

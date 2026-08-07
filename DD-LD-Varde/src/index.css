@@ -3168,3 +3168,103 @@ body,
     letter-spacing: 0.02em;
   }
 }
+
+
+/* LIVE MENU / RACE META V1 */
+
+.track-tab.is-finished,
+.selector-track-chip.is-finished {
+  border-color: rgba(255, 125, 138, 0.48);
+  background: rgba(91, 23, 32, 0.42);
+  color: #ffc1c7;
+  opacity: 0.72;
+}
+
+.track-tab.is-finished.is-active,
+.selector-track-chip.is-finished.is-active {
+  border-color: rgba(255, 125, 138, 0.82);
+  box-shadow:
+    inset 0 0 0 1px
+      rgba(255, 125, 138, 0.45);
+  background: rgba(91, 23, 32, 0.6);
+}
+
+.track-tab.is-finished small,
+.track-finished-badge {
+  color: #ff9aa5;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.race-hero-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.race-type-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid
+    rgba(85, 232, 154, 0.36);
+  border-radius: 8px;
+  background: rgba(26, 91, 61, 0.34);
+  color: #8ff3b9;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.live-refresh-chip {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  padding: 4px 9px;
+  border: 1px solid
+    rgba(85, 232, 154, 0.32);
+  border-radius: 999px;
+  background: rgba(20, 76, 51, 0.28);
+  color: #9af3bd;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.live-refresh-chip > span {
+  color: #55e89a;
+  font-size: 9px;
+}
+
+.live-refresh-chip small {
+  padding-left: 6px;
+  border-left: 1px solid
+    rgba(172, 211, 190, 0.18);
+  color: #9db3a8;
+  font-size: 10px;
+}
+
+.live-refresh-chip.is-fast {
+  border-color: rgba(255, 209, 102, 0.5);
+  background: rgba(116, 78, 13, 0.24);
+  color: #ffe49a;
+}
+
+.live-refresh-chip.is-fast > span {
+  color: #ffd166;
+}
+
+@media (max-width: 760px) {
+  .track-tab.is-finished,
+  .selector-track-chip.is-finished {
+    opacity: 0.64;
+  }
+
+  .live-refresh-chip {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+}

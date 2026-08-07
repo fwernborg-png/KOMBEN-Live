@@ -296,6 +296,9 @@ describe(
         expect(notification?.body).toContain("100 kr vinnare + 100 kr plats");
         expect(notification?.body).toContain("S2");
         expect(notification?.body).toContain("låsodds 7,00");
+        expect(notification?.url).toContain(
+          "kraftaRunner=9",
+        );
       },
     );
 

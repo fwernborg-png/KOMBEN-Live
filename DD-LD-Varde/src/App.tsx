@@ -50,7 +50,18 @@ import {
 import { loadSpeedAnalysisMarkersByDate } from "./speedAnalysis/repository";
 import type { SpeedAnalysisMarker } from "./speedAnalysis/types";
 import { mergeVpPayloadIntoWinnerPayload } from "./atg/vpPayload";
-import { findNextUpcomingRace, isRaceFinished } from "./raceNavigation";
+import {
+  findNextUpcomingRace,
+  isRaceFinished,
+  isTrackFinished,
+} from "./raceNavigation";
+import {
+  formatRaceType,
+  liveRefreshIntervalSeconds,
+  parseRaceDistanceMeters,
+  parseRaceStartMethod,
+  type RaceStartMethod,
+} from "./raceDisplay";
 
 type Track = {
   id: number;
@@ -89,6 +100,8 @@ type Race = {
   id: string;
   startTime?: string;
   status?: string;
+  startMethod: RaceStartMethod;
+  distanceMeters: number | null;
   runners: Runner[];
   isMonte: boolean;
   isP21: boolean;
@@ -1308,8 +1321,8 @@ function raceToPlaceRaceInput(args: {
     plannedStartTime: race.startTime ?? new Date().toISOString(),
     raceStatus: race.status,
     isMonte: race.isMonte,
-    startMethod: /auto/i.test(race.status ?? "") ? "AUTO" : /volt/i.test(race.status ?? "") ? "VOLT" : "UNKNOWN",
-    distanceMeters: null,
+    startMethod: race.startMethod,
+    distanceMeters: race.distanceMeters,
     starters: race.runners.filter((runner) => !runner.scratched).length,
   };
 }
@@ -1794,6 +1807,9 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
     .map((item) => item.number);
 
   const raceText = collectStrings(rawRace).join(" ").toLowerCase();
+  const startMethod = parseRaceStartMethod(rawRace);
+  const distanceMeters =
+    parseRaceDistanceMeters(rawRace);
 
   return {
     raceNumber,
@@ -1803,6 +1819,8 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
       asString(rawRace.scheduledStartTime) ||
       asString(data.startTime),
     status: asString(data.status) || asString(rawRace.status),
+    startMethod,
+    distanceMeters,
     runners,
     isMonte: /mont[eé]/i.test(raceText),
     isP21: /(^|[^a-z0-9])p21([^a-z0-9]|$)/i.test(raceText),
@@ -1821,6 +1839,8 @@ export default function App() {
     initialLinkParamsRef.current?.get("trackId") ?? "";
   const initialLinkRaceNumber =
     initialLinkParamsRef.current?.get("raceNumber") ?? "";
+  const initialLinkKraftaRunner =
+    initialLinkParamsRef.current?.get("kraftaRunner") ?? "";
 
   const [dbStatus, setDbStatus] = useState("Testar...");
   const [pushUiState, setPushUiState] = useState<PushUiState>(() => {
@@ -1941,7 +1961,7 @@ export default function App() {
   const appBootMsRef = useRef(Date.now());
   const placeLoadStartedRef = useRef(false);
 
-  const smallkaramellPollMinute = Math.floor(nowMs / 60_000);
+  const smallkaramellPollBucket = Math.floor(nowMs / 30_000);
 
   useEffect(() => {
     let cancelled = false;
@@ -1962,12 +1982,15 @@ export default function App() {
           }
         }
 
-        setLockedSmallkaramellByRace(next);
+        setLockedSmallkaramellByRace((current) => ({
+          ...current,
+          ...next,
+        }));
       })
       .catch((loadError) => {
         if (cancelled) return;
         console.warn(
-          "Kunde inte läsa låsta Smällkarameller",
+          "Kunde inte läsa låsta Kräftor",
           loadError,
         );
       });
@@ -1975,7 +1998,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [date, smallkaramellPollMinute]);
+  }, [date, smallkaramellPollBucket]);
 
   const activatePushNotifications = useCallback(async () => {
     if (
@@ -2166,6 +2189,63 @@ export default function App() {
     [races, selectedRaceId],
   );
 
+  useEffect(() => {
+    const pushedRunnerNumber =
+      Number(initialLinkKraftaRunner);
+    const pushedTrackId =
+      Number(initialLinkTrackId);
+    const pushedRaceNumber =
+      Number(initialLinkRaceNumber);
+
+    if (
+      !selectedRace ||
+      !Number.isInteger(pushedRunnerNumber) ||
+      pushedRunnerNumber <= 0 ||
+      !Number.isInteger(pushedTrackId) ||
+      !Number.isInteger(pushedRaceNumber)
+    ) {
+      return;
+    }
+
+    if (
+      date !== initialLinkDate ||
+      Number(trackId) !== pushedTrackId ||
+      selectedRace.raceNumber !==
+        pushedRaceNumber
+    ) {
+      return;
+    }
+
+    if (
+      !selectedRace.runners.some(
+        (runner) =>
+          runner.number === pushedRunnerNumber,
+      )
+    ) {
+      return;
+    }
+
+    setLockedSmallkaramellByRace(
+      (current) =>
+        current[selectedRace.id] ===
+        pushedRunnerNumber
+          ? current
+          : {
+              ...current,
+              [selectedRace.id]:
+                pushedRunnerNumber,
+            },
+    );
+  }, [
+    selectedRace,
+    date,
+    trackId,
+    initialLinkDate,
+    initialLinkTrackId,
+    initialLinkRaceNumber,
+    initialLinkKraftaRunner,
+  ]);
+
   const raceNumber = selectedRace ? String(selectedRace.raceNumber) : "";
 
     const selectedTrackHorseIds = useMemo(() => {
@@ -2301,6 +2381,12 @@ export default function App() {
       totalSeconds: diffSeconds,
     };
   }, [selectedRace, nowMs]);
+
+  const selectedRaceRefreshSeconds =
+    liveRefreshIntervalSeconds(
+      selectedRace?.startTime,
+      nowMs,
+    );
 
   const trendRunners = useMemo<TrendRunner[]>(() => {
     if (!selectedRace) return [];
@@ -3150,6 +3236,41 @@ export default function App() {
     return next;
   }, [tracks, racesByTrack, oddsHistory, nowMs]);
 
+  const trackFinishedById = useMemo(() => {
+    const next: Record<number, boolean> = {};
+
+    for (const track of tracks) {
+      next[track.id] = isTrackFinished(
+        racesByTrack[track.id] ?? [],
+      );
+    }
+
+    return next;
+  }, [tracks, racesByTrack]);
+
+  const displayTracks = useMemo(
+    () =>
+      [...tracks].sort((left, right) => {
+        const finishedDifference =
+          Number(
+            trackFinishedById[left.id] ?? false,
+          ) -
+          Number(
+            trackFinishedById[right.id] ?? false,
+          );
+
+        if (finishedDifference !== 0) {
+          return finishedDifference;
+        }
+
+        return left.name.localeCompare(
+          right.name,
+          "sv",
+        );
+      }),
+    [tracks, trackFinishedById],
+  );
+
   const overviewRows = useMemo(() => {
     return tracks.flatMap((track) => {
       const trackRaces = racesByTrack[track.id] ?? [];
@@ -3624,6 +3745,8 @@ export default function App() {
       id: stableRaceId(track, raceNumberValue),
       startTime,
       status: "Väntar på data",
+      startMethod: "UNKNOWN",
+      distanceMeters: null,
       runners: [],
       isMonte: false,
       isP21: false,
@@ -3958,7 +4081,12 @@ export default function App() {
         };
       });
       setUpdated(new Date().toLocaleTimeString("sv-SE"));
-      setSecondsToRefresh(REFRESH_SECONDS);
+      setSecondsToRefresh(
+        liveRefreshIntervalSeconds(
+          refreshed.startTime,
+          snapshotTime,
+        ),
+      );
     } catch (err) {
       if (isAbortError(err)) {
         return;
@@ -4150,18 +4278,22 @@ export default function App() {
   useEffect(() => {
     if (!selectedTrack || !selectedRaceId) return;
 
-    setSecondsToRefresh(REFRESH_SECONDS);
+    setSecondsToRefresh(
+      selectedRaceRefreshSeconds,
+    );
 
     const countdown = window.setInterval(() => {
       setSecondsToRefresh((current) => {
-        if (current <= 1) return REFRESH_SECONDS;
+        if (current <= 1) {
+          return selectedRaceRefreshSeconds;
+        }
         return current - 1;
       });
     }, 1000);
 
     const refresh = window.setInterval(() => {
       void refreshSelectedRace();
-    }, REFRESH_SECONDS * 1000);
+    }, selectedRaceRefreshSeconds * 1000);
 
     return () => {
       window.clearInterval(countdown);
@@ -4169,7 +4301,11 @@ export default function App() {
       cancelSelectedRaceRequest();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackId, selectedRaceId]);
+  }, [
+    trackId,
+    selectedRaceId,
+    selectedRaceRefreshSeconds,
+  ]);
 
   useEffect(() => {
     if (!tracks.length) return;
@@ -5010,7 +5146,13 @@ export default function App() {
               onClick={() => openRaceFromOverview(track, race.id)}
             >
               <div className="overview-card-top">
-                <strong>{track.name} L{race.raceNumber}</strong>
+                <strong>
+                  {track.name} L{race.raceNumber} ·{" "}
+                  {formatRaceType(
+                    race.startMethod,
+                    race.distanceMeters,
+                  )}
+                </strong>
                 <span>{formatTime(race.startTime)}</span>
               </div>
               <div className="overview-card-meta">
@@ -5043,7 +5185,29 @@ export default function App() {
             (runner) => runner.number === lockedSmallkaramellNumber,
           ) ?? null;
 
+    const hasLockedSmallkaramell =
+      lockedSmallkaramellNumber !== null;
+
+    const smallkaramellLockTimeMs =
+      selectedRace?.startTime
+        ? new Date(
+            selectedRace.startTime,
+          ).getTime() -
+          SMALLKARAMELL_RULE_CONFIG_V1
+            .lockTargetSecondsBeforeRace *
+            1000
+        : null;
+
+    const smallkaramellLockPassed =
+      smallkaramellLockTimeMs !== null &&
+      Number.isFinite(
+        smallkaramellLockTimeMs,
+      ) &&
+      nowMs >= smallkaramellLockTimeMs;
+
     const potentialSmallkaramellRunner =
+      !hasLockedSmallkaramell &&
+      !smallkaramellLockPassed &&
       raceInsights.secondBiggestDrop &&
       raceInsights.secondBiggestDrop.odds !== null &&
       raceInsights.secondBiggestDrop.odds / 100 <=
@@ -5053,20 +5217,25 @@ export default function App() {
         : null;
 
     const smallkaramellRunner =
-      lockedSmallkaramellRunner ?? potentialSmallkaramellRunner;
+      lockedSmallkaramellRunner ??
+      potentialSmallkaramellRunner;
 
     return (
       <section className="tab-section">
         <div className="track-tabs">
-          {tracks.map((track) => (
+          {displayTracks.map((track) => (
             <button
               key={track.id}
               type="button"
-              className={`track-tab ${String(track.id) === trackId ? "is-active" : ""}`}
+              className={`track-tab ${String(track.id) === trackId ? "is-active" : ""} ${trackFinishedById[track.id] ? "is-finished" : ""}`}
               onClick={() => selectTrack(String(track.id))}
             >
               <span>{track.name}</span>
-              {trackAlerts[track.id] ? <small>{trackAlerts[track.id]}</small> : null}
+              {trackFinishedById[track.id] ? (
+                <small>✓ KLAR</small>
+              ) : trackAlerts[track.id] ? (
+                <small>{trackAlerts[track.id]}</small>
+              ) : null}
             </button>
           ))}
         </div>
@@ -5076,13 +5245,42 @@ export default function App() {
             <div className="race-hero-bar">
               <div className="race-hero-main">
                 <div className="race-hero-title-row">
-                  <h2 className="race-hero-title">LOPP {selectedRace?.raceNumber || "-"}</h2>
+                  <h2 className="race-hero-title">
+                    <span>
+                      LOPP {selectedRace?.raceNumber || "-"}
+                    </span>
+                    {selectedRace ? (
+                      <span className="race-type-chip">
+                        {formatRaceType(
+                          selectedRace.startMethod,
+                          selectedRace.distanceMeters,
+                        )}
+                      </span>
+                    ) : null}
+                  </h2>
                   <span className="race-hero-meta">{formatTime(selectedRace?.startTime)} · {selectedTrack.name} · Spel</span>
                   <span className="flag-chip">SE</span>
                 </div>
                 <div className="race-hero-subrow">
                   <strong className="countdown-highlight">START OM {countdown.label}</strong>
                   <span className="status-chip">{selectedRace?.status || "Stabil"}</span>
+                </div>
+
+                <div
+                  className={`live-refresh-chip ${
+                    selectedRaceRefreshSeconds === 30
+                      ? "is-fast"
+                      : ""
+                  }`}
+                >
+                  <span aria-hidden="true">●</span>
+                  LIVE · nästa uppdatering om{" "}
+                  {secondsToRefresh}s
+                  <small>
+                    {selectedRaceRefreshSeconds === 30
+                      ? "30 s-läge"
+                      : "60 s-läge"}
+                  </small>
                 </div>
               </div>
               <div className="race-hero-side">
@@ -5097,20 +5295,47 @@ export default function App() {
                 <div className="selector-panel">
                   <span className="selector-label">Bana</span>
                   <div className="race-chip-row">
-                    {tracks.map((track) => {
+                    {displayTracks.map((track) => {
                       const nextTrackRace =
                         nextUpcomingRace?.trackId === track.id
                           ? nextUpcomingRace
                           : null;
 
+                      const nextTrackRaceData =
+                        nextTrackRace
+                          ? (
+                              racesByTrack[
+                                track.id
+                              ] ?? []
+                            ).find(
+                              (race) =>
+                                race.id ===
+                                  nextTrackRace.raceId ||
+                                race.raceNumber ===
+                                  nextTrackRace.raceNumber,
+                            ) ?? null
+                          : null;
+
+                      const nextRaceType =
+                        nextTrackRaceData
+                          ? formatRaceType(
+                              nextTrackRaceData.startMethod,
+                              nextTrackRaceData.distanceMeters,
+                            )
+                          : "–";
+
                       const isActiveTrack =
                         String(track.id) === trackId;
+
+                      const isFinishedTrack =
+                        trackFinishedById[track.id] ??
+                        false;
 
                       return (
                         <button
                           key={`toolbar-${track.id}`}
                           type="button"
-                          className={`race-chip selector-track-chip ${isActiveTrack ? "is-active" : ""} ${nextTrackRace ? "is-next-track" : ""}`}
+                          className={`race-chip selector-track-chip ${isActiveTrack ? "is-active" : ""} ${nextTrackRace ? "is-next-track" : ""} ${isFinishedTrack ? "is-finished" : ""}`}
                           onClick={() => selectTrack(String(track.id))}
                           title={
                             nextTrackRace
@@ -5127,9 +5352,19 @@ export default function App() {
                             {track.name}
                           </span>
 
-                          {nextTrackRace ? (
+                          {isFinishedTrack ? (
+                            <span className="track-finished-badge">
+                              ✓ KLAR
+                            </span>
+                          ) : nextTrackRace ? (
                             <span className="next-race-badge">
-                              NÄSTA {formatTime(nextTrackRace.startTime)}
+                              NÄSTA{" "}
+                              {formatTime(
+                                nextTrackRace.startTime,
+                              )}
+                              {nextRaceType !== "–"
+                                ? ` · ${nextRaceType}`
+                                : ""}
                             </span>
                           ) : null}
                         </button>
@@ -5215,6 +5450,17 @@ export default function App() {
 
               <div className="race-status-grid">
                 <div><span>Start</span><strong>{formatTime(selectedRace?.startTime)}</strong></div>
+                <div>
+                  <span>Lopptyp</span>
+                  <strong>
+                    {selectedRace
+                      ? formatRaceType(
+                          selectedRace.startMethod,
+                          selectedRace.distanceMeters,
+                        )
+                      : "–"}
+                  </strong>
+                </div>
                 <div><span>Nedrakning</span><strong>{countdown.label}</strong></div>
                 <div>
                   <span>Status</span>
@@ -5270,12 +5516,8 @@ export default function App() {
                           runner.number;
 
                         const isPotentialSmallkaramell =
-                          !isLockedSmallkaramell &&
-                          raceInsights.secondBiggestDrop?.number === runner.number &&
-                          runner.odds !== null &&
-                          runner.odds / 100 <=
-                            SMALLKARAMELL_RULE_CONFIG_V1.maxCurrentWinOddsInclusive +
-                              Number.EPSILON;
+                          potentialSmallkaramellRunner?.number ===
+                          runner.number;
 
                         const speedMarker =
                           selectedTrack
@@ -5547,7 +5789,13 @@ export default function App() {
 
                         <div>
                           <div className="side-card-title">Kräfta i buren</div>
-                          <small>Potentiell vinnare</small>
+                          <small>
+                            {lockedSmallkaramellRunner
+                              ? "Låst 90 sek före start"
+                              : smallkaramellLockPassed
+                                ? "Låst signal"
+                                : "Potentiell vinnare"}
+                          </small>
                         </div>
                       </div>
 
@@ -5589,7 +5837,9 @@ export default function App() {
                         </button>
                       ) : (
                         <div className="strategy-empty-state">
-                          Ingen kandidat i loppet.
+                          {smallkaramellLockPassed
+                            ? "Ingen låst Kräfta registrerad."
+                            : "Ingen kandidat i loppet."}
                         </div>
                       )}
                     </section>
@@ -5824,7 +6074,7 @@ export default function App() {
                       <p style={s.kicker}>RESULTAT</p>
                       <h3 className="minor-heading">Platssignal och utfall</h3>
                     </div>
-                    <span className="panel-meta-chip">Nasta liveuppdatering om {secondsToRefresh}s</span>
+                    <span className="panel-meta-chip">Nästa liveuppdatering om {secondsToRefresh}s</span>
                   </div>
 
                   {selectedRaceLockedEvaluation ? (
