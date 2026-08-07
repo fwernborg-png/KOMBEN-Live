@@ -50,7 +50,7 @@ function formatOdds(value: number) {
 
 function smallkaramellLine(candidate: WinPlaceCandidate) {
   return (
-    `🎉 SMÄLLKARAMELLEN: ${horseLabel(candidate)} · ` +
+    `🦞 KRÄFTA I BUREN: ${horseLabel(candidate)} · ` +
     `${SMALLKARAMELL_RULE_CONFIG_V1.defaultWinStakeSEK} kr vinnare + ` +
     `${SMALLKARAMELL_RULE_CONFIG_V1.defaultPlaceStakeSEK} kr plats · ` +
     `S2 · låsodds ${formatOdds(candidate.currentWinOdds)} · ` +
@@ -99,7 +99,7 @@ function buildTrialNotification(args: {
     return {
       title:
         lines.length === 1
-          ? `SMÄLLKARAMELLEN – ${trackName} lopp ${raceNumber}`
+          ? `KRÄFTA I BUREN – ${trackName} lopp ${raceNumber}`
           : `FLERA SPELSIGNALER – ${trackName} lopp ${raceNumber}`,
       body: lines.join(" "),
     };
@@ -228,7 +228,7 @@ export function buildFinalSignalNotification(args: {
     return {
       title:
         lines.length === 1
-          ? `SMÄLLKARAMELLEN – ${trackName} lopp ${raceNumber}`
+          ? `KRÄFTA I BUREN – ${trackName} lopp ${raceNumber}`
           : `FLERA SPELSIGNALER – ${trackName} lopp ${raceNumber}`,
       body: lines.join(" "),
       url: `/?${params.toString()}`,

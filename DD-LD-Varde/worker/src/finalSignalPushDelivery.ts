@@ -69,12 +69,11 @@ export async function deliverFinalSignalNotification(args: {
     nowIso,
   } = args;
 
-  const primaryCandidate =
-    winPlaceCandidate ?? placeCandidate ?? smallkaramellCandidate;
-
-  if (!primaryCandidate) {
+  if (!smallkaramellCandidate) {
     return EMPTY_RESULT;
   }
+
+  const primaryCandidate = smallkaramellCandidate;
 
   const notificationKey = buildFinalSignalNotificationKey({
     raceDate,
@@ -88,8 +87,8 @@ export async function deliverFinalSignalNotification(args: {
     trackId,
     trackName,
     raceNumber,
-    winPlaceCandidate,
-    placeCandidate,
+    winPlaceCandidate: null,
+    placeCandidate: null,
     smallkaramellCandidate,
     signalMode,
   });

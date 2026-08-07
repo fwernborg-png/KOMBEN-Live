@@ -275,7 +275,7 @@ describe(
     );
 
     it(
-      "skriver Smällkaramellen som vinnare plus plats",
+      "skriver Kräfta i buren som vinnare plus plats",
       () => {
         const notification =
           buildFinalSignalNotification({
@@ -291,7 +291,7 @@ describe(
           });
 
         expect(notification?.title).toBe(
-          "SMÄLLKARAMELLEN – Mantorp lopp 5",
+          "KRÄFTA I BUREN – Mantorp lopp 5",
         );
         expect(notification?.body).toContain("100 kr vinnare + 100 kr plats");
         expect(notification?.body).toContain("S2");
@@ -300,7 +300,7 @@ describe(
     );
 
     it(
-      "samlar Smällkaramellen med andra signaler i en gemensam notis",
+      "samlar Kräfta i buren med andra signaler i en gemensam notis",
       () => {
         const notification =
           buildFinalSignalNotification({
@@ -313,7 +313,7 @@ describe(
         expect(notification?.title).toBe(
           "FLERA SPELSIGNALER – Mantorp lopp 5",
         );
-        expect(notification?.body).toContain("SMÄLLKARAMELLEN");
+        expect(notification?.body).toContain("KRÄFTA I BUREN");
         expect(notification?.body).toContain("Vinnare + plats");
         expect(notification?.body).toContain("Plats:");
       },
