@@ -3305,3 +3305,54 @@ body,
     padding-inline: 9px;
   }
 }
+
+/* RACE PRODUCT LABELS V1 */
+
+.race-chip-main {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1;
+}
+
+.race-product-label {
+  display: block;
+  color: #9ed9ff;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.045em;
+  white-space: nowrap;
+}
+
+.race-chip-number {
+  display: block;
+  font-size: inherit;
+  line-height: 1;
+}
+
+.race-chip.has-product-label {
+  min-height: 40px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.race-chip.is-next-race .race-product-label {
+  color: #fff1ad;
+}
+
+.race-chip.is-finished .race-product-label {
+  color: #e6a6ad;
+}
+
+@media (max-width: 720px) {
+  .race-product-label {
+    font-size: 7px;
+  }
+
+  .race-chip.has-product-label {
+    min-height: 44px;
+  }
+}

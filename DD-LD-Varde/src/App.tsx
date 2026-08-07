@@ -62,6 +62,13 @@ import {
   parseRaceStartMethod,
   type RaceStartMethod,
 } from "./raceDisplay";
+import {
+  formatPrimaryRaceProductLabel,
+  inferRaceMeetingTimeCategory,
+  parseRaceProducts,
+  type RaceMeetingTimeCategory,
+  type RaceProduct,
+} from "./raceProducts";
 
 type Track = {
   id: number;
@@ -102,6 +109,8 @@ type Race = {
   status?: string;
   startMethod: RaceStartMethod;
   distanceMeters: number | null;
+  products: RaceProduct[];
+  meetingTimeCategory: RaceMeetingTimeCategory;
   runners: Runner[];
   isMonte: boolean;
   isP21: boolean;
@@ -299,6 +308,8 @@ type MeetingRaceRef = {
   raceNumber: number;
   raceId: string | null;
   startTime?: string;
+  products: RaceProduct[];
+  meetingTimeCategory: RaceMeetingTimeCategory;
 };
 type MeetingRacesByTrack = Record<number, MeetingRaceRef[]>;
 type AppTab = "overview" | "race" | "journal" | "stats" | "speed" | "history";
@@ -636,14 +647,25 @@ function parseMeetingRaceRefs(trackValue: unknown): MeetingRaceRef[] {
           : null);
       if (!raceNumber || !Number.isFinite(raceNumber) || raceNumber <= 0) return null;
 
+      const startTime =
+        asString(race.startTime) ||
+        asString(race.scheduledStartTime) ||
+        asString(race.postTime) ||
+        undefined;
+
       return {
         raceNumber,
         raceId,
-        startTime:
-          asString(race.startTime) ||
-          asString(race.scheduledStartTime) ||
-          asString(race.postTime) ||
-          undefined,
+        startTime,
+        products: parseRaceProducts(race),
+        meetingTimeCategory:
+          inferRaceMeetingTimeCategory({
+            startTime,
+            rawContext: [
+              trackValue,
+              race,
+            ],
+          }),
       } as MeetingRaceRef;
     })
     .filter((ref): ref is MeetingRaceRef => ref !== null)
@@ -1810,17 +1832,31 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
   const startMethod = parseRaceStartMethod(rawRace);
   const distanceMeters =
     parseRaceDistanceMeters(rawRace);
+  const startTime =
+    asString(rawRace.startTime) ||
+    asString(rawRace.scheduledStartTime) ||
+    asString(data.startTime) ||
+    undefined;
 
   return {
     raceNumber,
     id: asString(data.id) || `race-${requestedRaceNumber}`,
-    startTime:
-      asString(rawRace.startTime) ||
-      asString(rawRace.scheduledStartTime) ||
-      asString(data.startTime),
+    startTime,
     status: asString(data.status) || asString(rawRace.status),
     startMethod,
     distanceMeters,
+    products: parseRaceProducts([
+      data,
+      rawRace,
+    ]),
+    meetingTimeCategory:
+      inferRaceMeetingTimeCategory({
+        startTime,
+        rawContext: [
+          data,
+          rawRace,
+        ],
+      }),
     runners,
     isMonte: /mont[eé]/i.test(raceText),
     isP21: /(^|[^a-z0-9])p21([^a-z0-9]|$)/i.test(raceText),
@@ -3744,14 +3780,22 @@ export default function App() {
     return data.ok ? data : null;
   }, [date]);
 
-  function buildPlaceholderRace(track: Track, raceNumberValue: number, startTime?: string): Race {
+  function buildPlaceholderRace(
+    track: Track,
+    raceNumberValue: number,
+    raceRef?: MeetingRaceRef,
+  ): Race {
     return {
       raceNumber: raceNumberValue,
       id: stableRaceId(track, raceNumberValue),
-      startTime,
+      startTime: raceRef?.startTime,
       status: "Väntar på data",
       startMethod: "UNKNOWN",
       distanceMeters: null,
+      products: raceRef?.products ?? [],
+      meetingTimeCategory:
+        raceRef?.meetingTimeCategory ??
+        "UNKNOWN",
       runners: [],
       isMonte: false,
       isP21: false,
@@ -3783,9 +3827,37 @@ export default function App() {
         const availableRaces = raceNumbers
           .map((raceNumberValue, index) => {
             const fetchedRace = results[index];
-            if (fetchedRace) return fetchedRace;
-            const raceRef = meetingRaceRefs.find((ref) => ref.raceNumber === raceNumberValue);
-            return buildPlaceholderRace(currentTrack, raceNumberValue, raceRef?.startTime);
+            const raceRef =
+              meetingRaceRefs.find(
+                (ref) =>
+                  ref.raceNumber ===
+                  raceNumberValue,
+              );
+
+            if (fetchedRace) {
+              return {
+                ...fetchedRace,
+                products:
+                  fetchedRace.products.length
+                    ? fetchedRace.products
+                    : raceRef?.products ?? [],
+                meetingTimeCategory:
+                  fetchedRace
+                    .meetingTimeCategory !==
+                  "UNKNOWN"
+                    ? fetchedRace
+                        .meetingTimeCategory
+                    : raceRef
+                        ?.meetingTimeCategory ??
+                      "UNKNOWN",
+              };
+            }
+
+            return buildPlaceholderRace(
+              currentTrack,
+              raceNumberValue,
+              raceRef,
+            );
           })
           .sort((a, b) => {
             const aTime = a.startTime ? new Date(a.startTime).getTime() : Number.POSITIVE_INFINITY;
@@ -5245,10 +5317,37 @@ export default function App() {
             race.raceNumber === number,
         );
 
+      const refProducts =
+        "products" in raceRef
+          ? raceRef.products
+          : [];
+
+      const refMeetingTimeCategory =
+        "meetingTimeCategory" in raceRef
+          ? raceRef.meetingTimeCategory
+          : "UNKNOWN";
+
+      const products =
+        mappedRace?.products.length
+          ? mappedRace.products
+          : refProducts;
+
+      const meetingTimeCategory =
+        mappedRace &&
+        mappedRace.meetingTimeCategory !==
+          "UNKNOWN"
+          ? mappedRace.meetingTimeCategory
+          : refMeetingTimeCategory;
+
       return {
         number,
         raceRefId,
         mappedRace,
+        productLabel:
+          formatPrimaryRaceProductLabel(
+            products,
+            meetingTimeCategory,
+          ),
         finished: mappedRace
           ? isRaceFinished(mappedRace)
           : false,
@@ -5458,6 +5557,7 @@ export default function App() {
                           number,
                           raceRefId,
                           mappedRace,
+                          productLabel,
                           finished,
                         }) => {
                           const raceIdentity =
@@ -5495,6 +5595,10 @@ export default function App() {
                               key={`${selectedTrack.id}-${number}`}
                               type="button"
                               className={`race-chip ${
+                                productLabel
+                                  ? "has-product-label"
+                                  : ""
+                              } ${
                                 isActiveRace
                                   ? "is-active"
                                   : ""
@@ -5518,8 +5622,16 @@ export default function App() {
                                 raceLabel
                               }
                             >
-                              <span>
-                                {number}
+                              <span className="race-chip-main">
+                                {productLabel ? (
+                                  <small className="race-product-label">
+                                    {productLabel}
+                                  </small>
+                                ) : null}
+
+                                <span className="race-chip-number">
+                                  {number}
+                                </span>
                               </span>
 
                               {finished ? (
