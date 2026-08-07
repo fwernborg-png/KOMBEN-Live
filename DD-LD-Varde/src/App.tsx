@@ -1944,6 +1944,7 @@ export default function App() {
     }
   });
   const [expandedRunnerKey, setExpandedRunnerKey] = useState<string | null>(null);
+  const [showFinishedRaces, setShowFinishedRaces] = useState(false);
   const selectedRaceByTrackRef = useRef(selectedRaceByTrack);
   const latestRaceSelectionRef = useRef({ trackId, raceId: selectedRaceId });
   const pendingRaceNumberByTrackRef = useRef<Record<string, string>>(
@@ -2272,6 +2273,10 @@ export default function App() {
     currentMeetingIdRef.current = trackId;
     currentRaceIdRef.current = selectedRaceId;
   }, [trackId, selectedRaceId]);
+
+  useEffect(() => {
+    setShowFinishedRaces(false);
+  }, [trackId]);
 
   const selectedTrackRaces = useMemo(
     () => (selectedTrack ? racesByTrack[selectedTrack.id] ?? [] : []),
@@ -5220,6 +5225,41 @@ export default function App() {
       lockedSmallkaramellRunner ??
       potentialSmallkaramellRunner;
 
+    const raceMenuItems = (
+      selectedTrackMeetingRefs.length
+        ? selectedTrackMeetingRefs
+        : selectedTrackRaces
+    ).map((raceRef) => {
+      const number = raceRef.raceNumber;
+
+      const raceRefId =
+        "raceId" in raceRef
+          ? raceRef.raceId
+          : raceRef.id;
+
+      const mappedRace =
+        selectedTrackRaces.find(
+          (race) =>
+            (raceRefId &&
+              race.id === raceRefId) ||
+            race.raceNumber === number,
+        );
+
+      return {
+        number,
+        raceRefId,
+        mappedRace,
+        finished: mappedRace
+          ? isRaceFinished(mappedRace)
+          : false,
+      };
+    });
+
+    const finishedRaceCount =
+      raceMenuItems.filter(
+        (item) => item.finished,
+      ).length;
+
     return (
       <section className="tab-section">
         <div className="track-tabs">
@@ -5231,9 +5271,8 @@ export default function App() {
               onClick={() => selectTrack(String(track.id))}
             >
               <span>{track.name}</span>
-              {trackFinishedById[track.id] ? (
-                <small>✓ KLAR</small>
-              ) : trackAlerts[track.id] ? (
+              {!trackFinishedById[track.id] &&
+              trackAlerts[track.id] ? (
                 <small>{trackAlerts[track.id]}</small>
               ) : null}
             </button>
@@ -5352,11 +5391,8 @@ export default function App() {
                             {track.name}
                           </span>
 
-                          {isFinishedTrack ? (
-                            <span className="track-finished-badge">
-                              ✓ KLAR
-                            </span>
-                          ) : nextTrackRace ? (
+                          {!isFinishedTrack &&
+                          nextTrackRace ? (
                             <span className="next-race-badge">
                               NÄSTA{" "}
                               {formatTime(
@@ -5375,75 +5411,138 @@ export default function App() {
                 <div className="selector-panel">
                   <span className="selector-label">Lopp</span>
                   <div className="race-chip-row">
-                    {(selectedTrackMeetingRefs.length ? selectedTrackMeetingRefs : selectedTrackRaces).map((raceRef) => {
-                      const number = raceRef.raceNumber;
-                      const raceRefId = "raceId" in raceRef ? raceRef.raceId : raceRef.id;
-                      const mappedRace = selectedTrackRaces.find((race) =>
-                        (raceRefId && race.id === raceRefId) || race.raceNumber === number,
-                      );
-                      const raceIdentity =
-                        mappedRace?.id ?? String(number);
-
-                      const finished =
-                        mappedRace
-                          ? isRaceFinished(mappedRace)
-                          : false;
-
-                      const nextRace =
-                        nextUpcomingRace?.trackId === selectedTrack.id &&
-                        (
-                          nextUpcomingRace.raceId ===
-                            (mappedRace?.id ?? raceRefId) ||
-                          nextUpcomingRace.raceNumber === number
-                        )
-                          ? nextUpcomingRace
-                          : null;
-
-                      const isActiveRace =
-                        String(number) === raceNumber;
-
-                      const raceLabel = finished
-                        ? `Lopp ${number}, kört`
-                        : nextRace
-                          ? `Lopp ${number}, nästa lopp klockan ${formatTime(nextRace.startTime)}`
-                          : `Lopp ${number}`;
-
-                      return (
-                        <button
-                          key={`${selectedTrack.id}-${number}`}
-                          type="button"
-                          className={`race-chip ${isActiveRace ? "is-active" : ""} ${finished ? "is-finished" : ""} ${nextRace ? "is-next-race" : ""}`}
-                          onClick={() =>
-                            selectRaceForTrack(
-                              selectedTrack,
-                              raceIdentity,
-                            )
-                          }
-                          title={raceLabel}
-                          aria-label={raceLabel}
+                    {finishedRaceCount > 0 ? (
+                      <button
+                        type="button"
+                        className={`race-chip finished-races-toggle ${
+                          showFinishedRaces
+                            ? "is-expanded"
+                            : ""
+                        }`}
+                        onClick={() =>
+                          setShowFinishedRaces(
+                            (current) => !current,
+                          )
+                        }
+                        aria-expanded={
+                          showFinishedRaces
+                        }
+                        title={
+                          showFinishedRaces
+                            ? "Dölj körda lopp"
+                            : "Visa körda lopp"
+                        }
+                      >
+                        <span>
+                          {finishedRaceCount} körda
+                        </span>
+                        <span
+                          className="finished-races-toggle-mark"
+                          aria-hidden="true"
                         >
-                          <span>{number}</span>
+                          {showFinishedRaces
+                            ? "−"
+                            : "+"}
+                        </span>
+                      </button>
+                    ) : null}
 
-                          {finished ? (
-                            <span
-                              className="race-finished-mark"
-                              aria-hidden="true"
-                            >
-                              ✓
-                            </span>
-                          ) : null}
+                    {raceMenuItems
+                      .filter(
+                        (item) =>
+                          showFinishedRaces ||
+                          !item.finished,
+                      )
+                      .map(
+                        ({
+                          number,
+                          raceRefId,
+                          mappedRace,
+                          finished,
+                        }) => {
+                          const raceIdentity =
+                            mappedRace?.id ??
+                            String(number);
 
-                          {nextRace ? (
-                            <span
-                              className="next-race-mark"
-                              aria-hidden="true"
+                          const nextRace =
+                            nextUpcomingRace?.trackId ===
+                              selectedTrack.id &&
+                            (
+                              nextUpcomingRace.raceId ===
+                                (
+                                  mappedRace?.id ??
+                                  raceRefId
+                                ) ||
+                              nextUpcomingRace.raceNumber ===
+                                number
+                            )
+                              ? nextUpcomingRace
+                              : null;
+
+                          const isActiveRace =
+                            String(number) ===
+                            raceNumber;
+
+                          const raceLabel =
+                            finished
+                              ? `Lopp ${number}, kört`
+                              : nextRace
+                                ? `Lopp ${number}, nästa lopp klockan ${formatTime(nextRace.startTime)}`
+                                : `Lopp ${number}`;
+
+                          return (
+                            <button
+                              key={`${selectedTrack.id}-${number}`}
+                              type="button"
+                              className={`race-chip ${
+                                isActiveRace
+                                  ? "is-active"
+                                  : ""
+                              } ${
+                                finished
+                                  ? "is-finished"
+                                  : ""
+                              } ${
+                                nextRace
+                                  ? "is-next-race"
+                                  : ""
+                              }`}
+                              onClick={() =>
+                                selectRaceForTrack(
+                                  selectedTrack,
+                                  raceIdentity,
+                                )
+                              }
+                              title={raceLabel}
+                              aria-label={
+                                raceLabel
+                              }
                             >
-                              NÄSTA
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
+                              <span>
+                                {number}
+                              </span>
+
+                              {finished ? (
+                                <span
+                                  className="race-finished-mark"
+                                  aria-hidden="true"
+                                >
+                                  ✓
+                                </span>
+                              ) : null}
+
+                              {nextRace ? (
+                                <span
+                                  className="next-race-mark"
+                                  aria-hidden="true"
+                                >
+                                  NÄSTA
+                                </span>
+                              ) : null}
+                            </button>
+                          );
+                        },
+                      )}
                   </div>
                 </div>
               </div>

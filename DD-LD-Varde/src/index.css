@@ -3268,3 +3268,40 @@ body,
     flex-wrap: wrap;
   }
 }
+
+
+/* CLEAN FINISHED RACE MENU V1 */
+
+.finished-races-toggle {
+  border-color: rgba(255, 125, 138, 0.38);
+  background: rgba(88, 27, 35, 0.5);
+  color: #e7a8af;
+  box-shadow: none;
+  opacity: 0.82;
+}
+
+.finished-races-toggle:hover,
+.finished-races-toggle.is-expanded {
+  border-color: rgba(255, 125, 138, 0.68);
+  background: rgba(105, 30, 40, 0.7);
+  color: #ffd2d7;
+}
+
+.finished-races-toggle-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  line-height: 1;
+}
+
+@media (max-width: 720px) {
+  .finished-races-toggle {
+    min-height: 36px;
+    padding-inline: 9px;
+  }
+}
