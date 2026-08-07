@@ -29,7 +29,7 @@ export const RESEARCH_ARCHIVE_VERSION =
   "RESEARCH_ARCHIVE_V1.1";
 
 export const RESEARCH_PARSER_VERSION =
-  "RESEARCH_PARSER_V1.0";
+  "RESEARCH_PARSER_V1.1";
 
 export type ResearchArchiveRunnerStats = {
   earningsPerStart: number | null;
@@ -241,7 +241,7 @@ function buildRunnerSnapshotKey(
   return `${snapshotKey}:RUNNER:${runnerNumber}`;
 }
 
-function buildProductKey(
+export function buildResearchProductKey(
   raceKey: string,
   product: ParsedResearchProduct,
 ): string {
@@ -1151,7 +1151,7 @@ export function buildResearchLockArchiveRows(
 
   const productRows = products.map(
     (product) => ({
-      product_key: buildProductKey(
+      product_key: buildResearchProductKey(
         raceKey,
         product,
       ),

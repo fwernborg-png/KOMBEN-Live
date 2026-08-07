@@ -55,6 +55,13 @@ import {
   createSupabaseResearchArchiveAdapter,
 } from "./researchWorkerArchiveRun";
 import {
+  RESEARCH_PARSER_VERSION,
+} from "./researchArchive";
+import {
+  createSupabaseResearchProductBackfillAdapter,
+  runResearchProductBackfill,
+} from "./researchProductBackfill";
+import {
   completeResearchRacesForDay,
 } from "./researchCompletion";
 import {
@@ -2117,6 +2124,47 @@ async function runCron(env: Env) {
         error instanceof Error
           ? error.message
           : String(error),
+      );
+    }
+
+    try {
+      throwIfRunTimedOut(startMs);
+
+      const productBackfill =
+        await runResearchProductBackfill({
+          enabled:
+            researchArchiveEnabled,
+
+          parserVersion:
+            RESEARCH_PARSER_VERSION,
+
+          nowIso,
+
+          maxRaces: 5,
+
+          adapter:
+            createSupabaseResearchProductBackfillAdapter({
+              supabase,
+            }),
+
+          fetchCalendar:
+            async (
+              backfillRaceDate,
+            ) =>
+              fetchJson(
+                `${apiBaseUrl}/calendar/day/${backfillRaceDate}`,
+                runController.signal,
+              ),
+        });
+
+      console.log(
+        "[KOMBEN] Research product backfill",
+        productBackfill,
+      );
+    } catch (error) {
+      console.error(
+        "[KOMBEN] Research product backfill failed",
+        error,
       );
     }
 
