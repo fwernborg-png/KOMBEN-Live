@@ -344,6 +344,133 @@ export function parseRaceProducts(
     );
 }
 
+export function mergeRaceProducts(
+  ...groups: RaceProduct[][]
+): RaceProduct[] {
+  const bestByCode =
+    new Map<RaceProductCode, RaceProduct>();
+
+  for (const group of groups) {
+    for (const product of group) {
+      const existing =
+        bestByCode.get(product.productCode);
+
+      if (!existing) {
+        bestByCode.set(
+          product.productCode,
+          { ...product },
+        );
+        continue;
+      }
+
+      bestByCode.set(
+        product.productCode,
+        {
+          productCode:
+            product.productCode,
+          legNumber:
+            product.legNumber ??
+            existing.legNumber,
+          totalLegs:
+            product.totalLegs ??
+            existing.totalLegs,
+        },
+      );
+    }
+  }
+
+  return RACE_PRODUCT_CODES
+    .map(
+      (code) =>
+        bestByCode.get(code),
+    )
+    .filter(
+      (
+        product,
+      ): product is RaceProduct =>
+        Boolean(product),
+    );
+}
+
+export function parseCalendarGameProducts(
+  value: unknown,
+): Record<string, RaceProduct[]> {
+  const games = asRecord(value);
+
+  if (!games) {
+    return {};
+  }
+
+  const byRace:
+    Record<string, RaceProduct[]> = {};
+
+  for (
+    const [
+      rawProductCode,
+      rawEntries,
+    ] of Object.entries(games)
+  ) {
+    const productCode =
+      RACE_PRODUCT_CODES.find(
+        (code) =>
+          code.toLowerCase() ===
+          rawProductCode.toLowerCase(),
+      );
+
+    if (!productCode) {
+      continue;
+    }
+
+    const entries =
+      Array.isArray(rawEntries)
+        ? rawEntries
+        : [rawEntries];
+
+    for (const rawEntry of entries) {
+      const entry =
+        asRecord(rawEntry);
+
+      if (!entry) {
+        continue;
+      }
+
+      const raceIds =
+        Array.isArray(entry.races)
+          ? entry.races.filter(
+              (
+                raceId,
+              ): raceId is string =>
+                typeof raceId ===
+                  "string" &&
+                raceId.trim() !== "",
+            )
+          : [];
+
+      const totalLegs =
+        raceIds.length || null;
+
+      raceIds.forEach(
+        (raceId, index) => {
+          const product:
+            RaceProduct = {
+              productCode,
+              legNumber: index + 1,
+              totalLegs,
+            };
+
+          byRace[raceId] =
+            mergeRaceProducts(
+              byRace[raceId] ?? [],
+              [product],
+            );
+        },
+      );
+    }
+  }
+
+  return byRace;
+}
+
 export function inferRaceMeetingTimeCategory(
   args: {
     startTime?: string;

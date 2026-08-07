@@ -6,6 +6,7 @@ import {
 import {
   formatPrimaryRaceProductLabel,
   inferRaceMeetingTimeCategory,
+  parseCalendarGameProducts,
   parseRaceProducts,
 } from "./raceProducts";
 
@@ -86,4 +87,72 @@ describe("raceProducts", () => {
       }),
     ).toBe("LUNCH");
   });
+  it("kopplar ATG calendar games till rätt avdelning", () => {
+    const byRace =
+      parseCalendarGameProducts({
+        V64: [
+          {
+            id: "V64_2026-08-07_19_4",
+            races: [
+              "2026-08-07_19_4",
+              "2026-08-07_19_5",
+              "2026-08-07_19_6",
+              "2026-08-07_19_7",
+              "2026-08-07_19_8",
+              "2026-08-07_19_9",
+            ],
+          },
+        ],
+        V4: [
+          {
+            id: "V4_2026-08-07_19_6",
+            races: [
+              "2026-08-07_19_6",
+              "2026-08-07_19_7",
+              "2026-08-07_19_8",
+              "2026-08-07_19_9",
+            ],
+          },
+        ],
+      });
+
+    expect(
+      byRace[
+        "2026-08-07_19_4"
+      ],
+    ).toEqual([
+      {
+        productCode: "V64",
+        legNumber: 1,
+        totalLegs: 6,
+      },
+    ]);
+
+    expect(
+      byRace[
+        "2026-08-07_19_6"
+      ],
+    ).toEqual([
+      {
+        productCode: "V64",
+        legNumber: 3,
+        totalLegs: 6,
+      },
+      {
+        productCode: "V4",
+        legNumber: 1,
+        totalLegs: 4,
+      },
+    ]);
+
+    expect(
+      formatPrimaryRaceProductLabel(
+        byRace[
+          "2026-08-07_19_6"
+        ],
+        "EVENING",
+      ),
+    ).toBe("V64-3");
+  });
+
 });

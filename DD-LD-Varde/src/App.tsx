@@ -65,6 +65,8 @@ import {
 import {
   formatPrimaryRaceProductLabel,
   inferRaceMeetingTimeCategory,
+  mergeRaceProducts,
+  parseCalendarGameProducts,
   parseRaceProducts,
   type RaceMeetingTimeCategory,
   type RaceProduct,
@@ -81,6 +83,7 @@ type Track = {
 
 type CalendarResponse = {
   tracks?: unknown[];
+  games?: unknown;
 };
 
 type RunnerStats = {
@@ -3554,6 +3557,28 @@ export default function App() {
       console.log("[KOMBEN] API response", data);
 
       const rawTracks = data.tracks ?? [];
+
+      const calendarProductsByRace =
+        parseCalendarGameProducts(
+          data.games,
+        );
+
+      const enrichMeetingRaceRefs = (
+        refs: MeetingRaceRef[],
+      ): MeetingRaceRef[] =>
+        refs.map((ref) => ({
+          ...ref,
+          products:
+            mergeRaceProducts(
+              ref.products,
+              ref.raceId
+                ? calendarProductsByRace[
+                    ref.raceId
+                  ] ?? []
+                : [],
+            ),
+        }));
+
       const detectedMeetings = rawTracks.map((rawTrack) => {
         const parsedTrack = parseTrack(rawTrack);
         const parsedCountry = parseCountryCode(rawTrack);
@@ -3567,7 +3592,12 @@ export default function App() {
           asString((trackRecord as UnknownRecord).trackName) ??
           asString((trackRecord as UnknownRecord).displayName) ??
           "okänd bana";
-        const meetingRaces = parseMeetingRaceRefs(rawTrack);
+        const meetingRaces =
+          enrichMeetingRaceRefs(
+            parseMeetingRaceRefs(
+              rawTrack,
+            ),
+          );
         return {
           trackId: trackIdCandidate,
           trackName: trackNameCandidate,
@@ -3607,7 +3637,12 @@ export default function App() {
           if (!track) return null;
           return {
             track,
-            meetingRaces: parseMeetingRaceRefs(rawTrack),
+            meetingRaces:
+              enrichMeetingRaceRefs(
+                parseMeetingRaceRefs(
+                  rawTrack,
+                ),
+              ),
           };
         })
         .filter((meeting): meeting is { track: Track; meetingRaces: MeetingRaceRef[] } => meeting !== null)
@@ -3838,9 +3873,10 @@ export default function App() {
               return {
                 ...fetchedRace,
                 products:
-                  fetchedRace.products.length
-                    ? fetchedRace.products
-                    : raceRef?.products ?? [],
+                  mergeRaceProducts(
+                    fetchedRace.products,
+                    raceRef?.products ?? [],
+                  ),
                 meetingTimeCategory:
                   fetchedRace
                     .meetingTimeCategory !==
