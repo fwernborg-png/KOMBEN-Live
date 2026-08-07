@@ -4,6 +4,7 @@ import {
   it,
 } from "vitest";
 import {
+  normalizeResearchCalendarRaceId,
   runResearchProductBackfill,
   type ResearchProductBackfillAdapter,
   type ResearchProductBackfillRaceRow,
@@ -16,7 +17,7 @@ function race(
     race_key:
       `ATG:2026-08-07:19:${raceNumber}:2026-08-07_19_${raceNumber}`,
     source_race_id:
-      `2026-08-07_19_${raceNumber}`,
+      `vinnare_2026-08-07_19_${raceNumber}`,
     race_date:
       "2026-08-07",
     race_number:
@@ -29,6 +30,40 @@ function race(
       "RESEARCH_PARSER_V1.0",
   };
 }
+
+describe(
+  "normalizeResearchCalendarRaceId",
+  () => {
+    it(
+      "tar bort ATG-marknadsprefix från äldre race-id",
+      () => {
+        expect(
+          normalizeResearchCalendarRaceId(
+            "vinnare_2026-07-31_15_4",
+          ),
+        ).toBe(
+          "2026-07-31_15_4",
+        );
+
+        expect(
+          normalizeResearchCalendarRaceId(
+            "vp_2026-07-31_15_4",
+          ),
+        ).toBe(
+          "2026-07-31_15_4",
+        );
+
+        expect(
+          normalizeResearchCalendarRaceId(
+            "2026-07-31_15_4",
+          ),
+        ).toBe(
+          "2026-07-31_15_4",
+        );
+      },
+    );
+  },
+);
 
 describe(
   "researchProductBackfill",
@@ -95,7 +130,7 @@ describe(
           await runResearchProductBackfill({
             enabled: true,
             parserVersion:
-              "RESEARCH_PARSER_V1.1",
+              "RESEARCH_PARSER_V1.2",
             nowIso:
               "2026-08-07T20:00:00.000Z",
             maxRaces: 5,
@@ -213,7 +248,7 @@ describe(
           await runResearchProductBackfill({
             enabled: true,
             parserVersion:
-              "RESEARCH_PARSER_V1.1",
+              "RESEARCH_PARSER_V1.2",
             nowIso:
               "2026-08-07T20:00:00.000Z",
             adapter,
@@ -262,7 +297,7 @@ describe(
           await runResearchProductBackfill({
             enabled: true,
             parserVersion:
-              "RESEARCH_PARSER_V1.1",
+              "RESEARCH_PARSER_V1.2",
             nowIso:
               "2026-08-07T20:00:00.000Z",
             adapter,

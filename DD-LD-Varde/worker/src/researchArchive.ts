@@ -29,7 +29,7 @@ export const RESEARCH_ARCHIVE_VERSION =
   "RESEARCH_ARCHIVE_V1.1";
 
 export const RESEARCH_PARSER_VERSION =
-  "RESEARCH_PARSER_V1.1";
+  "RESEARCH_PARSER_V1.2";
 
 export type ResearchArchiveRunnerStats = {
   earningsPerStart: number | null;

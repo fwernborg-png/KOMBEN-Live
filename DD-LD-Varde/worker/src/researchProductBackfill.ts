@@ -70,6 +70,15 @@ function asRecord(
     : null;
 }
 
+export function normalizeResearchCalendarRaceId(
+  sourceRaceId: string,
+): string {
+  return sourceRaceId.replace(
+    /^(?:vinnare|vp)_/i,
+    "",
+  );
+}
+
 export function buildResearchProductBackfillRows(
   args: {
     race:
@@ -418,9 +427,14 @@ export async function runResearchProductBackfill(
 
     for (const race of races) {
       try {
+        const calendarRaceId =
+          normalizeResearchCalendarRaceId(
+            race.source_race_id,
+          );
+
         const products =
           productsByRace[
-            race.source_race_id
+            calendarRaceId
           ] ?? [];
 
         await args.adapter
