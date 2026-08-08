@@ -71,7 +71,14 @@ export function applySettledResult(args: {
   };
 }
 
-export function computePlaceStats(bets: PlaceBet[]) {
+export function computePlaceStats(
+  bets: PlaceBet[],
+  options?: {
+    economyScope?: "ACTUAL" | "MODEL";
+  },
+) {
+  const economyScope =
+    options?.economyScope ?? "ACTUAL";
   const settled = bets.filter((bet) => bet.resultOutcome === "HIT" || bet.resultOutcome === "MISS");
   const hits = settled.filter((bet) => bet.resultOutcome === "HIT").length;
   const misses = settled.filter((bet) => bet.resultOutcome === "MISS").length;
@@ -81,7 +88,11 @@ export function computePlaceStats(bets: PlaceBet[]) {
 
   const economicBets = bets.filter(
     (bet) =>
-      bet.userActuallyPlayed &&
+      (
+        economyScope === "MODEL"
+          ? bet.automaticModelBet
+          : bet.userActuallyPlayed
+      ) &&
       bet.resultStatus === "RESULT_READY" &&
       bet.returnOren !== null &&
       bet.netOren !== null,

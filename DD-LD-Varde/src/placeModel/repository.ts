@@ -176,6 +176,26 @@ export async function loadPlaceBetsByDate(date: string) {
   return (data as DbBetRow[]).map(parseBetRow);
 }
 
+export async function loadPlaceBetsByRuleVersion(
+  ruleVersion: string,
+) {
+  const { data, error } = await supabase
+    .from("place_model_bets")
+    .select("*")
+    .eq("rule_version", ruleVersion)
+    .order("date", { ascending: true })
+    .order("track_name", { ascending: true })
+    .order("race_number", { ascending: true });
+
+  if (error) {
+    throw new Error(
+      `Kunde inte lasa modellstatistik: ${error.message}`,
+    );
+  }
+
+  return (data as DbBetRow[]).map(parseBetRow);
+}
+
 export async function upsertPlaceBet(bet: PlaceBet) {
   const { error } = await supabase.from("place_model_bets").upsert(
     {

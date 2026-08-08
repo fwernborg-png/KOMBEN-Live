@@ -28,6 +28,7 @@ import {
 import {
   deletePlaceBet,
   loadPlaceBetsByDate,
+  loadPlaceBetsByRuleVersion,
   loadPlaceEvaluationsByDate,
   saveAuditLog,
   upsertPlaceBet,
@@ -1622,6 +1623,8 @@ function applyGallopOverlayToTrendRunners(args: {
   });
 }
 
+const PLACE_AUTOMATIC_WRITES_ARE_SERVER_OWNED = true;
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -1943,6 +1946,10 @@ export default function App() {
   const [signalRecords, setSignalRecords] = useState<SignalRecord[]>([]);
   const [placeEvaluations, setPlaceEvaluations] = useState<PlaceEvaluation[]>([]);
   const [placeBets, setPlaceBets] = useState<PlaceBet[]>([]);
+  const [
+    placeModelStatsBets,
+    setPlaceModelStatsBets,
+  ] = useState<PlaceBet[]>([]);
   const [placeJournalLoaded, setPlaceJournalLoaded] = useState(false);
   const [placeAuditLog, setPlaceAuditLog] = useState<PlaceAuditLogEntry[]>([]);
   const [placeJournalDateFilter, setPlaceJournalDateFilter] = useState("");
@@ -2707,10 +2714,50 @@ export default function App() {
 
     void loadPlaceJournal();
 
+    const timer = window.setInterval(() => {
+      void loadPlaceJournal();
+    }, 30_000);
+
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [date]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadModelStats() {
+      try {
+        const bets =
+          await loadPlaceBetsByRuleVersion(
+            PLACE_RULE_CONFIG_V1.ruleVersion,
+          );
+
+        if (cancelled) return;
+
+        setPlaceModelStatsBets(bets);
+      } catch (statsError) {
+        if (cancelled) return;
+
+        console.error(
+          "Kunde inte läsa PLACE-modellstatistik",
+          statsError,
+        );
+      }
+    }
+
+    void loadModelStats();
+
+    const timer = window.setInterval(() => {
+      void loadModelStats();
+    }, 30_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -2966,7 +3013,21 @@ export default function App() {
       .sort((a, b) => a.raceNumber - b.raceNumber);
   }, [signalRecords, selectedTrack, date]);
 
-  const placeStats = useMemo(() => computePlaceStats(placeBets), [placeBets]);
+  const placeStats = useMemo(
+    () => computePlaceStats(placeBets),
+    [placeBets],
+  );
+
+  const placeModelStats = useMemo(
+    () =>
+      computePlaceStats(
+        placeModelStatsBets,
+        {
+          economyScope: "MODEL",
+        },
+      ),
+    [placeModelStatsBets],
+  );
 
   const placeJournalRows = useMemo(() => {
     return placeBets
@@ -2992,7 +3053,7 @@ export default function App() {
   ]);
 
   const placeStreaks = useMemo(() => {
-    const settled = [...placeBets]
+    const settled = [...placeModelStatsBets]
       .filter((bet) => bet.resultOutcome === "HIT" || bet.resultOutcome === "MISS")
       .sort((a, b) => {
         const aMs = new Date(a.plannedStartTime).getTime();
@@ -3023,7 +3084,7 @@ export default function App() {
       longestHitStreak,
       longestLossStreak,
     };
-  }, [placeBets]);
+  }, [placeModelStatsBets]);
 
   const placeBetsByRaceKey = useMemo(() => {
     const map = new Map<string, PlaceBet>();
@@ -3707,7 +3768,7 @@ export default function App() {
   }
 
   function stableRaceId(track: Track, raceNumberValue: number) {
-    return `${date}_${track.id}_${raceNumberValue}`;
+    return `vinnare_${date}_${track.id}_${raceNumberValue}`;
   }
 
   async function fetchRace(track: Track, number: number, signal?: AbortSignal) {
@@ -4434,6 +4495,7 @@ export default function App() {
   }, [tracks.length, Object.keys(racesByTrack).length, date]);
 
   useEffect(() => {
+    if (PLACE_AUTOMATIC_WRITES_ARE_SERVER_OWNED) return;
     if (!placeJournalLoaded) return;
     if (!selectedTrack || !races.length) return;
 
@@ -6561,19 +6623,19 @@ export default function App() {
         </div>
 
         <div className="mini-stats-grid">
-          <div className="mini-stat-card"><span>Lasta modellspel</span><strong>{placeBets.length}</strong></div>
-          <div className="mini-stat-card"><span>Pending</span><strong>{placeStats.pending}</strong></div>
-          <div className="mini-stat-card"><span>Faststallda</span><strong>{placeStats.settled}</strong></div>
-          <div className="mini-stat-card"><span>Void</span><strong>{placeStats.voids}</strong></div>
-          <div className="mini-stat-card"><span>Traffar</span><strong>{placeStats.hits}</strong></div>
-          <div className="mini-stat-card"><span>Missar</span><strong>{placeStats.misses}</strong></div>
-          <div className="mini-stat-card"><span>Traffprocent</span><strong>{placeStats.hitRate.toFixed(1).replace(".", ",")} %</strong></div>
-          <div className="mini-stat-card"><span>Total insats</span><strong>{orenToSek(placeStats.totalStakeOren).toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>Total aterbetalning</span><strong>{orenToSek(placeStats.totalReturnOren).toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>Netto</span><strong>{placeStats.totalNetOren >= 0 ? "+" : ""}{orenToSek(placeStats.totalNetOren).toFixed(0)} kr</strong></div>
-          <div className="mini-stat-card"><span>ROI</span><strong>{placeStats.roiPct.toFixed(1).replace(".", ",")} %</strong></div>
-          <div className="mini-stat-card"><span>Snitt platsodds</span><strong>{placeStats.avgPlaceOdds?.toFixed(2).replace(".", ",") ?? "-"}</strong></div>
-          <div className="mini-stat-card"><span>Snitt vinnarodds</span><strong>{placeStats.avgWinOddsAtLock?.toFixed(2).replace(".", ",") ?? "-"}</strong></div>
+          <div className="mini-stat-card"><span>Lasta modellspel</span><strong>{placeModelStatsBets.length}</strong></div>
+          <div className="mini-stat-card"><span>Pending</span><strong>{placeModelStats.pending}</strong></div>
+          <div className="mini-stat-card"><span>Faststallda</span><strong>{placeModelStats.settled}</strong></div>
+          <div className="mini-stat-card"><span>Void</span><strong>{placeModelStats.voids}</strong></div>
+          <div className="mini-stat-card"><span>Traffar</span><strong>{placeModelStats.hits}</strong></div>
+          <div className="mini-stat-card"><span>Missar</span><strong>{placeModelStats.misses}</strong></div>
+          <div className="mini-stat-card"><span>Traffprocent</span><strong>{placeModelStats.hitRate.toFixed(1).replace(".", ",")} %</strong></div>
+          <div className="mini-stat-card"><span>Total insats</span><strong>{orenToSek(placeModelStats.totalStakeOren).toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Total aterbetalning</span><strong>{orenToSek(placeModelStats.totalReturnOren).toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>Netto</span><strong>{placeModelStats.totalNetOren >= 0 ? "+" : ""}{orenToSek(placeModelStats.totalNetOren).toFixed(0)} kr</strong></div>
+          <div className="mini-stat-card"><span>ROI</span><strong>{placeModelStats.roiPct.toFixed(1).replace(".", ",")} %</strong></div>
+          <div className="mini-stat-card"><span>Snitt platsodds</span><strong>{placeModelStats.avgPlaceOdds?.toFixed(2).replace(".", ",") ?? "-"}</strong></div>
+          <div className="mini-stat-card"><span>Snitt vinnarodds</span><strong>{placeModelStats.avgWinOddsAtLock?.toFixed(2).replace(".", ",") ?? "-"}</strong></div>
           <div className="mini-stat-card"><span>Traffsvit nu/langst</span><strong>{placeStreaks.currentHitStreak}/{placeStreaks.longestHitStreak}</strong></div>
           <div className="mini-stat-card"><span>Forlustsvit nu/langst</span><strong>{placeStreaks.currentLossStreak}/{placeStreaks.longestLossStreak}</strong></div>
         </div>
