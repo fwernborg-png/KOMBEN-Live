@@ -41,6 +41,7 @@ import type {
   PlaceRunnerInput,
 } from "./placeModel/types";
 import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
+import { DailyResultPeek } from "./winPlaceModel/DailyResultPeek";
 import { loadWinPlaceBetsByDate } from "./winPlaceModel/repository";
 import { ResearchHistoryPanel } from "./researchHistory/ResearchHistoryPanel";
 import { SpeedAnalysisPanel } from "./speedAnalysis/SpeedAnalysisPanel";
@@ -6960,6 +6961,8 @@ export default function App() {
             <span>LIVE</span>
           </div>
         </div>
+
+        <DailyResultPeek date={date} />
 
         <WinPlaceJournalPanel date={date} mode="stats" />
 
