@@ -24,6 +24,17 @@ import {
   JUPITER_STRATEGY_CODE,
 } from "./jupiter";
 import {
+  evaluateGrodan,
+  getGrodanPlaceHitMaxOfficialFinishPosition,
+  isGrodanProspectiveDate,
+  isInGrodanSignalWindow,
+  GRODAN_LOCK_TARGET_SECONDS,
+  GRODAN_PROSPECTIVE_START_DATE,
+  GRODAN_RULE_VERSION,
+  GRODAN_STAKE_SEK,
+  GRODAN_STRATEGY_CODE,
+} from "./grodan";
+import {
   evaluateResearchTrialSignals,
   isResearchTrialSignalDate,
 } from "./researchTrialSignals";
@@ -2318,6 +2329,7 @@ async function runCron(env: Env) {
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
+        GRODAN_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
@@ -2363,6 +2375,11 @@ async function runCron(env: Env) {
         JUPITER_RULE_VERSION,
       );
 
+      const grodanRaceKey = raceRuleKey(
+        race.id,
+        GRODAN_RULE_VERSION,
+      );
+
       const needsWinPlaceEvaluation =
         isInWinPlaceFinalSignalWindow(
           plannedStartTime,
@@ -2397,11 +2414,24 @@ async function runCron(env: Env) {
           jupiterRaceKey,
         );
 
+      const needsGrodanEvaluation =
+        isGrodanProspectiveDate(
+          raceDate,
+        ) &&
+        isInGrodanSignalWindow(
+          plannedStartTime,
+          startMs,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          grodanRaceKey,
+        );
+
       if (
         !needsWinPlaceEvaluation &&
         !needsSmallkaramellEvaluation &&
         !needsSnigelEvaluation &&
-        !needsJupiterEvaluation
+        !needsJupiterEvaluation &&
+        !needsGrodanEvaluation
       ) {
         continue;
       }
@@ -3487,6 +3517,463 @@ async function runCron(env: Env) {
           jupiterRaceKey,
         );
       }
+
+      /*
+       * GRODAN V1.0
+       *
+       * Fryst prospektiv forskningsregel:
+       * - start 2026-08-11
+       * - endast trav
+       * - Jämnaste hästen
+       * - G grön / topp 4
+       * - låsodds 4,00–9,99
+       * - endast PLATS
+       * - 100 kr
+       * - T-90
+       * - ingen push
+       */
+      if (needsGrodanEvaluation) {
+        const plannedLockTimeMs =
+          Date.parse(plannedStartTime) -
+          GRODAN_LOCK_TARGET_SECONDS *
+            1_000;
+
+        const hasFreshCurrentOddsPoint =
+          latestPointMs !== null &&
+          Math.abs(
+            plannedLockTimeMs -
+              latestPointMs,
+          ) <= lockGraceMs;
+
+        const grodanEvaluation =
+          evaluateGrodan({
+            raceDate,
+
+            trackName:
+              track.name,
+
+            meetingName:
+              race.meetingName,
+
+            raceStatus:
+              race.status,
+
+            isMonte:
+              race.isMonte,
+
+            runners:
+              winPlaceRunners,
+
+            hasCompleteOddsHistory,
+
+            hasFreshCurrentOddsPoint,
+          });
+
+        const grodanCandidate =
+          grodanEvaluation.candidate;
+
+        const grodanSmoothest =
+          grodanEvaluation.smoothest;
+
+        const grodanInsufficient =
+          grodanEvaluation.excludedReason ===
+            "Otillräcklig oddshistorik" ||
+          grodanEvaluation.excludedReason ===
+            "Jämnaste kan inte utses säkert" ||
+          grodanEvaluation.excludedReason ===
+            "Ingen jämnaste häst";
+
+        const grodanDecision =
+          grodanCandidate
+            ? "PLAY"
+            : !grodanEvaluation.active
+              ? "EXCLUDED"
+              : grodanInsufficient
+                ? "INSUFFICIENT_DATA"
+                : "NO_PLAY";
+
+        const plannedStartMs =
+          Date.parse(plannedStartTime);
+
+        const secondsBeforeStart =
+          Number.isFinite(
+            plannedStartMs,
+          )
+            ? Math.max(
+                0,
+                (
+                  plannedStartMs -
+                  startMs
+                ) / 1_000,
+              )
+            : 0;
+
+        const grodanConfigSnapshot = {
+          ruleVersion:
+            GRODAN_RULE_VERSION,
+
+          strategyCode:
+            GRODAN_STRATEGY_CODE,
+
+          strategyLabel:
+            "Grodan – Jämnaste plats",
+
+          prospectiveStartDate:
+            GRODAN_PROSPECTIVE_START_DATE,
+
+          collectionStartMinutesBeforeRace:
+            60,
+
+          lockTargetSecondsBeforeRace:
+            GRODAN_LOCK_TARGET_SECONDS,
+
+          lockWindowOpensSecondsBeforeRace:
+            120,
+
+          lockWindowClosesSecondsBeforeRace:
+            60,
+
+          minValidOddsPoints:
+            2,
+
+          lockedWinOddsMinInclusive:
+            4,
+
+          lockedWinOddsMaxInclusive:
+            9.99,
+
+          requiredIndicatorGreen:
+            "G",
+
+          defaultPlaceStakeSEK:
+            GRODAN_STAKE_SEK,
+
+          market:
+            "PLACE",
+
+          excludeMonte:
+            true,
+
+          excludeGallop:
+            true,
+
+          prospectiveTargetBets:
+            50,
+        };
+
+        const {
+          error:
+            grodanEvaluationError,
+        } = await supabase
+          .from(
+            "win_place_race_evaluations",
+          )
+          .upsert(
+            {
+              race_id:
+                race.id,
+
+              rule_version:
+                GRODAN_RULE_VERSION,
+
+              strategy_code:
+                GRODAN_STRATEGY_CODE,
+
+              decision:
+                grodanDecision,
+
+              reasons:
+                grodanCandidate
+                  ? []
+                  : [
+                      grodanEvaluation
+                        .excludedReason ??
+                        "Ingen Grodan-signal",
+                    ],
+
+              race_json:
+                raceInput,
+
+              planned_lock_time_ms:
+                plannedLockTimeMs,
+
+              actual_lock_time_ms:
+                startMs,
+
+              locked_at:
+                nowIso,
+
+              seconds_before_start:
+                secondsBeforeStart,
+
+              config_snapshot:
+                grodanConfigSnapshot,
+
+              checks_json: [
+                {
+                  key:
+                    "SMOOTHEST_AVAILABLE",
+                  passed:
+                    grodanSmoothest !==
+                      null,
+                },
+
+                {
+                  key:
+                    "LOCK_WIN_ODDS_4_00_9_99",
+                  passed:
+                    grodanSmoothest !==
+                      null &&
+                    grodanSmoothest
+                      .currentWinOdds >=
+                      4 &&
+                    grodanSmoothest
+                      .currentWinOdds <=
+                      9.99,
+                },
+
+                {
+                  key:
+                    "G_TOP4",
+                  passed:
+                    grodanSmoothest !==
+                      null &&
+                    grodanSmoothest
+                      .indicatorsGreen
+                      .includes("G"),
+                },
+
+                {
+                  key:
+                    "ODDS_HISTORY_COMPLETE",
+                  passed:
+                    hasCompleteOddsHistory,
+                },
+
+                {
+                  key:
+                    "CURRENT_ODDS_POINT_AVAILABLE",
+                  passed:
+                    hasFreshCurrentOddsPoint,
+                },
+              ],
+
+              candidate_json:
+                grodanCandidate,
+
+              most_shortened_json:
+                null,
+
+              snapshot_json: {
+                activeStarters:
+                  grodanEvaluation
+                    .activeStarters,
+
+                smoothest:
+                  grodanSmoothest,
+
+                excludedReason:
+                  grodanEvaluation
+                    .excludedReason,
+              },
+
+              signal_phase:
+                "LIVE",
+
+              created_at:
+                nowIso,
+
+              updated_at:
+                nowIso,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (
+          grodanEvaluationError
+        ) {
+          throw new Error(
+            `Could not upsert Grodan evaluation ${race.id}: ${grodanEvaluationError.message}`,
+          );
+        }
+
+        if (grodanCandidate) {
+          const {
+            error:
+              grodanBetError,
+          } = await supabase
+            .from(
+              "win_place_model_bets",
+            )
+            .upsert(
+              {
+                bet_id: [
+                  race.id,
+                  GRODAN_RULE_VERSION,
+                  "PLACE",
+                  "LIVE",
+                ].join(":"),
+
+                race_id:
+                  race.id,
+
+                rule_version:
+                  GRODAN_RULE_VERSION,
+
+                market:
+                  "PLACE",
+
+                signal_phase:
+                  "LIVE",
+
+                config_snapshot:
+                  grodanConfigSnapshot,
+
+                date:
+                  raceDate,
+
+                track_id:
+                  track.id,
+
+                track_name:
+                  track.name,
+
+                race_number:
+                  race.raceNumber,
+
+                planned_start_time:
+                  plannedStartTime,
+
+                lock_time:
+                  nowIso,
+
+                seconds_before_start:
+                  secondsBeforeStart,
+
+                horse_number:
+                  grodanCandidate
+                    .runnerNumber,
+
+                horse_name:
+                  grodanCandidate
+                    .runnerName,
+
+                horse_id:
+                  grodanCandidate
+                    .horseId,
+
+                start_lane:
+                  grodanCandidate
+                    .startLane,
+
+                start_method:
+                  race.startMethod,
+
+                distance_meters:
+                  race.distanceMeters,
+
+                starters:
+                  grodanEvaluation
+                    .activeStarters,
+
+                start_odds:
+                  grodanCandidate
+                    .startOdds,
+
+                locked_win_odds:
+                  grodanCandidate
+                    .currentWinOdds,
+
+                odds_drop_percent:
+                  grodanCandidate
+                    .oddsDropPercent,
+
+                cv_raw:
+                  grodanCandidate
+                    .cvRaw,
+
+                cv_display:
+                  grodanCandidate
+                    .cvDisplay,
+
+                strength:
+                  grodanCandidate
+                    .strength,
+
+                indicators_green:
+                  grodanCandidate
+                    .indicatorsGreen,
+
+                valid_odds_points:
+                  grodanCandidate
+                    .validOddsPoints,
+
+                stake_oren:
+                  GRODAN_STAKE_SEK *
+                  100,
+
+                result_outcome:
+                  "PENDING",
+
+                result_status:
+                  "PENDING",
+
+                finish_position_official:
+                  null,
+
+                official_win_odds_decimal:
+                  null,
+
+                place_odds_decimal:
+                  null,
+
+                return_oren:
+                  null,
+
+                net_oren:
+                  null,
+
+                roi_pct:
+                  null,
+
+                automatic_model_bet:
+                  true,
+
+                user_actually_played:
+                  false,
+
+                result_source:
+                  null,
+
+                result_updated_at:
+                  null,
+
+                created_at:
+                  nowIso,
+
+                updated_at:
+                  nowIso,
+              },
+              {
+                onConflict:
+                  "race_id,rule_version,market,signal_phase",
+              },
+            );
+
+          if (grodanBetError) {
+            throw new Error(
+              `Could not upsert Grodan bet ${race.id}: ${grodanBetError.message}`,
+            );
+          }
+        }
+
+        existingWinPlaceEvalKeys.add(
+          grodanRaceKey,
+        );
+      }
     }
 
     const { data: existingEvalRows, error: existingEvalError } = await supabase
@@ -3937,6 +4424,7 @@ async function runCron(env: Env) {
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
+        GRODAN_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("result_outcome", "PENDING")
@@ -4029,8 +4517,13 @@ async function runCron(env: Env) {
             ? getJupiterPlaceHitMaxOfficialFinishPosition(
                 activeStartersAtResult,
               )
-            : WIN_PLACE_RULE_CONFIG_V1
-                .placeHitMaxOfficialFinishPosition;
+            : bet.rule_version ===
+                GRODAN_RULE_VERSION
+              ? getGrodanPlaceHitMaxOfficialFinishPosition(
+                  activeStartersAtResult,
+                )
+              : WIN_PLACE_RULE_CONFIG_V1
+                  .placeHitMaxOfficialFinishPosition;
 
         const settled = settleWinPlaceBet({
           market: bet.market,
