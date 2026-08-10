@@ -88,17 +88,17 @@ describe(
   "Grodan V1.0",
   () => {
     it(
-      "startar prospektivt 2026-08-11",
+      "startar prospektivt 2026-08-10",
       () => {
         expect(
           isGrodanProspectiveDate(
-            "2026-08-10",
+            "2026-08-09",
           ),
         ).toBe(false);
 
         expect(
           isGrodanProspectiveDate(
-            "2026-08-11",
+            "2026-08-10",
           ),
         ).toBe(true);
       },
