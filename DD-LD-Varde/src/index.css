@@ -3371,3 +3371,32 @@ body,
       rgba(8, 20, 16, 0.97)
     ) !important;
 }
+
+
+/* LIVE-tid + manuell uppdatering i loppstatus */
+.race-status-grid .race-live-value-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.race-live-refresh-button {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid rgba(85, 232, 154, 0.32);
+  border-radius: 8px;
+  background: rgba(85, 232, 154, 0.08);
+  color: #b9ffd7;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.race-live-refresh-button:hover:not(:disabled) {
+  background: rgba(85, 232, 154, 0.15);
+}
+
+.race-live-refresh-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

@@ -5926,7 +5926,22 @@ export default function App() {
                 </div>
                 <div><span>1 h före</span><strong>{selectedSignalRunner ? formatOdds(selectedSignalRunner.firstOdds) : "–"}</strong></div>
                 <div><span>Lasning om</span><strong>{minutesToLock === null ? "-" : `${minutesToLock} min`}</strong></div>
-                <div><span>Live</span><strong>{updated || "-"}</strong></div>
+                <div className="race-live-status">
+                  <span>Live</span>
+                  <div className="race-live-value-row">
+                    <strong>{updated || "-"}</strong>
+                    <button
+                      type="button"
+                      className="race-live-refresh-button"
+                      onClick={() => void refreshSelectedRace()}
+                      disabled={!selectedRace || loadingOdds}
+                      title="Uppdatera loppet nu"
+                      aria-label="Uppdatera loppet nu"
+                    >
+                      {loadingOdds ? "Uppdaterar…" : "↻ Uppdatera"}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -7044,9 +7059,6 @@ export default function App() {
                 </label>
                 <button type="button" onClick={() => void loadTracks()} disabled={loadingTracks} style={{ ...s.button, width: "auto", paddingInline: 18, marginBottom: 0, opacity: loadingTracks ? 0.65 : 1 }}>
                   {loadingTracks ? "Hamtar banor..." : "Hamta banor"}
-                </button>
-                <button type="button" onClick={() => void refreshSelectedRace()} disabled={!selectedRace || loadingOdds} style={{ ...s.refreshButton, opacity: !selectedRace || loadingOdds ? 0.6 : 1 }}>
-                  {loadingOdds ? "Uppdaterar..." : "Uppdatera lopp"}
                 </button>
                 {error ? (
                   <button type="button" onClick={() => void retryLatestFetch()} disabled={loadingTracks || loadingRaces || loadingOdds} style={{ ...s.refreshButton, opacity: loadingTracks || loadingRaces || loadingOdds ? 0.6 : 1 }}>
