@@ -50,6 +50,8 @@ import type {
   SmoothestCandidate,
 } from "../../src/placeModel/types";
 import {
+  BIG_B_MONSTER_PROSPECTIVE_START_DATE,
+  BIG_B_MONSTER_RULE_CONFIG_V1,
   SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
   getWinPlacePlannedLockTimeMs,
@@ -2330,6 +2332,7 @@ async function runCron(env: Env) {
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
         GRODAN_RULE_VERSION,
+        BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
       ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
@@ -2380,6 +2383,11 @@ async function runCron(env: Env) {
         GRODAN_RULE_VERSION,
       );
 
+      const bigBMonsterRaceKey = raceRuleKey(
+        race.id,
+        BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
+      );
+
       const needsWinPlaceEvaluation =
         isInWinPlaceFinalSignalWindow(
           plannedStartTime,
@@ -2426,12 +2434,25 @@ async function runCron(env: Env) {
           grodanRaceKey,
         );
 
+      const needsBigBMonsterEvaluation =
+        raceDate >=
+          BIG_B_MONSTER_PROSPECTIVE_START_DATE &&
+        isInWinPlaceFinalSignalWindow(
+          plannedStartTime,
+          startMs,
+          BIG_B_MONSTER_RULE_CONFIG_V1,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          bigBMonsterRaceKey,
+        );
+
       if (
         !needsWinPlaceEvaluation &&
         !needsSmallkaramellEvaluation &&
         !needsSnigelEvaluation &&
         !needsJupiterEvaluation &&
-        !needsGrodanEvaluation
+        !needsGrodanEvaluation &&
+        !needsBigBMonsterEvaluation
       ) {
         continue;
       }
@@ -2650,6 +2671,30 @@ async function runCron(env: Env) {
         });
       }
 
+
+      /*
+       * BIG B MONSTER V1.0
+       *
+       * Fryst prospektiv modell:
+       * - Mest sänkta
+       * - max 8 aktiva startande
+       * - styrka max 3/6
+       * - WIN + PLACE, 100 kr vardera
+       * - T-90
+       * - ingen push
+       */
+      if (needsBigBMonsterEvaluation) {
+        await evaluateAndPersist({
+          config:
+            BIG_B_MONSTER_RULE_CONFIG_V1,
+
+          raceKey:
+            bigBMonsterRaceKey,
+
+          counter:
+            "WIN_PLACE",
+        });
+      }
 
       /*
        * SNIGEL KOMMER fortsätter i samma T-90-pipeline,
@@ -4425,6 +4470,7 @@ async function runCron(env: Env) {
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
         GRODAN_RULE_VERSION,
+        BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
       ])
       .eq("signal_phase", "LIVE")
       .eq("result_outcome", "PENDING")
@@ -4522,8 +4568,13 @@ async function runCron(env: Env) {
               ? getGrodanPlaceHitMaxOfficialFinishPosition(
                   activeStartersAtResult,
                 )
-              : WIN_PLACE_RULE_CONFIG_V1
-                  .placeHitMaxOfficialFinishPosition;
+              : bet.rule_version ===
+                  BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion
+                ? activeStartersAtResult >= 7
+                  ? 3
+                  : 2
+                : WIN_PLACE_RULE_CONFIG_V1
+                    .placeHitMaxOfficialFinishPosition;
 
         const settled = settleWinPlaceBet({
           market: bet.market,

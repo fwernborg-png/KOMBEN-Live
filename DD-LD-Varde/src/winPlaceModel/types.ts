@@ -47,7 +47,9 @@ export type WinPlaceRuleCheck = {
     | "MIN_ODDS_DROP"
     | "MAX_WIN_ODDS"
     | "NOT_SCRATCHED"
-    | "MIN_VALID_POINTS";
+    | "MIN_VALID_POINTS"
+    | "MAX_ACTIVE_STARTERS"
+    | "MAX_STRENGTH";
   passed: boolean;
   message: string;
 };

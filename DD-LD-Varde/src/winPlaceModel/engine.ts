@@ -193,6 +193,23 @@ export function evaluateWinPlaceModelAtLock(args: {
   const excludedByMonte = config.excludeMonte && race.isMonte;
   const cancelled = containsCancelledStatus(race.raceStatus);
 
+  const activeStarters =
+    runners.filter(
+      (runner) => !runner.scratched,
+    ).length;
+
+  const maxActiveStarters =
+    config.maxActiveStartersInclusive ??
+    null;
+
+  const withinMaxActiveStarters =
+    maxActiveStarters === null ||
+    activeStarters <= maxActiveStarters;
+
+  const completeOddsAccepted =
+    config.requireCompleteOddsHistory === false ||
+    hasCompleteOddsHistory;
+
   checks.push({
     key: "NOT_MONTE",
     passed: !excludedByMonte,
@@ -211,10 +228,13 @@ export function evaluateWinPlaceModelAtLock(args: {
 
   checks.push({
     key: "ODDS_HISTORY_COMPLETE",
-    passed: hasCompleteOddsHistory,
-    message: hasCompleteOddsHistory
-      ? "Oddshistoriken är komplett"
-      : "INGET SPEL – OFULLSTÄNDIG ODDHISTORIK",
+    passed: completeOddsAccepted,
+    message:
+      config.requireCompleteOddsHistory === false
+        ? "Komplett oddshistorik är inte ett krav för strategin"
+        : hasCompleteOddsHistory
+          ? "Oddshistoriken är komplett"
+          : "INGET SPEL – OFULLSTÄNDIG ODDHISTORIK",
   });
 
   checks.push({
@@ -223,6 +243,17 @@ export function evaluateWinPlaceModelAtLock(args: {
     message: hasFreshCurrentOddsPoint
       ? "Aktuell oddspunkt finns"
       : "INGET SPEL – AKTUELL ODDSPUNKT SAKNAS",
+  });
+
+  checks.push({
+    key: "MAX_ACTIVE_STARTERS",
+    passed: withinMaxActiveStarters,
+    message:
+      maxActiveStarters === null
+        ? "Inget maxkrav på antal startande"
+        : withinMaxActiveStarters
+          ? `${activeStarters} startande är godkänt`
+          : `INGET SPEL – ${activeStarters} startande, max ${maxActiveStarters}`,
   });
 
   const baseResult = {
@@ -241,8 +272,9 @@ export function evaluateWinPlaceModelAtLock(args: {
   if (
     excludedByMonte ||
     cancelled ||
-    !hasCompleteOddsHistory ||
-    !hasFreshCurrentOddsPoint
+    !completeOddsAccepted ||
+    !hasFreshCurrentOddsPoint ||
+    !withinMaxActiveStarters
   ) {
     return {
       ...baseResult,
@@ -352,6 +384,26 @@ export function evaluateWinPlaceModelAtLock(args: {
     message: enoughPoints
       ? `${selectedCandidate.validOddsPoints} giltiga oddspunkter`
       : "INGET SPEL – FÖR FÅ ODDSPUNKTER",
+  });
+
+  const maxStrength =
+    config.maxStrengthInclusive ??
+    null;
+
+  const withinMaxStrength =
+    maxStrength === null ||
+    selectedCandidate.strength <=
+      maxStrength;
+
+  checks.push({
+    key: "MAX_STRENGTH",
+    passed: withinMaxStrength,
+    message:
+      maxStrength === null
+        ? "Inget maxkrav på styrka"
+        : withinMaxStrength
+          ? `Styrka ${selectedCandidate.strength}/6 är godkänd`
+          : `INGET SPEL – styrka ${selectedCandidate.strength}/6, max ${maxStrength}/6`,
   });
 
   const decision = checks.every((check) => check.passed)

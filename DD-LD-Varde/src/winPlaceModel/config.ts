@@ -14,6 +14,10 @@ export type WinPlaceRuleConfig = {
   defaultWinStakeSEK: number;
   defaultPlaceStakeSEK: number;
   placeHitMaxOfficialFinishPosition: number;
+
+  maxActiveStartersInclusive?: number | null;
+  maxStrengthInclusive?: number | null;
+  requireCompleteOddsHistory?: boolean;
 };
 
 export const WIN_PLACE_RULE_CONFIG_V1: WinPlaceRuleConfig = {
@@ -50,6 +54,43 @@ export const SMALLKARAMELL_RULE_CONFIG_V1: WinPlaceRuleConfig = {
   defaultWinStakeSEK: 100,
   defaultPlaceStakeSEK: 100,
   placeHitMaxOfficialFinishPosition: 3,
+};
+
+export const BIG_B_MONSTER_PROSPECTIVE_START_DATE =
+  "2026-08-10";
+
+export const BIG_B_MONSTER_RULE_CONFIG_V1: WinPlaceRuleConfig = {
+  ruleVersion: "BIG_B_MONSTER_V1.0",
+  strategyCode: "BIG_B_MONSTER",
+  strategyLabel:
+    "Big B Monster – Mest sänkta, max 8 startande, styrka max 3/6",
+
+  selectionRank: 1,
+
+  collectionStartMinutesBeforeRace: 60,
+
+  lockTargetSecondsBeforeRace: 90,
+  lockWindowOpensSecondsBeforeRace: 120,
+  lockWindowClosesSecondsBeforeRace: 60,
+
+  minOddsDropPercentInclusive: null,
+  maxCurrentWinOddsInclusive: 200,
+
+  minValidOddsPoints: 2,
+
+  excludeMonte: true,
+
+  defaultWinStakeSEK: 100,
+  defaultPlaceStakeSEK: 100,
+
+  placeHitMaxOfficialFinishPosition: 3,
+
+  maxActiveStartersInclusive: 8,
+  maxStrengthInclusive: 3,
+
+  // Historiktestet använde inte filtret
+  // "Endast helt komplett LOCK-data".
+  requireCompleteOddsHistory: false,
 };
 
 export function getWinPlaceCollectionStartMs(
