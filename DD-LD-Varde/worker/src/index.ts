@@ -15,6 +15,15 @@ import {
   SNIGEL_KOMMER_STRATEGY_CODE,
 } from "./snigelKommer";
 import {
+  evaluateJupiter,
+  getJupiterPlaceHitMaxOfficialFinishPosition,
+  isInJupiterSignalWindow,
+  JUPITER_LOCK_TARGET_SECONDS,
+  JUPITER_RULE_VERSION,
+  JUPITER_STAKE_SEK,
+  JUPITER_STRATEGY_CODE,
+} from "./jupiter";
+import {
   evaluateResearchTrialSignals,
   isResearchTrialSignalDate,
 } from "./researchTrialSignals";
@@ -2308,6 +2317,7 @@ async function runCron(env: Env) {
         WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
         SNIGEL_KOMMER_RULE_VERSION,
+        JUPITER_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
@@ -2348,6 +2358,11 @@ async function runCron(env: Env) {
         SNIGEL_KOMMER_RULE_VERSION,
       );
 
+      const jupiterRaceKey = raceRuleKey(
+        race.id,
+        JUPITER_RULE_VERSION,
+      );
+
       const needsWinPlaceEvaluation =
         isInWinPlaceFinalSignalWindow(
           plannedStartTime,
@@ -2373,10 +2388,20 @@ async function runCron(env: Env) {
           snigelRaceKey,
         );
 
+      const needsJupiterEvaluation =
+        isInJupiterSignalWindow(
+          plannedStartTime,
+          startMs,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          jupiterRaceKey,
+        );
+
       if (
         !needsWinPlaceEvaluation &&
         !needsSmallkaramellEvaluation &&
-        !needsSnigelEvaluation
+        !needsSnigelEvaluation &&
+        !needsJupiterEvaluation
       ) {
         continue;
       }
@@ -3017,6 +3042,451 @@ async function runCron(env: Env) {
           snigelRaceKey,
         );
       }
+
+      /*
+       * JUPITER V1.0
+       *
+       * - endast trav
+       * - Jämnaste hästen
+       * - låsodds 3,00–3,99
+       * - oddset har inte stigit
+       * - endast PLATS
+       * - 100 kr
+       */
+      if (needsJupiterEvaluation) {
+        const plannedLockTimeMs =
+          Date.parse(plannedStartTime) -
+          JUPITER_LOCK_TARGET_SECONDS *
+            1_000;
+
+        const hasFreshCurrentOddsPoint =
+          latestPointMs !== null &&
+          Math.abs(
+            plannedLockTimeMs -
+              latestPointMs,
+          ) <= lockGraceMs;
+
+        const jupiterEvaluation =
+          evaluateJupiter({
+            trackName:
+              track.name,
+
+            meetingName:
+              race.meetingName,
+
+            raceStatus:
+              race.status,
+
+            isMonte:
+              race.isMonte,
+
+            runners:
+              winPlaceRunners,
+
+            hasCompleteOddsHistory,
+
+            hasFreshCurrentOddsPoint,
+          });
+
+        const jupiterCandidate =
+          jupiterEvaluation.candidate;
+
+        const jupiterSmoothest =
+          jupiterEvaluation.smoothest;
+
+        const jupiterInsufficient =
+          jupiterEvaluation.excludedReason ===
+            "Otillräcklig oddshistorik" ||
+          jupiterEvaluation.excludedReason ===
+            "Jämnaste kan inte utses säkert" ||
+          jupiterEvaluation.excludedReason ===
+            "Ingen jämnaste häst";
+
+        const jupiterDecision =
+          jupiterCandidate
+            ? "PLAY"
+            : !jupiterEvaluation.active
+              ? "EXCLUDED"
+              : jupiterInsufficient
+                ? "INSUFFICIENT_DATA"
+                : "NO_PLAY";
+
+        const plannedStartMs =
+          Date.parse(plannedStartTime);
+
+        const secondsBeforeStart =
+          Number.isFinite(
+            plannedStartMs,
+          )
+            ? Math.max(
+                0,
+                (
+                  plannedStartMs -
+                  startMs
+                ) / 1_000,
+              )
+            : 0;
+
+        const jupiterConfigSnapshot = {
+          ruleVersion:
+            JUPITER_RULE_VERSION,
+
+          strategyCode:
+            JUPITER_STRATEGY_CODE,
+
+          strategyLabel:
+            "Jupiter – Jämnaste plats",
+
+          collectionStartMinutesBeforeRace:
+            60,
+
+          lockTargetSecondsBeforeRace:
+            JUPITER_LOCK_TARGET_SECONDS,
+
+          lockWindowOpensSecondsBeforeRace:
+            120,
+
+          lockWindowClosesSecondsBeforeRace:
+            60,
+
+          minValidOddsPoints:
+            2,
+
+          lockedWinOddsMinInclusive:
+            3,
+
+          lockedWinOddsMaxExclusive:
+            4,
+
+          oddsDropPercentMinInclusive:
+            0,
+
+          defaultPlaceStakeSEK:
+            JUPITER_STAKE_SEK,
+
+          market:
+            "PLACE",
+
+          excludeMonte:
+            true,
+
+          excludeGallop:
+            true,
+        };
+
+        const {
+          error:
+            jupiterEvaluationError,
+        } = await supabase
+          .from(
+            "win_place_race_evaluations",
+          )
+          .upsert(
+            {
+              race_id:
+                race.id,
+
+              rule_version:
+                JUPITER_RULE_VERSION,
+
+              strategy_code:
+                JUPITER_STRATEGY_CODE,
+
+              decision:
+                jupiterDecision,
+
+              reasons:
+                jupiterCandidate
+                  ? []
+                  : [
+                      jupiterEvaluation
+                        .excludedReason ??
+                        "Ingen Jupiter-signal",
+                    ],
+
+              race_json:
+                raceInput,
+
+              planned_lock_time_ms:
+                plannedLockTimeMs,
+
+              actual_lock_time_ms:
+                startMs,
+
+              locked_at:
+                nowIso,
+
+              seconds_before_start:
+                secondsBeforeStart,
+
+              config_snapshot:
+                jupiterConfigSnapshot,
+
+              checks_json: [
+                {
+                  key:
+                    "SMOOTHEST_AVAILABLE",
+                  passed:
+                    jupiterSmoothest !==
+                      null,
+                },
+
+                {
+                  key:
+                    "LOCK_WIN_ODDS_3_00_3_99",
+                  passed:
+                    jupiterSmoothest !==
+                      null &&
+                    jupiterSmoothest
+                      .currentWinOdds >=
+                      3 &&
+                    jupiterSmoothest
+                      .currentWinOdds <
+                      4,
+                },
+
+                {
+                  key:
+                    "ODDS_NOT_RISEN",
+                  passed:
+                    jupiterSmoothest !==
+                      null &&
+                    jupiterSmoothest
+                      .oddsDropPercent >=
+                      0,
+                },
+
+                {
+                  key:
+                    "ODDS_HISTORY_COMPLETE",
+                  passed:
+                    hasCompleteOddsHistory,
+                },
+
+                {
+                  key:
+                    "CURRENT_ODDS_POINT_AVAILABLE",
+                  passed:
+                    hasFreshCurrentOddsPoint,
+                },
+              ],
+
+              candidate_json:
+                jupiterCandidate,
+
+              most_shortened_json:
+                null,
+
+              snapshot_json: {
+                activeStarters:
+                  jupiterEvaluation
+                    .activeStarters,
+
+                smoothest:
+                  jupiterSmoothest,
+
+                excludedReason:
+                  jupiterEvaluation
+                    .excludedReason,
+              },
+
+              signal_phase:
+                "LIVE",
+
+              created_at:
+                nowIso,
+
+              updated_at:
+                nowIso,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (
+          jupiterEvaluationError
+        ) {
+          throw new Error(
+            `Could not upsert Jupiter evaluation ${race.id}: ${jupiterEvaluationError.message}`,
+          );
+        }
+
+        if (jupiterCandidate) {
+          const {
+            error:
+              jupiterBetError,
+          } = await supabase
+            .from(
+              "win_place_model_bets",
+            )
+            .upsert(
+              {
+                bet_id: [
+                  race.id,
+                  JUPITER_RULE_VERSION,
+                  "PLACE",
+                  "LIVE",
+                ].join(":"),
+
+                race_id:
+                  race.id,
+
+                rule_version:
+                  JUPITER_RULE_VERSION,
+
+                market:
+                  "PLACE",
+
+                signal_phase:
+                  "LIVE",
+
+                config_snapshot:
+                  jupiterConfigSnapshot,
+
+                date:
+                  raceDate,
+
+                track_id:
+                  track.id,
+
+                track_name:
+                  track.name,
+
+                race_number:
+                  race.raceNumber,
+
+                planned_start_time:
+                  plannedStartTime,
+
+                lock_time:
+                  nowIso,
+
+                seconds_before_start:
+                  secondsBeforeStart,
+
+                horse_number:
+                  jupiterCandidate
+                    .runnerNumber,
+
+                horse_name:
+                  jupiterCandidate
+                    .runnerName,
+
+                horse_id:
+                  jupiterCandidate
+                    .horseId,
+
+                start_lane:
+                  jupiterCandidate
+                    .startLane,
+
+                start_method:
+                  race.startMethod,
+
+                distance_meters:
+                  race.distanceMeters,
+
+                starters:
+                  jupiterEvaluation
+                    .activeStarters,
+
+                start_odds:
+                  jupiterCandidate
+                    .startOdds,
+
+                locked_win_odds:
+                  jupiterCandidate
+                    .currentWinOdds,
+
+                odds_drop_percent:
+                  jupiterCandidate
+                    .oddsDropPercent,
+
+                cv_raw:
+                  jupiterCandidate
+                    .cvRaw,
+
+                cv_display:
+                  jupiterCandidate
+                    .cvDisplay,
+
+                strength:
+                  jupiterCandidate
+                    .strength,
+
+                indicators_green:
+                  jupiterCandidate
+                    .indicatorsGreen,
+
+                valid_odds_points:
+                  jupiterCandidate
+                    .validOddsPoints,
+
+                stake_oren:
+                  JUPITER_STAKE_SEK *
+                  100,
+
+                result_outcome:
+                  "PENDING",
+
+                result_status:
+                  "PENDING",
+
+                finish_position_official:
+                  null,
+
+                official_win_odds_decimal:
+                  null,
+
+                place_odds_decimal:
+                  null,
+
+                return_oren:
+                  null,
+
+                net_oren:
+                  null,
+
+                roi_pct:
+                  null,
+
+                automatic_model_bet:
+                  true,
+
+                user_actually_played:
+                  false,
+
+                result_source:
+                  null,
+
+                result_updated_at:
+                  null,
+
+                created_at:
+                  nowIso,
+
+                updated_at:
+                  nowIso,
+              },
+              {
+                onConflict:
+                  "race_id,rule_version,market,signal_phase",
+              },
+            );
+
+          if (jupiterBetError) {
+            throw new Error(
+              `Could not upsert Jupiter bet ${race.id}: ${jupiterBetError.message}`,
+            );
+          }
+        }
+
+        existingWinPlaceEvalKeys.add(
+          jupiterRaceKey,
+        );
+      }
     }
 
     const { data: existingEvalRows, error: existingEvalError } = await supabase
@@ -3466,6 +3936,7 @@ async function runCron(env: Env) {
         WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
         SNIGEL_KOMMER_RULE_VERSION,
+        JUPITER_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("result_outcome", "PENDING")
@@ -3547,6 +4018,20 @@ async function runCron(env: Env) {
         const placeOddsDecimal =
           toDecimalOdds(runner?.placeOddsRaw ?? null);
 
+        const activeStartersAtResult =
+          race.runners.filter(
+            (item) => !item.scratched,
+          ).length;
+
+        const placeHitMaxOfficialFinishPosition =
+          bet.rule_version ===
+            JUPITER_RULE_VERSION
+            ? getJupiterPlaceHitMaxOfficialFinishPosition(
+                activeStartersAtResult,
+              )
+            : WIN_PLACE_RULE_CONFIG_V1
+                .placeHitMaxOfficialFinishPosition;
+
         const settled = settleWinPlaceBet({
           market: bet.market,
           stakeOren: bet.stake_oren,
@@ -3555,9 +4040,7 @@ async function runCron(env: Env) {
           finishPosition,
           officialWinOddsDecimal,
           placeOddsDecimal,
-          placeHitMaxOfficialFinishPosition:
-            WIN_PLACE_RULE_CONFIG_V1
-              .placeHitMaxOfficialFinishPosition,
+          placeHitMaxOfficialFinishPosition,
         });
 
         if (settled.resultOutcome === "PENDING") {
