@@ -3356,3 +3356,8 @@ body,
     min-height: 44px;
   }
 }
+
+/* SNIGEL KOMMER – vinnare-only statistik */
+.strategy-market-columns.is-win-only {
+  grid-template-columns: minmax(0, 1fr);
+}

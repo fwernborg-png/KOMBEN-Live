@@ -233,6 +233,9 @@ const MAX_HISTORY_POINTS = 720;
 const TVILLING_STAKE = 100;
 const ACTIVE_PLACE_UI_ONLY = true;
 
+const SNIGEL_KOMMER_RULE_VERSION =
+  "SNIGEL_KOMMER_V1.0";
+
 type AutoSelection = {
   raceId: string;
   raceNumber: number;
@@ -1975,6 +1978,9 @@ export default function App() {
   const [autoSelections, setAutoSelections] = useState<AutoSelection[]>([]);
   const [lockedSmallkaramellByRace, setLockedSmallkaramellByRace] =
     useState<Record<string, number>>({});
+
+  const [lockedSnigelByRace, setLockedSnigelByRace] =
+    useState<Record<string, number>>({});
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
   const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
   const [tvillingMarkets, setTvillingMarkets] = useState<Record<string, TvillingRaceMarket>>({});
@@ -2018,6 +2024,7 @@ export default function App() {
         if (cancelled) return;
 
         const next: Record<string, number> = {};
+        const nextSnigel: Record<string, number> = {};
 
         for (const bet of bets) {
           if (
@@ -2027,11 +2034,24 @@ export default function App() {
           ) {
             next[bet.raceId] = bet.horseNumber;
           }
+
+          if (
+            bet.ruleVersion ===
+              SNIGEL_KOMMER_RULE_VERSION &&
+            bet.market === "WIN"
+          ) {
+            nextSnigel[bet.raceId] = bet.horseNumber;
+          }
         }
 
         setLockedSmallkaramellByRace((current) => ({
           ...current,
           ...next,
+        }));
+
+        setLockedSnigelByRace((current) => ({
+          ...current,
+          ...nextSnigel,
         }));
       })
       .catch((loadError) => {
@@ -5349,6 +5369,57 @@ export default function App() {
   }
 
   function renderRaceTab() {
+    const lockedSnigelNumber = selectedRace
+      ? lockedSnigelByRace[selectedRace.id] ?? null
+      : null;
+
+    const lockedSnigelRunner =
+      lockedSnigelNumber === null
+        ? null
+        : trendRunners.find(
+            (runner) => runner.number === lockedSnigelNumber,
+          ) ?? null;
+
+    const hasLockedSnigel =
+      lockedSnigelNumber !== null;
+
+    const snigelLockTimeMs =
+      selectedRace?.startTime
+        ? new Date(
+            selectedRace.startTime,
+          ).getTime() -
+          90 * 1000
+        : null;
+
+    const snigelLockPassed =
+      snigelLockTimeMs !== null &&
+      Number.isFinite(snigelLockTimeMs) &&
+      nowMs >= snigelLockTimeMs;
+
+    const snigelActiveStarters =
+      selectedRace
+        ? selectedRace.runners.filter(
+            (runner) => !runner.scratched,
+          ).length
+        : 0;
+
+    const potentialSnigelRunner =
+      !hasLockedSnigel &&
+      !snigelLockPassed &&
+      (
+        snigelActiveStarters === 9 ||
+        snigelActiveStarters === 10
+      ) &&
+      raceInsights.smoothest &&
+      raceInsights.smoothest.dropPercent !== null &&
+      raceInsights.smoothest.dropPercent < 0
+        ? raceInsights.smoothest
+        : null;
+
+    const snigelRunner =
+      lockedSnigelRunner ??
+      potentialSnigelRunner;
+
     const lockedSmallkaramellNumber = selectedRace
       ? lockedSmallkaramellByRace[selectedRace.id] ?? null
       : null;
@@ -6083,6 +6154,103 @@ export default function App() {
                   </div>
 
                   <aside className="race-side-panel">
+                    <section
+                      className={`side-card strategy-selection-card snigel-card ${
+                        lockedSnigelRunner ? "is-locked" : ""
+                      }`}
+                    >
+                      <div className="strategy-card-heading">
+                        <span
+                          className="strategy-card-icon"
+                          aria-hidden="true"
+                        >
+                          🐌
+                        </span>
+
+                        <div>
+                          <div className="side-card-title">
+                            Snigel kommer
+                          </div>
+
+                          <small>
+                            {lockedSnigelRunner
+                              ? "Låst 90 sek före start · VINNARE 100 kr"
+                              : snigelLockPassed
+                                ? "Låst signal"
+                                : "Jämnaste · 9–10 startande · odds stiger"}
+                          </small>
+                        </div>
+                      </div>
+
+                      {snigelRunner ? (
+                        <button
+                          type="button"
+                          className="strategy-horse-button"
+                          onClick={() =>
+                            setExpandedRunnerKey(
+                              `${selectedRace.id}-${snigelRunner.number}`,
+                            )
+                          }
+                          aria-label={`Snigel kommer: nummer ${snigelRunner.number}, ${snigelRunner.name}`}
+                        >
+                          <span className="strategy-number">
+                            {snigelRunner.number}
+                          </span>
+
+                          <span className="strategy-horse-copy">
+                            <strong>
+                              {snigelRunner.name}
+                            </strong>
+
+                            <span className="strategy-odds-line">
+                              {formatOdds(
+                                snigelRunner.firstOdds,
+                              )}
+
+                              <span aria-hidden="true">
+                                →
+                              </span>
+
+                              {formatOdds(
+                                snigelRunner.odds,
+                              )}
+                            </span>
+
+                            <span className="strategy-strength-line">
+                              {lockedSnigelRunner
+                                ? "VINNARE 100 kr · Låst · "
+                                : "Potentiell vinnare · "}
+
+                              Styrka{" "}
+                              {runnerStrength(
+                                snigelRunner,
+                              )}
+                              /6
+                            </span>
+                          </span>
+
+                          <strong className="strategy-change">
+                            {formatDropPercent(
+                              snigelRunner.dropPercent,
+                            )}
+                          </strong>
+                        </button>
+                      ) : (
+                        <div className="strategy-empty-state">
+                          {snigelLockPassed
+                            ? "Ingen låst Snigel registrerad."
+                            : snigelActiveStarters !== 9 &&
+                                snigelActiveStarters !== 10
+                              ? `Kräver 9–10 startande · nu ${snigelActiveStarters}`
+                              : !raceInsights.smoothest
+                                ? "Jämnaste kan inte utses ännu."
+                                : raceInsights.smoothest.dropPercent === null
+                                  ? "Väntar på oddsrörelse."
+                                  : "Jämnaste hästens odds har inte stigit."}
+                        </div>
+                      )}
+                    </section>
+
                     <section
                       className={`side-card strategy-selection-card smallkaramell-card ${
                         lockedSmallkaramellRunner ? "is-locked" : ""

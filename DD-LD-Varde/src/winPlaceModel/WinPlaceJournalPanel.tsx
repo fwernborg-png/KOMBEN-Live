@@ -32,6 +32,9 @@ const TEST_START_DATE = "2026-08-03";
 const TEST_END_DATE = "2026-08-16";
 const REFRESH_INTERVAL_MS = 60_000;
 
+const SNIGEL_KOMMER_RULE_VERSION =
+  "SNIGEL_KOMMER_V1.0";
+
 function kronor(oren: number) {
   return new Intl.NumberFormat("sv-SE", {
     maximumFractionDigits: 0,
@@ -103,10 +106,22 @@ function strategyInformation(
 ) {
   if (
     ruleVersion ===
+    SNIGEL_KOMMER_RULE_VERSION
+  ) {
+    return {
+      title: "🐌 Snigel kommer",
+      description:
+        "Jämnaste · 9–10 startande vid lås · oddset steg · vinnare",
+      className: "is-snigel",
+    };
+  }
+
+  if (
+    ruleVersion ===
     SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion
   ) {
     return {
-      title: "🎉 Smällkaramellen",
+      title: "🦞 Kräfta i buren",
       description:
         "S2 · näst mest sänkt · vinnarodds högst 7,00",
       className: "is-smallkaramell",
@@ -317,11 +332,21 @@ export function WinPlaceJournalPanel({
     () => [
       {
         ruleVersion:
+          SNIGEL_KOMMER_RULE_VERSION,
+        title: "🐌 Snigel kommer",
+        description:
+          "Jämnaste · 9–10 startande vid lås · oddset steg · endast vinnare",
+        className: "is-snigel",
+        winOnly: true,
+      },
+      {
+        ruleVersion:
           SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
-        title: "🎉 Smällkaramellen",
+        title: "🦞 Kräfta i buren",
         description:
           "S2 · näst mest sänkt · vinnarodds högst 7,00",
         className: "is-smallkaramell",
+        winOnly: false,
       },
       {
         ruleVersion:
@@ -330,6 +355,7 @@ export function WinPlaceJournalPanel({
         description:
           "Minst 30 % sänkning · vinnarodds högst 6,00",
         className: "is-most-shortened",
+        winOnly: false,
       },
     ],
     [],
@@ -434,7 +460,7 @@ export function WinPlaceJournalPanel({
       <div className="signal-journal-toolbar">
         <div>
           <p className="signal-journal-kicker">
-            T−90 · VINNARE + PLATS
+            T−90 · SPELSIGNALER
           </p>
 
           <h2>
@@ -578,11 +604,10 @@ export function WinPlaceJournalPanel({
       <div className="test-period-note">
         <strong>Testperiod 3–16 augusti:</strong>
         <span>
-          Smällkaramellen och den ordinarie
+          Kräfta i buren och den ordinarie
           mest-sänkta-regeln redovisas separat.
-          Fristående forskningsnotiser som inte
-          skapade spelrader visas inte som spel i
-          denna journal.
+          Snigel kommer följs framåt från
+          10 augusti och redovisas separat.
         </span>
       </div>
 
@@ -621,25 +646,35 @@ export function WinPlaceJournalPanel({
                 </div>
               </div>
 
-              <div className="strategy-market-columns">
+              <div
+                className={`strategy-market-columns${
+                  strategy.winOnly
+                    ? " is-win-only"
+                    : ""
+                }`}
+              >
                 <StatsBlock
                   title="VINNARE"
                   market="WIN"
                   stats={strategy.winStats}
                 />
 
-                <StatsBlock
-                  title="PLATS"
-                  market="PLACE"
-                  stats={strategy.placeStats}
-                />
+                {!strategy.winOnly ? (
+                  <>
+                    <StatsBlock
+                      title="PLATS"
+                      market="PLACE"
+                      stats={strategy.placeStats}
+                    />
 
-                <StatsBlock
-                  title="TOTALT"
-                  stats={
-                    strategy.combinedStats
-                  }
-                />
+                    <StatsBlock
+                      title="TOTALT"
+                      stats={
+                        strategy.combinedStats
+                      }
+                    />
+                  </>
+                ) : null}
               </div>
             </article>
           ))}
