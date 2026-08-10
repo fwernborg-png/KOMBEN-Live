@@ -187,6 +187,61 @@ describe(
     );
 
     it(
+      "filtrerar ATG-specialvärdet men behåller 999999,99",
+      () => {
+        const rows =
+          parseResearchPairFinalOdds({
+            market: "KOMB",
+
+            payload: {
+              status: "results",
+
+              pools: {
+                komb: {
+                  comboOdds: [
+                    [0, 1_825_361_099],
+                    [99_999_999, 0],
+                  ],
+                },
+              },
+
+              races: [
+                {
+                  pools: {
+                    komb: {
+                      result: {
+                        winners: [
+                          {
+                            combination:
+                              [2, 1],
+
+                            odds:
+                              99_999_999,
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          });
+
+        expect(rows).toHaveLength(1);
+
+        expect(rows[0]).toMatchObject({
+          firstRunnerNumber: 2,
+          secondRunnerNumber: 1,
+          finalOddsDecimal:
+            999_999.99,
+          isWinningPair: true,
+          officialPayoutDecimal:
+            999_999.99,
+        });
+      },
+    );
+
+    it(
       "ignorerar nollor, samma häst och ogiltiga odds",
       () => {
         const rows =

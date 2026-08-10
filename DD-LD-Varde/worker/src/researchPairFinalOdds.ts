@@ -80,6 +80,16 @@ function asNumber(
   return null;
 }
 
+const INVALID_PAIR_ODDS_RAW_VALUES =
+  new Set<number>([
+    9_999,
+
+    // ATG-specialvärde som återkommer i
+    // comboOdds men inte representerar ett
+    // verkligt spelbart odds.
+    1_825_361_099,
+  ]);
+
 function rawOddsToDecimal(
   value: unknown,
 ): number | null {
@@ -88,7 +98,9 @@ function rawOddsToDecimal(
   if (
     raw === null ||
     raw <= 0 ||
-    Math.round(raw) === 9_999
+    INVALID_PAIR_ODDS_RAW_VALUES.has(
+      Math.round(raw),
+    )
   ) {
     return null;
   }
