@@ -6,6 +6,7 @@ import {
 } from "react";
 
 import {
+  BIG_B_MONSTER_RULE_CONFIG_V1,
   SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
 } from "./config";
@@ -37,6 +38,9 @@ const SNIGEL_KOMMER_RULE_VERSION =
 
 const JUPITER_RULE_VERSION =
   "JUPITER_V1.0";
+
+const GRODAN_RULE_VERSION =
+  "GRODAN_V1.0";
 
 function kronor(oren: number) {
   return new Intl.NumberFormat("sv-SE", {
@@ -128,6 +132,30 @@ function strategyInformation(
       description:
         "Jämnaste · låsodds 3,00–3,99 · oddset har inte stigit · plats",
       className: "is-jupiter",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    GRODAN_RULE_VERSION
+  ) {
+    return {
+      title: "🐸 Grodan",
+      description:
+        "Jämnaste · G grön · låsodds 4,00–9,99 · plats",
+      className: "is-jupiter",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion
+  ) {
+    return {
+      title: "👹 Big B Monster",
+      description:
+        "Mest sänkta · max 8 startande · styrka högst 3/6 · vinnare + plats",
+      className: "is-most-shortened",
     };
   }
 
@@ -364,6 +392,26 @@ export function WinPlaceJournalPanel({
         className: "is-jupiter",
         winOnly: false,
         placeOnly: true,
+      },
+      {
+        ruleVersion:
+          GRODAN_RULE_VERSION,
+        title: "🐸 Grodan",
+        description:
+          "Jämnaste · G grön · låsodds 4,00–9,99 · endast plats",
+        className: "is-jupiter",
+        winOnly: false,
+        placeOnly: true,
+      },
+      {
+        ruleVersion:
+          BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
+        title: "👹 Big B Monster",
+        description:
+          "Mest sänkta · max 8 startande · styrka högst 3/6 · vinnare + plats",
+        className: "is-most-shortened",
+        winOnly: false,
+        placeOnly: false,
       },
       {
         ruleVersion:
