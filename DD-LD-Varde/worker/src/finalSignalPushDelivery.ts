@@ -8,6 +8,10 @@ import {
   notificationVersionForMode,
 } from "./finalSignalNotifications";
 import { sendWebPush } from "./webPush";
+import {
+  SNIGEL_KOMMER_RULE_VERSION,
+  SNIGEL_KOMMER_STAKE_SEK,
+} from "./snigelKommer";
 
 type PushSubscriptionRow = {
   id: string;
@@ -50,6 +54,7 @@ export async function deliverFinalSignalNotification(args: {
   winPlaceCandidate: WinPlaceCandidate | null;
   placeCandidate: SmoothestCandidate | null;
   smallkaramellCandidate?: WinPlaceCandidate | null;
+  snigelCandidate?: WinPlaceCandidate | null;
   signalMode?: FinalSignalMode;
   nowIso: string;
 }): Promise<FinalSignalDeliveryResult> {
@@ -65,33 +70,104 @@ export async function deliverFinalSignalNotification(args: {
     winPlaceCandidate,
     placeCandidate,
     smallkaramellCandidate = null,
+    snigelCandidate = null,
     signalMode = "LEGACY",
     nowIso,
   } = args;
 
-  if (!smallkaramellCandidate) {
+  const isSnigel =
+    snigelCandidate !== null;
+
+  const primaryCandidate =
+    snigelCandidate ??
+    smallkaramellCandidate;
+
+  if (!primaryCandidate) {
     return EMPTY_RESULT;
   }
 
-  const primaryCandidate = smallkaramellCandidate;
+  const notificationKey =
+    isSnigel
+      ? [
+          raceDate,
+          trackId,
+          raceNumber,
+          SNIGEL_KOMMER_RULE_VERSION,
+        ].join(":")
+      : buildFinalSignalNotificationKey({
+          raceDate,
+          trackId,
+          raceNumber,
+          signalMode,
+        });
 
-  const notificationKey = buildFinalSignalNotificationKey({
-    raceDate,
-    trackId,
-    raceNumber,
-    signalMode,
-  });
+  const notification =
+    isSnigel
+      ? (() => {
+          const params =
+            new URLSearchParams({
+              date: raceDate,
+              trackId:
+                String(trackId),
+              raceNumber:
+                String(raceNumber),
+              tab: "race",
+              snigelRunner:
+                String(
+                  primaryCandidate
+                    .runnerNumber,
+                ),
+            });
 
-  const notification = buildFinalSignalNotification({
-    raceDate,
-    trackId,
-    trackName,
-    raceNumber,
-    winPlaceCandidate: null,
-    placeCandidate: null,
-    smallkaramellCandidate,
-    signalMode,
-  });
+          const startOdds =
+            primaryCandidate
+              .startOdds
+              .toFixed(2)
+              .replace(".", ",");
+
+          const lockOdds =
+            primaryCandidate
+              .currentWinOdds
+              .toFixed(2)
+              .replace(".", ",");
+
+          const rise =
+            Math.abs(
+              primaryCandidate
+                .oddsDropPercent,
+            )
+              .toFixed(1)
+              .replace(".", ",");
+
+          return {
+            title:
+              `🐌 SNIGEL KOMMER – ${trackName} lopp ${raceNumber}`,
+
+            body:
+              `VINNARE ${SNIGEL_KOMMER_STAKE_SEK} kr: ` +
+              `nr ${primaryCandidate.runnerNumber} ` +
+              `${primaryCandidate.runnerName} · ` +
+              `första odds ${startOdds} → ` +
+              `låsodds ${lockOdds} · ` +
+              `oddset steg ${rise} %.`,
+
+            url:
+              `/?${params.toString()}`,
+
+            tag:
+              notificationKey,
+          };
+        })()
+      : buildFinalSignalNotification({
+          raceDate,
+          trackId,
+          trackName,
+          raceNumber,
+          winPlaceCandidate: null,
+          placeCandidate: null,
+          smallkaramellCandidate,
+          signalMode,
+        });
 
   if (!notification) {
     return EMPTY_RESULT;
@@ -157,13 +233,18 @@ export async function deliverFinalSignalNotification(args: {
   const claimPayload = {
     notification_key: notificationKey,
     notification_type:
-      signalMode === "RESEARCH_TRIAL"
-        ? "RESEARCH_TRIAL_SIGNAL"
-        : "FINAL_SIGNAL",
+      isSnigel
+        ? "SNIGEL_KOMMER"
+        : signalMode === "RESEARCH_TRIAL"
+          ? "RESEARCH_TRIAL_SIGNAL"
+          : "FINAL_SIGNAL",
+
     rule_version:
-      notificationVersionForMode(
-        signalMode,
-      ),
+      isSnigel
+        ? SNIGEL_KOMMER_RULE_VERSION
+        : notificationVersionForMode(
+            signalMode,
+          ),
     race_id: raceId,
     race_date: raceDate,
     track_id: trackId,
@@ -184,6 +265,7 @@ export async function deliverFinalSignalNotification(args: {
       winPlaceCandidate,
       placeCandidate,
       smallkaramellCandidate,
+      snigelCandidate,
     },
     claimed_at: nowIso,
     sent_at: null,

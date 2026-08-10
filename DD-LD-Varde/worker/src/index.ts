@@ -7,6 +7,14 @@ import {
 } from "./appAuthorization";
 import { deliverFinalSignalNotification } from "./finalSignalPushDelivery";
 import {
+  evaluateSnigelKommer,
+  isInSnigelKommerSignalWindow,
+  SNIGEL_KOMMER_LOCK_TARGET_SECONDS,
+  SNIGEL_KOMMER_RULE_VERSION,
+  SNIGEL_KOMMER_STAKE_SEK,
+  SNIGEL_KOMMER_STRATEGY_CODE,
+} from "./snigelKommer";
+import {
   evaluateResearchTrialSignals,
   isResearchTrialSignalDate,
 } from "./researchTrialSignals";
@@ -2299,6 +2307,7 @@ async function runCron(env: Env) {
       .in("rule_version", [
         WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
+        SNIGEL_KOMMER_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
@@ -2334,6 +2343,11 @@ async function runCron(env: Env) {
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
       );
 
+      const snigelRaceKey = raceRuleKey(
+        race.id,
+        SNIGEL_KOMMER_RULE_VERSION,
+      );
+
       const needsWinPlaceEvaluation =
         isInWinPlaceFinalSignalWindow(
           plannedStartTime,
@@ -2350,7 +2364,20 @@ async function runCron(env: Env) {
         ) &&
         !existingWinPlaceEvalKeys.has(smallkaramellRaceKey);
 
-      if (!needsWinPlaceEvaluation && !needsSmallkaramellEvaluation) {
+      const needsSnigelEvaluation =
+        isInSnigelKommerSignalWindow(
+          plannedStartTime,
+          startMs,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          snigelRaceKey,
+        );
+
+      if (
+        !needsWinPlaceEvaluation &&
+        !needsSmallkaramellEvaluation &&
+        !needsSnigelEvaluation
+      ) {
         continue;
       }
 
@@ -2566,6 +2593,429 @@ async function runCron(env: Env) {
           raceKey: smallkaramellRaceKey,
           counter: "SMALLKARAMELL",
         });
+      }
+
+
+      /*
+       * SNIGEL KOMMER fortsätter i samma T-90-pipeline,
+       * men är en separat regel:
+       *
+       * - endast trav
+       * - 9 eller 10 aktiva startande
+       * - Jämnaste hästen
+       * - Jämnastes odds har stigit
+       * - endast VINNARE
+       */
+      if (needsSnigelEvaluation) {
+        const plannedLockTimeMs =
+          Date.parse(plannedStartTime) -
+          SNIGEL_KOMMER_LOCK_TARGET_SECONDS *
+            1_000;
+
+        const hasFreshCurrentOddsPoint =
+          latestPointMs !== null &&
+          Math.abs(
+            plannedLockTimeMs -
+              latestPointMs,
+          ) <= lockGraceMs;
+
+        const snigelEvaluation =
+          evaluateSnigelKommer({
+            trackName:
+              track.name,
+
+            meetingName:
+              race.meetingName,
+
+            raceStatus:
+              race.status,
+
+            isMonte:
+              race.isMonte,
+
+            runners:
+              winPlaceRunners,
+
+            hasCompleteOddsHistory,
+
+            hasFreshCurrentOddsPoint,
+          });
+
+        const snigelCandidate =
+          snigelEvaluation.candidate;
+
+        const snigelInsufficient =
+          snigelEvaluation.excludedReason ===
+            "Otillräcklig oddshistorik" ||
+          snigelEvaluation.excludedReason ===
+            "Jämnaste kan inte utses säkert" ||
+          snigelEvaluation.excludedReason ===
+            "Ingen jämnaste häst";
+
+        const snigelDecision =
+          snigelCandidate
+            ? "PLAY"
+            : !snigelEvaluation.active
+              ? "EXCLUDED"
+              : snigelInsufficient
+                ? "INSUFFICIENT_DATA"
+                : "NO_PLAY";
+
+        const plannedStartMs =
+          Date.parse(plannedStartTime);
+
+        const secondsBeforeStart =
+          Number.isFinite(
+            plannedStartMs,
+          )
+            ? Math.max(
+                0,
+                (
+                  plannedStartMs -
+                  startMs
+                ) / 1_000,
+              )
+            : 0;
+
+        const snigelConfigSnapshot = {
+          ruleVersion:
+            SNIGEL_KOMMER_RULE_VERSION,
+
+          strategyCode:
+            SNIGEL_KOMMER_STRATEGY_CODE,
+
+          strategyLabel:
+            "Snigel kommer – Jämnaste vinnare",
+
+          collectionStartMinutesBeforeRace:
+            60,
+
+          lockTargetSecondsBeforeRace:
+            SNIGEL_KOMMER_LOCK_TARGET_SECONDS,
+
+          lockWindowOpensSecondsBeforeRace:
+            120,
+
+          lockWindowClosesSecondsBeforeRace:
+            60,
+
+          minValidOddsPoints:
+            5,
+
+          requiredActiveStarters: [
+            9,
+            10,
+          ],
+
+          requiredOddsDropPercentBelow:
+            0,
+
+          defaultWinStakeSEK:
+            SNIGEL_KOMMER_STAKE_SEK,
+
+          market:
+            "WIN",
+
+          excludeMonte:
+            true,
+        };
+
+        const {
+          error:
+            snigelEvaluationError,
+        } = await supabase
+          .from(
+            "win_place_race_evaluations",
+          )
+          .upsert(
+            {
+              race_id:
+                race.id,
+
+              rule_version:
+                SNIGEL_KOMMER_RULE_VERSION,
+
+              strategy_code:
+                SNIGEL_KOMMER_STRATEGY_CODE,
+
+              decision:
+                snigelDecision,
+
+              reasons:
+                snigelCandidate
+                  ? []
+                  : [
+                      snigelEvaluation
+                        .excludedReason ??
+                        "Ingen Snigel-signal",
+                    ],
+
+              race_json:
+                raceInput,
+
+              planned_lock_time_ms:
+                plannedLockTimeMs,
+
+              actual_lock_time_ms:
+                startMs,
+
+              locked_at:
+                nowIso,
+
+              seconds_before_start:
+                secondsBeforeStart,
+
+              config_snapshot:
+                snigelConfigSnapshot,
+
+              checks_json: [
+                {
+                  key:
+                    "ACTIVE_STARTERS_9_10",
+                  passed:
+                    snigelEvaluation
+                      .activeStarters ===
+                      9 ||
+                    snigelEvaluation
+                      .activeStarters ===
+                      10,
+                },
+
+                {
+                  key:
+                    "SMOOTHEST_ODDS_RISEN",
+                  passed:
+                    snigelCandidate !==
+                      null,
+                },
+
+                {
+                  key:
+                    "ODDS_HISTORY_COMPLETE",
+                  passed:
+                    hasCompleteOddsHistory,
+                },
+
+                {
+                  key:
+                    "CURRENT_ODDS_POINT_AVAILABLE",
+                  passed:
+                    hasFreshCurrentOddsPoint,
+                },
+              ],
+
+              candidate_json:
+                snigelCandidate,
+
+              most_shortened_json:
+                null,
+
+              snapshot_json: {
+                activeStarters:
+                  snigelEvaluation
+                    .activeStarters,
+
+                excludedReason:
+                  snigelEvaluation
+                    .excludedReason,
+              },
+
+              signal_phase:
+                "LIVE",
+
+              created_at:
+                nowIso,
+
+              updated_at:
+                nowIso,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (
+          snigelEvaluationError
+        ) {
+          throw new Error(
+            `Could not upsert Snigel evaluation ${race.id}: ${snigelEvaluationError.message}`,
+          );
+        }
+
+        if (snigelCandidate) {
+          const {
+            error:
+              snigelBetError,
+          } = await supabase
+            .from(
+              "win_place_model_bets",
+            )
+            .upsert(
+              {
+                bet_id: [
+                  race.id,
+                  SNIGEL_KOMMER_RULE_VERSION,
+                  "WIN",
+                  "LIVE",
+                ].join(":"),
+
+                race_id:
+                  race.id,
+
+                rule_version:
+                  SNIGEL_KOMMER_RULE_VERSION,
+
+                market:
+                  "WIN",
+
+                signal_phase:
+                  "LIVE",
+
+                config_snapshot:
+                  snigelConfigSnapshot,
+
+                date:
+                  raceDate,
+
+                track_id:
+                  track.id,
+
+                track_name:
+                  track.name,
+
+                race_number:
+                  race.raceNumber,
+
+                planned_start_time:
+                  plannedStartTime,
+
+                lock_time:
+                  nowIso,
+
+                seconds_before_start:
+                  secondsBeforeStart,
+
+                horse_number:
+                  snigelCandidate
+                    .runnerNumber,
+
+                horse_name:
+                  snigelCandidate
+                    .runnerName,
+
+                horse_id:
+                  snigelCandidate
+                    .horseId,
+
+                start_lane:
+                  snigelCandidate
+                    .startLane,
+
+                start_method:
+                  race.startMethod,
+
+                distance_meters:
+                  race.distanceMeters,
+
+                starters:
+                  snigelEvaluation
+                    .activeStarters,
+
+                start_odds:
+                  snigelCandidate
+                    .startOdds,
+
+                locked_win_odds:
+                  snigelCandidate
+                    .currentWinOdds,
+
+                odds_drop_percent:
+                  snigelCandidate
+                    .oddsDropPercent,
+
+                cv_raw:
+                  snigelCandidate
+                    .cvRaw,
+
+                cv_display:
+                  snigelCandidate
+                    .cvDisplay,
+
+                strength:
+                  snigelCandidate
+                    .strength,
+
+                indicators_green:
+                  snigelCandidate
+                    .indicatorsGreen,
+
+                valid_odds_points:
+                  snigelCandidate
+                    .validOddsPoints,
+
+                stake_oren:
+                  SNIGEL_KOMMER_STAKE_SEK *
+                  100,
+
+                result_outcome:
+                  "PENDING",
+
+                result_status:
+                  "PENDING",
+
+                finish_position_official:
+                  null,
+
+                official_win_odds_decimal:
+                  null,
+
+                place_odds_decimal:
+                  null,
+
+                return_oren:
+                  null,
+
+                net_oren:
+                  null,
+
+                roi_pct:
+                  null,
+
+                automatic_model_bet:
+                  true,
+
+                user_actually_played:
+                  false,
+
+                result_source:
+                  null,
+
+                result_updated_at:
+                  null,
+
+                created_at:
+                  nowIso,
+
+                updated_at:
+                  nowIso,
+              },
+              {
+                onConflict:
+                  "race_id,rule_version,market,signal_phase",
+              },
+            );
+
+          if (snigelBetError) {
+            throw new Error(
+              `Could not upsert Snigel bet ${race.id}: ${snigelBetError.message}`,
+            );
+          }
+        }
+
+        existingWinPlaceEvalKeys.add(
+          snigelRaceKey,
+        );
       }
     }
 
@@ -2857,253 +3307,79 @@ async function runCron(env: Env) {
 
     if (vapid) {
       for (const item of allRaces) {
-        throwIfRunTimedOut(startMs);
+        throwIfRunTimedOut(
+          startMs,
+        );
 
-        const { track, race } = item;
-        const plannedStartTime = race.startTime;
+        const {
+          track,
+          race,
+        } = item;
+
+        const plannedStartTime =
+          race.startTime;
 
         if (
           !plannedStartTime ||
-          !isInWinPlaceFinalSignalWindow(
+          !isInSnigelKommerSignalWindow(
             plannedStartTime,
             startMs,
-            WIN_PLACE_RULE_CONFIG_V1,
           )
         ) {
           continue;
         }
 
         try {
-          if (
-            isResearchTrialSignalDate(
-              raceDate,
+          const {
+            data:
+              snigelResult,
+            error:
+              snigelResultError,
+          } = await supabase
+            .from(
+              "win_place_race_evaluations",
             )
-          ) {
-            const context =
-              await loadPlaceOddsContext({
-                supabase,
-                race,
-                nowMs:
-                  startMs,
-              });
-
-            if (!context) {
-              continue;
-            }
-
-            const trialInput =
-              buildResearchTrialRunnerInputs({
-                context,
-                nowMs:
-                  startMs,
-              });
-
-            const plannedLockTimeMs =
-              getWinPlacePlannedLockTimeMs(
-                plannedStartTime,
-                WIN_PLACE_RULE_CONFIG_V1,
-              );
-
-            const hasFreshCurrentOddsPoint =
-              context.latestPointMs !==
-                null &&
-              Math.abs(
-                plannedLockTimeMs -
-                  context.latestPointMs,
-              ) <= lockGraceMs;
-
-            const trialSignals =
-              evaluateResearchTrialSignals({
-                raceDate,
-
-                trackName:
-                  track.name,
-
-                meetingName:
-                  race.meetingName,
-
-                raceStatus:
-                  race.status,
-
-                isMonte:
-                  race.isMonte,
-
-                runners:
-                  trialInput.runners,
-
-                hasCompleteOddsHistory:
-                  trialInput
-                    .incompleteRunnerNumbers
-                    .length === 0,
-
-                hasFreshCurrentOddsPoint,
-              });
-
-            const winPlaceCandidate:
-              WinPlaceCandidate | null =
-                trialSignals
-                  .winnerCandidate;
-
-            const placeCandidate:
-              SmoothestCandidate | null =
-                trialSignals
-                  .placeCandidate;
-
-            const smallkaramellCandidate:
-              WinPlaceCandidate | null =
-                trialSignals
-                  .smallkaramellCandidate;
-
-            if (
-              !winPlaceCandidate &&
-              !placeCandidate &&
-              !smallkaramellCandidate
-            ) {
-              continue;
-            }
-
-            const delivery =
-              await deliverFinalSignalNotification({
-                supabase,
-                vapid,
-
-                raceDate,
-                raceId:
-                  race.id,
-
-                trackId:
-                  track.id,
-
-                trackName:
-                  track.name,
-
-                raceNumber:
-                  race.raceNumber,
-
-                plannedStartTime,
-                winPlaceCandidate,
-                placeCandidate,
-                smallkaramellCandidate,
-
-                signalMode:
-                  "RESEARCH_TRIAL",
-
-                nowIso,
-              });
-
-            if (
-              delivery.claimed
-            ) {
-              summary
-                .notificationsClaimed +=
-                1;
-            }
-
-            summary.notificationsSent +=
-              delivery.sent;
-
-            summary
-              .notificationSubscriptionsAttempted +=
-              delivery.attempted;
-
-            summary
-              .notificationSubscriptionsFailed +=
-              delivery.failed;
-
-            continue;
-          }
-
-          const [
-            winPlaceResult,
-            placeResult,
-            smallkaramellResult,
-          ] = await Promise.all([
-            supabase
-              .from("win_place_race_evaluations")
-              .select("decision,candidate_json")
-              .eq("race_id", race.id)
-              .eq(
-                "rule_version",
-                WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
-              )
-              .eq("signal_phase", "LIVE")
-              .maybeSingle(),
-            supabase
-              .from("place_race_evaluations")
-              .select("decision,smoothest_json")
-              .eq("race_id", race.id)
-              .eq(
-                "rule_version",
-                PLACE_RULE_CONFIG_V1.ruleVersion,
-              )
-              .maybeSingle(),
-            supabase
-              .from("win_place_race_evaluations")
-              .select("decision,candidate_json")
-              .eq("race_id", race.id)
-              .eq(
-                "rule_version",
-                SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
-              )
-              .eq("signal_phase", "LIVE")
-              .maybeSingle(),
-          ]);
-
-          if (winPlaceResult.error) {
-            throw new Error(
-              `Could not load final win-place signal: ${winPlaceResult.error.message}`,
-            );
-          }
-
-          if (placeResult.error) {
-            throw new Error(
-              `Could not load final place signal: ${placeResult.error.message}`,
-            );
-          }
-
-          if (smallkaramellResult.error) {
-            throw new Error(
-              `Could not load final smallkaramell signal: ${smallkaramellResult.error.message}`,
-            );
-          }
-
-          const winPlaceRow = winPlaceResult.data as {
-            decision: string;
-            candidate_json: WinPlaceCandidate | null;
-          } | null;
-
-          const placeRow = placeResult.data as {
-            decision: string;
-            smoothest_json:
-              | NonNullable<PlaceEvaluation["smoothest"]>
-              | null;
-          } | null;
-
-          const smallkaramellRow = smallkaramellResult.data as {
-            decision: string;
-            candidate_json: WinPlaceCandidate | null;
-          } | null;
-
-          const winPlaceCandidate =
-            winPlaceRow?.decision === "PLAY"
-              ? winPlaceRow.candidate_json
-              : null;
-
-          const placeCandidate =
-            placeRow?.decision === "PLAY"
-              ? placeRow.smoothest_json
-              : null;
-
-          const smallkaramellCandidate =
-            smallkaramellRow?.decision === "PLAY"
-              ? smallkaramellRow.candidate_json
-              : null;
+            .select(
+              "decision,candidate_json",
+            )
+            .eq(
+              "race_id",
+              race.id,
+            )
+            .eq(
+              "rule_version",
+              SNIGEL_KOMMER_RULE_VERSION,
+            )
+            .eq(
+              "signal_phase",
+              "LIVE",
+            )
+            .maybeSingle();
 
           if (
-            !winPlaceCandidate &&
-            !placeCandidate &&
-            !smallkaramellCandidate
+            snigelResultError
           ) {
+            throw new Error(
+              `Could not load Snigel signal: ${snigelResultError.message}`,
+            );
+          }
+
+          const snigelRow =
+            snigelResult as {
+              decision: string;
+              candidate_json:
+                WinPlaceCandidate |
+                null;
+            } | null;
+
+          const snigelCandidate =
+            snigelRow?.decision ===
+              "PLAY"
+              ? snigelRow
+                  .candidate_json
+              : null;
+
+          if (!snigelCandidate) {
             continue;
           }
 
@@ -3111,30 +3387,61 @@ async function runCron(env: Env) {
             await deliverFinalSignalNotification({
               supabase,
               vapid,
+
               raceDate,
-              raceId: race.id,
-              trackId: track.id,
-              trackName: track.name,
-              raceNumber: race.raceNumber,
+
+              raceId:
+                race.id,
+
+              trackId:
+                track.id,
+
+              trackName:
+                track.name,
+
+              raceNumber:
+                race.raceNumber,
+
               plannedStartTime,
-              winPlaceCandidate,
-              placeCandidate,
-              smallkaramellCandidate,
+
+              winPlaceCandidate:
+                null,
+
+              placeCandidate:
+                null,
+
+              smallkaramellCandidate:
+                null,
+
+              snigelCandidate,
+
               nowIso,
             });
 
-          if (delivery.claimed) {
-            summary.notificationsClaimed += 1;
+          if (
+            delivery.claimed
+          ) {
+            summary
+              .notificationsClaimed +=
+              1;
           }
 
-          summary.notificationsSent += delivery.sent;
-          summary.notificationSubscriptionsAttempted +=
+          summary
+            .notificationsSent +=
+            delivery.sent;
+
+          summary
+            .notificationSubscriptionsAttempted +=
             delivery.attempted;
-          summary.notificationSubscriptionsFailed +=
+
+          summary
+            .notificationSubscriptionsFailed +=
             delivery.failed;
-        } catch (notificationError) {
+        } catch (
+          notificationError
+        ) {
           console.warn(
-            `Final signal notification failed for race ${race.id}: ${
+            `Snigel notification failed for race ${race.id}: ${
               notificationError instanceof Error
                 ? notificationError.message
                 : "Unknown error"
@@ -3158,6 +3465,7 @@ async function runCron(env: Env) {
       .in("rule_version", [
         WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
+        SNIGEL_KOMMER_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("result_outcome", "PENDING")
