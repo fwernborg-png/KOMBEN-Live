@@ -3357,7 +3357,17 @@ body,
   }
 }
 
-/* SNIGEL KOMMER – vinnare-only statistik */
-.strategy-market-columns.is-win-only {
+/* Enmarknadsstrategier: Snigel = vinnare, Jupiter = plats */
+.strategy-market-columns.is-single-market {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.jupiter-card {
+  border-color: rgba(151, 126, 255, 0.38);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(53, 43, 92, 0.30),
+      rgba(8, 20, 16, 0.97)
+    ) !important;
 }

@@ -236,6 +236,9 @@ const ACTIVE_PLACE_UI_ONLY = true;
 const SNIGEL_KOMMER_RULE_VERSION =
   "SNIGEL_KOMMER_V1.0";
 
+const JUPITER_RULE_VERSION =
+  "JUPITER_V1.0";
+
 type AutoSelection = {
   raceId: string;
   raceNumber: number;
@@ -1981,6 +1984,10 @@ export default function App() {
 
   const [lockedSnigelByRace, setLockedSnigelByRace] =
     useState<Record<string, number>>({});
+
+  const [lockedJupiterByRace, setLockedJupiterByRace] =
+    useState<Record<string, number>>({});
+
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
   const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
   const [tvillingMarkets, setTvillingMarkets] = useState<Record<string, TvillingRaceMarket>>({});
@@ -2025,6 +2032,7 @@ export default function App() {
 
         const next: Record<string, number> = {};
         const nextSnigel: Record<string, number> = {};
+        const nextJupiter: Record<string, number> = {};
 
         for (const bet of bets) {
           if (
@@ -2042,6 +2050,14 @@ export default function App() {
           ) {
             nextSnigel[bet.raceId] = bet.horseNumber;
           }
+
+          if (
+            bet.ruleVersion ===
+              JUPITER_RULE_VERSION &&
+            bet.market === "PLACE"
+          ) {
+            nextJupiter[bet.raceId] = bet.horseNumber;
+          }
         }
 
         setLockedSmallkaramellByRace((current) => ({
@@ -2052,6 +2068,11 @@ export default function App() {
         setLockedSnigelByRace((current) => ({
           ...current,
           ...nextSnigel,
+        }));
+
+        setLockedJupiterByRace((current) => ({
+          ...current,
+          ...nextJupiter,
         }));
       })
       .catch((loadError) => {
@@ -5420,6 +5441,55 @@ export default function App() {
       lockedSnigelRunner ??
       potentialSnigelRunner;
 
+    const lockedJupiterNumber = selectedRace
+      ? lockedJupiterByRace[selectedRace.id] ?? null
+      : null;
+
+    const lockedJupiterRunner =
+      lockedJupiterNumber === null
+        ? null
+        : trendRunners.find(
+            (runner) =>
+              runner.number === lockedJupiterNumber,
+          ) ?? null;
+
+    const hasLockedJupiter =
+      lockedJupiterNumber !== null;
+
+    const jupiterLockTimeMs =
+      selectedRace?.startTime
+        ? new Date(
+            selectedRace.startTime,
+          ).getTime() -
+          90 * 1000
+        : null;
+
+    const jupiterLockPassed =
+      jupiterLockTimeMs !== null &&
+      Number.isFinite(jupiterLockTimeMs) &&
+      nowMs >= jupiterLockTimeMs;
+
+    /*
+     * Före T-90 visas bara en preliminär Jupiter.
+     * Den officiella låsta signalen kommer alltid
+     * från worker/databasen.
+     */
+    const potentialJupiterRunner =
+      !hasLockedJupiter &&
+      !jupiterLockPassed &&
+      raceInsights.smoothest &&
+      raceInsights.smoothest.odds !== null &&
+      raceInsights.smoothest.odds >= 300 &&
+      raceInsights.smoothest.odds < 400 &&
+      raceInsights.smoothest.dropPercent !== null &&
+      raceInsights.smoothest.dropPercent >= 0
+        ? raceInsights.smoothest
+        : null;
+
+    const jupiterRunner =
+      lockedJupiterRunner ??
+      potentialJupiterRunner;
+
     const lockedSmallkaramellNumber = selectedRace
       ? lockedSmallkaramellByRace[selectedRace.id] ?? null
       : null;
@@ -6247,6 +6317,102 @@ export default function App() {
                                 : raceInsights.smoothest.dropPercent === null
                                   ? "Väntar på oddsrörelse."
                                   : "Jämnaste hästens odds har inte stigit."}
+                        </div>
+                      )}
+                    </section>
+
+                    <section
+                      className={`side-card strategy-selection-card jupiter-card ${
+                        lockedJupiterRunner ? "is-locked" : ""
+                      }`}
+                    >
+                      <div className="strategy-card-heading">
+                        <span
+                          className="strategy-card-icon"
+                          aria-hidden="true"
+                        >
+                          🪐
+                        </span>
+
+                        <div>
+                          <div className="side-card-title">
+                            Jupiter
+                          </div>
+
+                          <small>
+                            {lockedJupiterRunner
+                              ? "Låst 90 sek före start · PLATS 100 kr"
+                              : jupiterLockPassed
+                                ? "Låst signal"
+                                : "Jämnaste · odds 3,00–3,99 · oddset har inte stigit"}
+                          </small>
+                        </div>
+                      </div>
+
+                      {jupiterRunner ? (
+                        <button
+                          type="button"
+                          className="strategy-horse-button"
+                          onClick={() =>
+                            setExpandedRunnerKey(
+                              `${selectedRace.id}-${jupiterRunner.number}`,
+                            )
+                          }
+                          aria-label={`Jupiter: nummer ${jupiterRunner.number}, ${jupiterRunner.name}`}
+                        >
+                          <span className="strategy-number">
+                            {jupiterRunner.number}
+                          </span>
+
+                          <span className="strategy-horse-copy">
+                            <strong>
+                              {jupiterRunner.name}
+                            </strong>
+
+                            <span className="strategy-odds-line">
+                              {formatOdds(
+                                jupiterRunner.firstOdds,
+                              )}
+
+                              <span aria-hidden="true">
+                                →
+                              </span>
+
+                              {formatOdds(
+                                jupiterRunner.odds,
+                              )}
+                            </span>
+
+                            <span className="strategy-strength-line">
+                              {lockedJupiterRunner
+                                ? "PLATS 100 kr · Låst · "
+                                : "Potentiell plats · "}
+
+                              Styrka{" "}
+                              {runnerStrength(
+                                jupiterRunner,
+                              )}/6
+                            </span>
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="strategy-empty-state">
+                          {jupiterLockPassed
+                            ? "Ingen låst Jupiter registrerad."
+                            : !raceInsights.smoothest
+                              ? "Jämnaste häst saknas."
+                              : raceInsights.smoothest.odds === null
+                                ? "Låsodds saknas."
+                                : raceInsights.smoothest.odds < 300 ||
+                                    raceInsights.smoothest.odds >= 400
+                                  ? `Jämnastes odds ${formatOdds(
+                                      raceInsights.smoothest.odds,
+                                    )} · kräver 3,00–3,99`
+                                  : raceInsights.smoothest.dropPercent === null
+                                    ? "Oddsrörelse saknas."
+                                    : raceInsights.smoothest.dropPercent < 0
+                                      ? "Jämnastes odds har stigit."
+                                      : "Väntar på T−90."}
                         </div>
                       )}
                     </section>

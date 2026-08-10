@@ -35,6 +35,9 @@ const REFRESH_INTERVAL_MS = 60_000;
 const SNIGEL_KOMMER_RULE_VERSION =
   "SNIGEL_KOMMER_V1.0";
 
+const JUPITER_RULE_VERSION =
+  "JUPITER_V1.0";
+
 function kronor(oren: number) {
   return new Intl.NumberFormat("sv-SE", {
     maximumFractionDigits: 0,
@@ -113,6 +116,18 @@ function strategyInformation(
       description:
         "Jämnaste · 9–10 startande vid lås · oddset steg · vinnare",
       className: "is-snigel",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    JUPITER_RULE_VERSION
+  ) {
+    return {
+      title: "🪐 Jupiter",
+      description:
+        "Jämnaste · låsodds 3,00–3,99 · oddset har inte stigit · plats",
+      className: "is-jupiter",
     };
   }
 
@@ -338,6 +353,17 @@ export function WinPlaceJournalPanel({
           "Jämnaste · 9–10 startande vid lås · oddset steg · endast vinnare",
         className: "is-snigel",
         winOnly: true,
+        placeOnly: false,
+      },
+      {
+        ruleVersion:
+          JUPITER_RULE_VERSION,
+        title: "🪐 Jupiter",
+        description:
+          "Jämnaste · låsodds 3,00–3,99 · oddset har inte stigit · endast plats",
+        className: "is-jupiter",
+        winOnly: false,
+        placeOnly: true,
       },
       {
         ruleVersion:
@@ -347,6 +373,7 @@ export function WinPlaceJournalPanel({
           "S2 · näst mest sänkt · vinnarodds högst 7,00",
         className: "is-smallkaramell",
         winOnly: false,
+        placeOnly: false,
       },
       {
         ruleVersion:
@@ -356,6 +383,7 @@ export function WinPlaceJournalPanel({
           "Minst 30 % sänkning · vinnarodds högst 6,00",
         className: "is-most-shortened",
         winOnly: false,
+        placeOnly: false,
       },
     ],
     [],
@@ -606,8 +634,9 @@ export function WinPlaceJournalPanel({
         <span>
           Kräfta i buren och den ordinarie
           mest-sänkta-regeln redovisas separat.
-          Snigel kommer följs framåt från
-          10 augusti och redovisas separat.
+          Snigel kommer och Jupiter följs
+          framåt från 10 augusti och
+          redovisas separat.
         </span>
       </div>
 
@@ -648,16 +677,19 @@ export function WinPlaceJournalPanel({
 
               <div
                 className={`strategy-market-columns${
-                  strategy.winOnly
-                    ? " is-win-only"
+                  strategy.winOnly ||
+                  strategy.placeOnly
+                    ? " is-single-market"
                     : ""
                 }`}
               >
-                <StatsBlock
-                  title="VINNARE"
-                  market="WIN"
-                  stats={strategy.winStats}
-                />
+                {!strategy.placeOnly ? (
+                  <StatsBlock
+                    title="VINNARE"
+                    market="WIN"
+                    stats={strategy.winStats}
+                  />
+                ) : null}
 
                 {!strategy.winOnly ? (
                   <>
@@ -667,12 +699,14 @@ export function WinPlaceJournalPanel({
                       stats={strategy.placeStats}
                     />
 
-                    <StatsBlock
-                      title="TOTALT"
-                      stats={
-                        strategy.combinedStats
-                      }
-                    />
+                    {!strategy.placeOnly ? (
+                      <StatsBlock
+                        title="TOTALT"
+                        stats={
+                          strategy.combinedStats
+                        }
+                      />
+                    ) : null}
                   </>
                 ) : null}
               </div>
