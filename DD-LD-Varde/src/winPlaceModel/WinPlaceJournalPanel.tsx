@@ -42,6 +42,9 @@ const JUPITER_RULE_VERSION =
 const GRODAN_RULE_VERSION =
   "GRODAN_V1.0";
 
+const ENSAMVARGEN_RULE_VERSION =
+  "ENSAMVARGEN_V1.0";
+
 function kronor(oren: number) {
   return new Intl.NumberFormat("sv-SE", {
     maximumFractionDigits: 0,
@@ -144,6 +147,18 @@ function strategyInformation(
       description:
         "Jämnaste · G grön · låsodds 4,00–9,99 · plats",
       className: "is-jupiter",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    ENSAMVARGEN_RULE_VERSION
+  ) {
+    return {
+      title: "🐺 Ensamvargen",
+      description:
+        "Exakt en häst sänks 5,00–9,99 % · låsodds minst 6,00 · vinnare",
+      className: "is-snigel",
     };
   }
 
@@ -402,6 +417,16 @@ export function WinPlaceJournalPanel({
         className: "is-jupiter",
         winOnly: false,
         placeOnly: true,
+      },
+      {
+        ruleVersion:
+          ENSAMVARGEN_RULE_VERSION,
+        title: "🐺 Ensamvargen",
+        description:
+          "Exakt en häst sänks 5,00–9,99 % · låsodds minst 6,00 · endast vinnare",
+        className: "is-snigel",
+        winOnly: true,
+        placeOnly: false,
       },
       {
         ruleVersion:

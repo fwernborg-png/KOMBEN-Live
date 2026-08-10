@@ -35,6 +35,20 @@ import {
   GRODAN_STRATEGY_CODE,
 } from "./grodan";
 import {
+  evaluateEnsamvargen,
+  isEnsamvargenProspectiveDate,
+  isInEnsamvargenSignalWindow,
+  ENSAMVARGEN_LOCK_TARGET_SECONDS,
+  ENSAMVARGEN_MAX_DROP_PERCENT_EXCLUSIVE,
+  ENSAMVARGEN_MIN_DROP_PERCENT_INCLUSIVE,
+  ENSAMVARGEN_MIN_LOCK_ODDS_INCLUSIVE,
+  ENSAMVARGEN_MIN_VALID_ODDS_POINTS,
+  ENSAMVARGEN_PROSPECTIVE_START_DATE,
+  ENSAMVARGEN_RULE_VERSION,
+  ENSAMVARGEN_STAKE_SEK,
+  ENSAMVARGEN_STRATEGY_CODE,
+} from "./ensamvargen";
+import {
   evaluateResearchTrialSignals,
   isResearchTrialSignalDate,
 } from "./researchTrialSignals";
@@ -2332,6 +2346,7 @@ async function runCron(env: Env) {
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
         GRODAN_RULE_VERSION,
+        ENSAMVARGEN_RULE_VERSION,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
       ])
       .eq("signal_phase", "LIVE")
@@ -2381,6 +2396,11 @@ async function runCron(env: Env) {
       const grodanRaceKey = raceRuleKey(
         race.id,
         GRODAN_RULE_VERSION,
+      );
+
+      const ensamvargenRaceKey = raceRuleKey(
+        race.id,
+        ENSAMVARGEN_RULE_VERSION,
       );
 
       const bigBMonsterRaceKey = raceRuleKey(
@@ -2434,6 +2454,18 @@ async function runCron(env: Env) {
           grodanRaceKey,
         );
 
+      const needsEnsamvargenEvaluation =
+        isEnsamvargenProspectiveDate(
+          raceDate,
+        ) &&
+        isInEnsamvargenSignalWindow(
+          plannedStartTime,
+          startMs,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          ensamvargenRaceKey,
+        );
+
       const needsBigBMonsterEvaluation =
         raceDate >=
           BIG_B_MONSTER_PROSPECTIVE_START_DATE &&
@@ -2452,6 +2484,7 @@ async function runCron(env: Env) {
         !needsSnigelEvaluation &&
         !needsJupiterEvaluation &&
         !needsGrodanEvaluation &&
+        !needsEnsamvargenEvaluation &&
         !needsBigBMonsterEvaluation
       ) {
         continue;
@@ -4019,6 +4052,406 @@ async function runCron(env: Env) {
           grodanRaceKey,
         );
       }
+
+      /*
+       * ENSAMVARGEN V1.0
+       *
+       * Fryst prospektiv forskningsregel:
+       * - start 2026-08-10
+       * - exakt EN häst sänks 5,00–9,99 %
+       * - låsodds minst 6,00
+       * - endast VINNARE
+       * - 100 kr
+       * - T-90
+       * - ingen push
+       */
+      if (needsEnsamvargenEvaluation) {
+        const plannedLockTimeMs =
+          Date.parse(plannedStartTime) -
+          ENSAMVARGEN_LOCK_TARGET_SECONDS * 1_000;
+
+        const hasFreshCurrentOddsPoint =
+          latestPointMs !== null &&
+          Math.abs(
+            plannedLockTimeMs - latestPointMs,
+          ) <= lockGraceMs;
+
+        const ensamvargenEvaluation =
+          evaluateEnsamvargen({
+            raceDate,
+            plannedStartTime,
+            raceStatus: race.status,
+            isMonte: race.isMonte,
+            runners: winPlaceRunners,
+            nowMs: startMs,
+            hasFreshCurrentOddsPoint,
+          });
+
+        const candidate =
+          ensamvargenEvaluation.candidate;
+
+        const oneIntervalCandidate =
+          ensamvargenEvaluation.qualifyingCandidates.length === 1
+            ? ensamvargenEvaluation.qualifyingCandidates[0] ?? null
+            : null;
+
+        const insufficient =
+          ensamvargenEvaluation.excludedReason ===
+            "Aktuell oddspunkt saknas" ||
+          ensamvargenEvaluation.excludedReason ===
+            "Otillräcklig oddshistorik för hela startfältet";
+
+        const decision =
+          candidate
+            ? "PLAY"
+            : !ensamvargenEvaluation.active
+              ? "EXCLUDED"
+              : insufficient
+                ? "INSUFFICIENT_DATA"
+                : "NO_PLAY";
+
+        const plannedStartMs =
+          Date.parse(plannedStartTime);
+
+        const secondsBeforeStart =
+          Number.isFinite(plannedStartMs)
+            ? Math.max(
+                0,
+                (plannedStartMs - startMs) / 1_000,
+              )
+            : 0;
+
+        const configSnapshot = {
+          ruleVersion:
+            ENSAMVARGEN_RULE_VERSION,
+
+          strategyCode:
+            ENSAMVARGEN_STRATEGY_CODE,
+
+          strategyLabel:
+            "Ensamvargen – vinnare",
+
+          prospectiveStartDate:
+            ENSAMVARGEN_PROSPECTIVE_START_DATE,
+
+          collectionStartMinutesBeforeRace:
+            60,
+
+          lockTargetSecondsBeforeRace:
+            ENSAMVARGEN_LOCK_TARGET_SECONDS,
+
+          lockWindowOpensSecondsBeforeRace:
+            120,
+
+          lockWindowClosesSecondsBeforeRace:
+            60,
+
+          minValidOddsPoints:
+            ENSAMVARGEN_MIN_VALID_ODDS_POINTS,
+
+          minOddsDropPercentInclusive:
+            ENSAMVARGEN_MIN_DROP_PERCENT_INCLUSIVE,
+
+          maxOddsDropPercentExclusive:
+            ENSAMVARGEN_MAX_DROP_PERCENT_EXCLUSIVE,
+
+          qualifyingCandidatesRequired:
+            1,
+
+          lockedWinOddsMinInclusive:
+            ENSAMVARGEN_MIN_LOCK_ODDS_INCLUSIVE,
+
+          defaultWinStakeSEK:
+            ENSAMVARGEN_STAKE_SEK,
+
+          market:
+            "WIN",
+
+          excludeMonte:
+            true,
+
+          pushEnabled:
+            false,
+
+          prospectiveTargetBets:
+            50,
+        };
+
+        const {
+          error: evaluationError,
+        } = await supabase
+          .from(
+            "win_place_race_evaluations",
+          )
+          .upsert(
+            {
+              race_id:
+                race.id,
+
+              rule_version:
+                ENSAMVARGEN_RULE_VERSION,
+
+              strategy_code:
+                ENSAMVARGEN_STRATEGY_CODE,
+
+              decision,
+
+              reasons:
+                candidate
+                  ? []
+                  : [
+                      ensamvargenEvaluation.excludedReason ??
+                        "Ingen Ensamvargen-signal",
+                    ],
+
+              race_json:
+                raceInput,
+
+              planned_lock_time_ms:
+                plannedLockTimeMs,
+
+              actual_lock_time_ms:
+                startMs,
+
+              locked_at:
+                nowIso,
+
+              seconds_before_start:
+                secondsBeforeStart,
+
+              config_snapshot:
+                configSnapshot,
+
+              checks_json: [
+                {
+                  key:
+                    "EXACTLY_ONE_DROP_5_00_9_99",
+                  passed:
+                    ensamvargenEvaluation.qualifyingCandidates.length === 1,
+                },
+                {
+                  key:
+                    "LOCK_WIN_ODDS_MIN_6_00",
+                  passed:
+                    oneIntervalCandidate !== null &&
+                    oneIntervalCandidate.currentWinOdds >=
+                      ENSAMVARGEN_MIN_LOCK_ODDS_INCLUSIVE,
+                },
+                {
+                  key:
+                    "CURRENT_ODDS_POINT_AVAILABLE",
+                  passed:
+                    hasFreshCurrentOddsPoint,
+                },
+                {
+                  key:
+                    "NOT_MONTE",
+                  passed:
+                    !race.isMonte,
+                },
+              ],
+
+              candidate_json:
+                candidate,
+
+              most_shortened_json:
+                null,
+
+              snapshot_json: {
+                activeStarters:
+                  ensamvargenEvaluation.activeStarters,
+
+                qualifyingCandidates:
+                  ensamvargenEvaluation.qualifyingCandidates,
+
+                excludedReason:
+                  ensamvargenEvaluation.excludedReason,
+              },
+
+              signal_phase:
+                "LIVE",
+
+              created_at:
+                nowIso,
+
+              updated_at:
+                nowIso,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (evaluationError) {
+          throw new Error(
+            `Could not upsert Ensamvargen evaluation ${race.id}: ${evaluationError.message}`,
+          );
+        }
+
+        /*
+         * ENSAMVARGEN skapar endast VINNARE.
+         * Ingen PLACE-rad.
+         */
+        if (candidate) {
+          const {
+            error: betError,
+          } = await supabase
+            .from(
+              "win_place_model_bets",
+            )
+            .upsert(
+              {
+                bet_id: [
+                  race.id,
+                  ENSAMVARGEN_RULE_VERSION,
+                  "WIN",
+                  "LIVE",
+                ].join(":"),
+
+                race_id:
+                  race.id,
+
+                rule_version:
+                  ENSAMVARGEN_RULE_VERSION,
+
+                market:
+                  "WIN",
+
+                signal_phase:
+                  "LIVE",
+
+                config_snapshot:
+                  configSnapshot,
+
+                date:
+                  raceDate,
+
+                track_id:
+                  track.id,
+
+                track_name:
+                  track.name,
+
+                race_number:
+                  race.raceNumber,
+
+                planned_start_time:
+                  plannedStartTime,
+
+                lock_time:
+                  nowIso,
+
+                seconds_before_start:
+                  secondsBeforeStart,
+
+                horse_number:
+                  candidate.runnerNumber,
+
+                horse_name:
+                  candidate.runnerName,
+
+                horse_id:
+                  candidate.horseId,
+
+                start_lane:
+                  candidate.startLane,
+
+                start_method:
+                  race.startMethod,
+
+                distance_meters:
+                  race.distanceMeters,
+
+                starters:
+                  ensamvargenEvaluation.activeStarters,
+
+                start_odds:
+                  candidate.startOdds,
+
+                locked_win_odds:
+                  candidate.currentWinOdds,
+
+                odds_drop_percent:
+                  candidate.oddsDropPercent,
+
+                cv_raw:
+                  candidate.cvRaw,
+
+                cv_display:
+                  candidate.cvDisplay,
+
+                strength:
+                  candidate.strength,
+
+                indicators_green:
+                  candidate.indicatorsGreen,
+
+                valid_odds_points:
+                  candidate.validOddsPoints,
+
+                stake_oren:
+                  ENSAMVARGEN_STAKE_SEK * 100,
+
+                result_outcome:
+                  "PENDING",
+
+                result_status:
+                  "PENDING",
+
+                finish_position_official:
+                  null,
+
+                official_win_odds_decimal:
+                  null,
+
+                place_odds_decimal:
+                  null,
+
+                return_oren:
+                  null,
+
+                net_oren:
+                  null,
+
+                roi_pct:
+                  null,
+
+                automatic_model_bet:
+                  true,
+
+                user_actually_played:
+                  false,
+
+                result_source:
+                  null,
+
+                result_updated_at:
+                  null,
+
+                created_at:
+                  nowIso,
+
+                updated_at:
+                  nowIso,
+              },
+              {
+                onConflict:
+                  "race_id,rule_version,market,signal_phase",
+              },
+            );
+
+          if (betError) {
+            throw new Error(
+              `Could not upsert Ensamvargen bet ${race.id}: ${betError.message}`,
+            );
+          }
+        }
+
+        existingWinPlaceEvalKeys.add(
+          ensamvargenRaceKey,
+        );
+      }
     }
 
     const { data: existingEvalRows, error: existingEvalError } = await supabase
@@ -4470,6 +4903,7 @@ async function runCron(env: Env) {
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
         GRODAN_RULE_VERSION,
+        ENSAMVARGEN_RULE_VERSION,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
       ])
       .eq("signal_phase", "LIVE")
