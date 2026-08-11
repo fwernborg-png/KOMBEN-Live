@@ -6247,17 +6247,33 @@ export default function App() {
                               <span>{consistency == null ? "–" : consistency.toFixed(2).replace(".", ",")}</span>
                               <span
                                 className={`strength-cell ${
-                                  runnerStrength(runner) >= 6
-                                    ? "strength-cell--strong"
-                                    : runnerStrength(runner) === 5
-                                      ? "strength-cell--good"
-                                      : runnerStrength(runner) === 4
-                                        ? "strength-cell--qualified"
-                                        : "strength-cell--neutral"
+                                  runnerStrength(runner) === 3
+                                    ? "strength-cell--sweetspot"
+                                    : runnerStrength(runner) >= 6
+                                      ? "strength-cell--strong"
+                                      : runnerStrength(runner) === 5
+                                        ? "strength-cell--good"
+                                        : runnerStrength(runner) === 4
+                                          ? "strength-cell--qualified"
+                                          : "strength-cell--neutral"
                                 }`}
-                                title={`Styrka: ${runnerStrength(runner)} av 6. Klicka på raden för detaljer.`}
+                                title={
+                                  runnerStrength(runner) === 3
+                                    ? "Exakt styrka 3/6 – Diamantens sweet spot"
+                                    : `Styrka: ${runnerStrength(runner)} av 6. Klicka på raden för detaljer.`
+                                }
                               >
-                                <strong>{runnerStrength(runner)}/6</strong>
+                                <strong>
+                                  {runnerStrength(runner)}/6
+                                  {runnerStrength(runner) === 3 ? (
+                                    <span
+                                      className="strength-sweetspot-star"
+                                      aria-hidden="true"
+                                    >
+                                      ★
+                                    </span>
+                                  ) : null}
+                                </strong>
                               </span>
 
                             </div>
