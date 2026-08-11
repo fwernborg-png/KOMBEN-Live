@@ -7,6 +7,15 @@ import type {
   ResearchSelection,
 } from "./types";
 
+export const GALLOP_TRACK_FILTER =
+  "__GALLOP__";
+
+export const GALLOP_TRACK_NAMES = [
+  "Jägersro Galopp",
+  "Göteborg Galopp",
+  "Bro Park",
+] as const;
+
 type UnknownRecord =
   Record<string, unknown>;
 
@@ -526,8 +535,9 @@ export async function loadResearchHistoryOptions():
   };
 }
 
-export async function loadResearchHistoryRows(
+async function loadResearchHistoryRowsForTrack(
   filters: ResearchHistoryFilters,
+  trackName: string | null,
 ): Promise<ResearchHistoryRow[]> {
   const {
     data,
@@ -551,7 +561,7 @@ export async function loadResearchHistoryRows(
         filters.distanceMeters,
 
       p_track_name:
-        filters.trackName || null,
+        trackName,
 
       p_driver_name:
         filters.driverName || null,
@@ -647,5 +657,90 @@ export async function loadResearchHistoryRows(
         row,
       ): row is ResearchHistoryRow =>
         row !== null,
+    );
+}
+
+function historyRowTimestamp(
+  row: ResearchHistoryRow,
+): number {
+  const value =
+    row.plannedStartTime ||
+    `${row.raceDate}T00:00:00`;
+
+  const timestamp =
+    new Date(value).getTime();
+
+  return Number.isFinite(timestamp)
+    ? timestamp
+    : 0;
+}
+
+export async function loadResearchHistoryRows(
+  filters: ResearchHistoryFilters,
+): Promise<ResearchHistoryRow[]> {
+  if (
+    filters.trackName !==
+    GALLOP_TRACK_FILTER
+  ) {
+    return loadResearchHistoryRowsForTrack(
+      filters,
+      filters.trackName || null,
+    );
+  }
+
+  /*
+   * "Galopp" är ett virtuellt UI-filter.
+   * Databasen får fortfarande de riktiga bannamnen.
+   * Ingen forskningsdata eller spelregel ändras.
+   */
+  const batches =
+    await Promise.all(
+      GALLOP_TRACK_NAMES.map(
+        (trackName) =>
+          loadResearchHistoryRowsForTrack(
+            filters,
+            trackName,
+          ),
+      ),
+    );
+
+  const uniqueRows =
+    new Map<
+      string,
+      ResearchHistoryRow
+    >();
+
+  for (
+    const row of
+    batches.flat()
+  ) {
+    const key =
+      `${row.raceKey}:` +
+      `${row.selectionKind}:` +
+      `${row.runnerNumber}`;
+
+    uniqueRows.set(
+      key,
+      row,
+    );
+  }
+
+  return [
+    ...uniqueRows.values(),
+  ]
+    .sort(
+      (a, b) =>
+        historyRowTimestamp(b) -
+          historyRowTimestamp(a) ||
+        b.raceNumber -
+          a.raceNumber ||
+        a.trackName.localeCompare(
+          b.trackName,
+          "sv",
+        ),
+    )
+    .slice(
+      0,
+      filters.limit,
     );
 }

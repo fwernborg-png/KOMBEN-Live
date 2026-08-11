@@ -11,6 +11,7 @@ import {
 } from "./analytics";
 
 import {
+  GALLOP_TRACK_FILTER,
   loadResearchHistoryOptions,
   loadResearchHistoryRows,
 } from "./repository";
@@ -115,6 +116,19 @@ const INDICATOR_FILTER_DEFINITIONS = [
   label: string;
   chipLabel: string;
 }>;
+
+function trackFilterLabel(
+  value: string,
+): string {
+  if (
+    value ===
+    GALLOP_TRACK_FILTER
+  ) {
+    return "Galopp – 3 banor";
+  }
+
+  return value;
+}
 
 function isoDateOffset(
   dateValue: string,
@@ -656,7 +670,9 @@ function activeQuestion(
 
   if (filters.trackName) {
     parts.push(
-      filters.trackName,
+      trackFilterLabel(
+        filters.trackName,
+      ),
     );
   }
 
@@ -1095,7 +1111,9 @@ export function ResearchHistoryPanel() {
 
   if (filters.trackName) {
     activeFilterLabels.push(
-      `Bana: ${filters.trackName}`,
+      `Bana: ${trackFilterLabel(
+        filters.trackName,
+      )}`,
     );
   }
 
@@ -1868,6 +1886,14 @@ export function ResearchHistoryPanel() {
               >
                 <option value="">
                   Alla banor
+                </option>
+
+                <option
+                  value={
+                    GALLOP_TRACK_FILTER
+                  }
+                >
+                  Galopp – alla tre banor
                 </option>
 
                 {options.tracks.map(
