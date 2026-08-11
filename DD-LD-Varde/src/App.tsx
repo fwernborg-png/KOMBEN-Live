@@ -74,6 +74,9 @@ import {
   type RaceProduct,
 } from "./raceProducts";
 
+const DIAMANTEN_RULE_VERSION =
+  "DIAMANTEN_V1.0";
+
 type Track = {
   id: number;
   name: string;
@@ -1989,6 +1992,9 @@ export default function App() {
   const [lockedJupiterByRace, setLockedJupiterByRace] =
     useState<Record<string, number>>({});
 
+  const [lockedDiamantenByRace, setLockedDiamantenByRace] =
+    useState<Record<string, number[]>>({});
+
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
   const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
   const [tvillingMarkets, setTvillingMarkets] = useState<Record<string, TvillingRaceMarket>>({});
@@ -2034,6 +2040,7 @@ export default function App() {
         const next: Record<string, number> = {};
         const nextSnigel: Record<string, number> = {};
         const nextJupiter: Record<string, number> = {};
+        const nextDiamanten: Record<string, number[]> = {};
 
         for (const bet of bets) {
           if (
@@ -2059,6 +2066,22 @@ export default function App() {
           ) {
             nextJupiter[bet.raceId] = bet.horseNumber;
           }
+
+          if (
+            bet.ruleVersion ===
+              DIAMANTEN_RULE_VERSION &&
+            bet.market === "WIN"
+          ) {
+            const current =
+              nextDiamanten[bet.raceId] ?? [];
+
+            if (!current.includes(bet.horseNumber)) {
+              nextDiamanten[bet.raceId] = [
+                ...current,
+                bet.horseNumber,
+              ];
+            }
+          }
         }
 
         setLockedSmallkaramellByRace((current) => ({
@@ -2074,6 +2097,11 @@ export default function App() {
         setLockedJupiterByRace((current) => ({
           ...current,
           ...nextJupiter,
+        }));
+
+        setLockedDiamantenByRace((current) => ({
+          ...current,
+          ...nextDiamanten,
         }));
       })
       .catch((loadError) => {
@@ -5985,6 +6013,13 @@ export default function App() {
                           potentialSmallkaramellRunner?.number ===
                           runner.number;
 
+                        const isLockedDiamanten =
+                          lockedDiamantenByRace[
+                            selectedRace.id
+                          ]?.includes(
+                            runner.number,
+                          ) ?? false;
+
                         const speedMarker =
                           selectedTrack
                             ? findSpeedAnalysisMarker(
@@ -6010,6 +6045,7 @@ export default function App() {
                               isBiggestDrop ||
                               isPotentialSmallkaramell ||
                               isLockedSmallkaramell ||
+                              isLockedDiamanten ||
                               isWatched ||
                               isLockedPlay
                             ),
@@ -6038,7 +6074,7 @@ export default function App() {
                         return (
                           <div
                             key={rowKey}
-                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""} ${isPotentialSmallkaramell ? "is-smallkaramell" : ""} ${isLockedSmallkaramell ? "is-smallkaramell-locked" : ""} ${speedInterest === "HOT" ? "is-speed-analysis-hot" : speedInterest === "EXTRA" ? "is-speed-analysis-extra" : ""} ${podiumPosition ? `is-finish-${podiumPosition}` : ""}`}
+                            className={`compact-row ${runner.scratched ? "is-scratched" : ""} ${isWatched ? "is-watched" : ""} ${isLockedPlay ? "is-locked-play" : ""} ${isEvaluated ? "is-evaluated" : ""} ${isSmoothest ? "is-smoothest" : ""} ${isBiggestDrop ? "is-biggest-drop" : ""} ${isPotentialSmallkaramell ? "is-smallkaramell" : ""} ${isLockedSmallkaramell ? "is-smallkaramell-locked" : ""} ${isLockedDiamanten ? "is-diamanten-locked" : ""} ${speedInterest === "HOT" ? "is-speed-analysis-hot" : speedInterest === "EXTRA" ? "is-speed-analysis-extra" : ""} ${podiumPosition ? `is-finish-${podiumPosition}` : ""}`}
                           >
                             <div
                               role="button"
@@ -6052,7 +6088,7 @@ export default function App() {
                                 }
                               }}
                             >
-                              <span className={`number-pill ${isWatched || isLockedPlay || isBiggestDrop || isPotentialSmallkaramell || isLockedSmallkaramell ? "is-highlight" : ""}`}>{runner.number}</span>
+                              <span className={`number-pill ${isWatched || isLockedPlay || isBiggestDrop || isPotentialSmallkaramell || isLockedSmallkaramell || isLockedDiamanten ? "is-highlight" : ""}`}>{runner.number}</span>
                               <span className="runner-name-cell">
                                 <span className="runner-title-line">
                                   {podiumPosition ? (
@@ -6179,6 +6215,16 @@ export default function App() {
                                       }
                                     >
                                       🦞 KRÄFTA I BUREN
+                                    </span>
+                                  ) : null}
+
+                                  {isLockedDiamanten ? (
+                                    <span
+                                      className="inline-tag diamanten-row-tag"
+                                      title="Diamanten – låst vinnarspel 100 kr"
+                                      aria-label="Diamanten, låst vinnarspel"
+                                    >
+                                      💎 DIAMANTEN
                                     </span>
                                   ) : null}
 

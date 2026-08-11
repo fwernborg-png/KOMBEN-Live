@@ -6,6 +6,7 @@ import {
   isProtectedAppPath,
 } from "./appAuthorization";
 import { deliverFinalSignalNotification } from "./finalSignalPushDelivery";
+import { deliverDiamantenNotification } from "./diamantenPushDelivery";
 import {
   evaluateSnigelKommer,
   isInSnigelKommerSignalWindow,
@@ -48,6 +49,22 @@ import {
   ENSAMVARGEN_STAKE_SEK,
   ENSAMVARGEN_STRATEGY_CODE,
 } from "./ensamvargen";
+import {
+  DIAMANTEN_LOCK_TARGET_SECONDS,
+  DIAMANTEN_MAX_ACTIVE_STARTERS,
+  DIAMANTEN_MAX_LOCK_ODDS_INCLUSIVE,
+  DIAMANTEN_MIN_ACTIVE_STARTERS,
+  DIAMANTEN_MIN_LOCK_ODDS_INCLUSIVE,
+  DIAMANTEN_MIN_VALID_ODDS_POINTS,
+  DIAMANTEN_PROSPECTIVE_START_DATE,
+  DIAMANTEN_REQUIRED_STRENGTH,
+  DIAMANTEN_RULE_VERSION,
+  DIAMANTEN_STAKE_SEK,
+  DIAMANTEN_STRATEGY_CODE,
+  evaluateDiamanten,
+  isDiamantenProspectiveDate,
+  isInDiamantenSignalWindow,
+} from "./diamanten";
 import {
   evaluateResearchTrialSignals,
   isResearchTrialSignalDate,
@@ -1726,6 +1743,8 @@ async function runCron(env: Env) {
     winPlaceBetsCreated: 0,
     smallkaramellEvaluationsCreated: 0,
     smallkaramellBetsCreated: 0,
+    diamantenEvaluationsCreated: 0,
+    diamantenBetsCreated: 0,
     winPlaceBetsSettled: 0,
     winPlaceBetsVoided: 0,
     winPlaceSettlementSkipped: 0,
@@ -2348,6 +2367,7 @@ async function runCron(env: Env) {
         GRODAN_RULE_VERSION,
         ENSAMVARGEN_RULE_VERSION,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
+        DIAMANTEN_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
@@ -2406,6 +2426,11 @@ async function runCron(env: Env) {
       const bigBMonsterRaceKey = raceRuleKey(
         race.id,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
+      );
+
+      const diamantenRaceKey = raceRuleKey(
+        race.id,
+        DIAMANTEN_RULE_VERSION,
       );
 
       const needsWinPlaceEvaluation =
@@ -2478,6 +2503,18 @@ async function runCron(env: Env) {
           bigBMonsterRaceKey,
         );
 
+      const needsDiamantenEvaluation =
+        isDiamantenProspectiveDate(
+          raceDate,
+        ) &&
+        isInDiamantenSignalWindow(
+          plannedStartTime,
+          startMs,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          diamantenRaceKey,
+        );
+
       if (
         !needsWinPlaceEvaluation &&
         !needsSmallkaramellEvaluation &&
@@ -2485,7 +2522,8 @@ async function runCron(env: Env) {
         !needsJupiterEvaluation &&
         !needsGrodanEvaluation &&
         !needsEnsamvargenEvaluation &&
-        !needsBigBMonsterEvaluation
+        !needsBigBMonsterEvaluation &&
+        !needsDiamantenEvaluation
       ) {
         continue;
       }
@@ -2622,7 +2660,7 @@ async function runCron(env: Env) {
             .from("win_place_model_bets")
             .upsert(betRows, {
               onConflict:
-                "race_id,rule_version,market,signal_phase",
+                "race_id,rule_version,market,signal_phase,horse_number",
             });
 
           if (betError) {
@@ -2728,6 +2766,665 @@ async function runCron(env: Env) {
             "WIN_PLACE",
         });
       }
+
+      /*
+       * DIAMANTEN V1.0
+       *
+       * Fryst prospektiv regel från 2026-08-11:
+       * - endast trav
+       * - exakt 2140 meter
+       * - 7–10 aktiva hästar vid LOCK
+       * - låsodds 6,00–25,00
+       * - exakt styrka 3/6
+       * - komplett indikator- och oddsdata
+       * - VINNARE 100 kr per kvalificerad häst
+       * - flera kandidater i samma lopp är tillåtna
+       * - T-90
+       */
+      if (needsDiamantenEvaluation) {
+        const plannedLockTimeMs =
+          Date.parse(plannedStartTime) -
+          DIAMANTEN_LOCK_TARGET_SECONDS *
+            1_000;
+
+        /*
+         * Diamanten räknar ODD och låsodds från
+         * den faktiska oddshistoriken vid LOCK.
+         * Vi använder alltså inte ett senare odds
+         * från resultat-/racepayloaden.
+         */
+        const diamantenTrendLite =
+          trendLite.map((runner) => {
+            const history =
+              (
+                byRunner.get(
+                  runner.number,
+                ) ?? []
+              )
+                .filter(
+                  (point) =>
+                    point.timestamp >=
+                      window.collectionStartMs &&
+                    point.timestamp <=
+                      startMs,
+                )
+                .sort(
+                  (a, b) =>
+                    a.timestamp -
+                    b.timestamp,
+                );
+
+            const firstOddsRaw =
+              history[0]
+                ? Math.round(
+                    history[0].odds *
+                      100,
+                  )
+                : null;
+
+            const latestOdds =
+              history[
+                history.length - 1
+              ]?.odds ?? null;
+
+            const lockOddsRaw =
+              latestOdds !== null
+                ? Math.round(
+                    latestOdds * 100,
+                  )
+                : null;
+
+            return {
+              ...runner,
+
+              oddsRaw:
+                lockOddsRaw,
+
+              firstOddsRaw,
+
+              changePercent:
+                percentChange(
+                  firstOddsRaw,
+                  lockOddsRaw,
+                ),
+            };
+          });
+
+        const diamantenIndicatorsByRunner =
+          computeIndicatorsAndStrength({
+            runners:
+              diamantenTrendLite,
+          });
+
+        const diamantenRunners =
+          diamantenTrendLite.map(
+            (runner) => {
+              const history =
+                (
+                  byRunner.get(
+                    runner.number,
+                  ) ?? []
+                )
+                  .filter(
+                    (point) =>
+                      point.timestamp >=
+                        window.collectionStartMs &&
+                      point.timestamp <=
+                        startMs,
+                  )
+                  .sort(
+                    (a, b) =>
+                      a.timestamp -
+                      b.timestamp,
+                  );
+
+              const latestPoint =
+                history[
+                  history.length - 1
+                ] ?? null;
+
+              const indicators =
+                diamantenIndicatorsByRunner.get(
+                  runner.number,
+                ) ?? {
+                  strength: 0,
+                  indicatorsGreen: [],
+                };
+
+              const indicatorValues = [
+                runner.stats
+                  .earningsPerStart,
+
+                runner.stats
+                  .winPercent,
+
+                runner.stats
+                  .driverWinPercent,
+
+                runner.stats
+                  .startPoints,
+
+                runner.stats
+                  .gallopPercent,
+
+                runner.changePercent,
+              ];
+
+              const indicatorDataComplete =
+                indicatorValues.every(
+                  (value) =>
+                    value !== null &&
+                    Number.isFinite(
+                      value,
+                    ),
+                );
+
+              const oddsDataComplete =
+                history.length >=
+                  DIAMANTEN_MIN_VALID_ODDS_POINTS &&
+                latestPoint !==
+                  null &&
+                Math.abs(
+                  plannedLockTimeMs -
+                    latestPoint.timestamp,
+                ) <= lockGraceMs;
+
+              return {
+                number:
+                  runner.number,
+
+                name:
+                  runner.name,
+
+                horseId:
+                  runner.horseId,
+
+                startLane:
+                  runner.startLane,
+
+                scratched:
+                  runner.scratched,
+
+                currentWinOddsDecimal:
+                  latestPoint?.odds ??
+                  null,
+
+                indicatorsGreen:
+                  indicators
+                    .indicatorsGreen,
+
+                strength:
+                  indicators.strength,
+
+                oddsHistory:
+                  history,
+
+                indicatorDataComplete,
+
+                oddsDataComplete,
+              };
+            },
+          );
+
+        const diamantenEvaluation =
+          evaluateDiamanten({
+            raceDate,
+
+            trackName:
+              track.name,
+
+            meetingName:
+              race.meetingName,
+
+            raceCategory:
+              race.raceCategory,
+
+            raceStatus:
+              race.status,
+
+            isMonte:
+              race.isMonte,
+
+            distanceMeters:
+              race.distanceMeters,
+
+            runners:
+              diamantenRunners,
+          });
+
+        const diamantenCandidates =
+          diamantenEvaluation
+            .candidates;
+
+        const diamantenDecision =
+          diamantenCandidates.length >
+          0
+            ? "PLAY"
+            : !diamantenEvaluation
+                  .active
+              ? "EXCLUDED"
+              : "NO_PLAY";
+
+        const plannedStartMs =
+          Date.parse(
+            plannedStartTime,
+          );
+
+        const secondsBeforeStart =
+          Number.isFinite(
+            plannedStartMs,
+          )
+            ? Math.max(
+                0,
+                (
+                  plannedStartMs -
+                  startMs
+                ) / 1_000,
+              )
+            : 0;
+
+        const diamantenConfigSnapshot = {
+          ruleVersion:
+            DIAMANTEN_RULE_VERSION,
+
+          strategyCode:
+            DIAMANTEN_STRATEGY_CODE,
+
+          strategyLabel:
+            "Diamanten – vinnare",
+
+          prospectiveStartDate:
+            DIAMANTEN_PROSPECTIVE_START_DATE,
+
+          collectionStartMinutesBeforeRace:
+            60,
+
+          lockTargetSecondsBeforeRace:
+            DIAMANTEN_LOCK_TARGET_SECONDS,
+
+          lockWindowOpensSecondsBeforeRace:
+            120,
+
+          lockWindowClosesSecondsBeforeRace:
+            60,
+
+          distanceMeters:
+            2140,
+
+          minActiveStartersInclusive:
+            DIAMANTEN_MIN_ACTIVE_STARTERS,
+
+          maxActiveStartersInclusive:
+            DIAMANTEN_MAX_ACTIVE_STARTERS,
+
+          minLockedWinOddsInclusive:
+            DIAMANTEN_MIN_LOCK_ODDS_INCLUSIVE,
+
+          maxLockedWinOddsInclusive:
+            DIAMANTEN_MAX_LOCK_ODDS_INCLUSIVE,
+
+          requiredStrengthExact:
+            DIAMANTEN_REQUIRED_STRENGTH,
+
+          requireIndicatorDataComplete:
+            true,
+
+          requireOddsDataComplete:
+            true,
+
+          minValidOddsPoints:
+            DIAMANTEN_MIN_VALID_ODDS_POINTS,
+
+          defaultWinStakeSEK:
+            DIAMANTEN_STAKE_SEK,
+
+          market:
+            "WIN",
+
+          allowMultipleCandidates:
+            true,
+
+          excludeMonte:
+            true,
+
+          excludeGallop:
+            true,
+
+          pushEnabled:
+            true,
+
+          prospectiveTargetBets:
+            100,
+        };
+
+        const {
+          error:
+            diamantenEvaluationError,
+        } = await supabase
+          .from(
+            "win_place_race_evaluations",
+          )
+          .upsert(
+            {
+              race_id:
+                race.id,
+
+              rule_version:
+                DIAMANTEN_RULE_VERSION,
+
+              strategy_code:
+                DIAMANTEN_STRATEGY_CODE,
+
+              decision:
+                diamantenDecision,
+
+              reasons:
+                diamantenCandidates.length
+                  ? []
+                  : [
+                      diamantenEvaluation
+                        .excludedReason ??
+                        "Ingen Diamanten-signal",
+                    ],
+
+              race_json:
+                raceInput,
+
+              planned_lock_time_ms:
+                plannedLockTimeMs,
+
+              actual_lock_time_ms:
+                startMs,
+
+              locked_at:
+                nowIso,
+
+              seconds_before_start:
+                secondsBeforeStart,
+
+              config_snapshot:
+                diamantenConfigSnapshot,
+
+              checks_json: [
+                {
+                  key:
+                    "TRAV_ONLY",
+                  passed:
+                    diamantenEvaluation
+                      .active ||
+                    diamantenEvaluation
+                      .excludedReason !==
+                      "Inte giltigt travlopp",
+                },
+
+                {
+                  key:
+                    "DISTANCE_2140",
+                  passed:
+                    race.distanceMeters ===
+                    2140,
+                },
+
+                {
+                  key:
+                    "ACTIVE_STARTERS_7_10",
+                  passed:
+                    diamantenEvaluation
+                      .activeStarters >=
+                      DIAMANTEN_MIN_ACTIVE_STARTERS &&
+                    diamantenEvaluation
+                      .activeStarters <=
+                      DIAMANTEN_MAX_ACTIVE_STARTERS,
+                },
+
+                {
+                  key:
+                    "QUALIFYING_CANDIDATES",
+                  passed:
+                    diamantenCandidates.length >
+                    0,
+                },
+              ],
+
+              candidate_json:
+                diamantenCandidates[0] ??
+                null,
+
+              most_shortened_json:
+                null,
+
+              snapshot_json: {
+                activeStarters:
+                  diamantenEvaluation
+                    .activeStarters,
+
+                candidates:
+                  diamantenCandidates,
+
+                candidateCount:
+                  diamantenCandidates
+                    .length,
+
+                excludedReason:
+                  diamantenEvaluation
+                    .excludedReason,
+              },
+
+              signal_phase:
+                "LIVE",
+
+              created_at:
+                nowIso,
+
+              updated_at:
+                nowIso,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (
+          diamantenEvaluationError
+        ) {
+          throw new Error(
+            `Could not upsert Diamanten evaluation ${race.id}: ${diamantenEvaluationError.message}`,
+          );
+        }
+
+        summary
+          .diamantenEvaluationsCreated +=
+          1;
+
+        if (
+          diamantenCandidates.length
+        ) {
+          const diamantenBetRows =
+            diamantenCandidates.map(
+              (candidate) => ({
+                bet_id: [
+                  race.id,
+                  DIAMANTEN_RULE_VERSION,
+                  "WIN",
+                  "LIVE",
+                  candidate
+                    .runnerNumber,
+                ].join(":"),
+
+                race_id:
+                  race.id,
+
+                rule_version:
+                  DIAMANTEN_RULE_VERSION,
+
+                market:
+                  "WIN",
+
+                signal_phase:
+                  "LIVE",
+
+                config_snapshot:
+                  diamantenConfigSnapshot,
+
+                date:
+                  raceDate,
+
+                track_id:
+                  track.id,
+
+                track_name:
+                  track.name,
+
+                race_number:
+                  race.raceNumber,
+
+                planned_start_time:
+                  plannedStartTime,
+
+                lock_time:
+                  nowIso,
+
+                seconds_before_start:
+                  secondsBeforeStart,
+
+                horse_number:
+                  candidate
+                    .runnerNumber,
+
+                horse_name:
+                  candidate
+                    .runnerName,
+
+                horse_id:
+                  candidate
+                    .horseId,
+
+                start_lane:
+                  candidate
+                    .startLane,
+
+                start_method:
+                  race.startMethod,
+
+                distance_meters:
+                  race.distanceMeters,
+
+                starters:
+                  diamantenEvaluation
+                    .activeStarters,
+
+                start_odds:
+                  candidate
+                    .startOdds,
+
+                locked_win_odds:
+                  candidate
+                    .currentWinOdds,
+
+                odds_drop_percent:
+                  candidate
+                    .oddsDropPercent,
+
+                cv_raw:
+                  candidate.cvRaw,
+
+                cv_display:
+                  candidate
+                    .cvDisplay,
+
+                strength:
+                  candidate.strength,
+
+                indicators_green:
+                  candidate
+                    .indicatorsGreen,
+
+                valid_odds_points:
+                  candidate
+                    .validOddsPoints,
+
+                stake_oren:
+                  DIAMANTEN_STAKE_SEK *
+                  100,
+
+                result_outcome:
+                  "PENDING",
+
+                result_status:
+                  "PENDING",
+
+                finish_position_official:
+                  null,
+
+                official_win_odds_decimal:
+                  null,
+
+                place_odds_decimal:
+                  null,
+
+                return_oren:
+                  null,
+
+                net_oren:
+                  null,
+
+                roi_pct:
+                  null,
+
+                automatic_model_bet:
+                  true,
+
+                user_actually_played:
+                  false,
+
+                result_source:
+                  null,
+
+                result_updated_at:
+                  null,
+
+                created_at:
+                  nowIso,
+
+                updated_at:
+                  nowIso,
+              }),
+            );
+
+          const {
+            error:
+              diamantenBetError,
+          } = await supabase
+            .from(
+              "win_place_model_bets",
+            )
+            .upsert(
+              diamantenBetRows,
+              {
+                onConflict:
+                  "race_id,rule_version,market,signal_phase,horse_number",
+              },
+            );
+
+          if (
+            diamantenBetError
+          ) {
+            throw new Error(
+              `Could not upsert Diamanten bets ${race.id}: ${diamantenBetError.message}`,
+            );
+          }
+
+          summary
+            .diamantenBetsCreated +=
+            diamantenBetRows.length;
+        }
+
+        existingWinPlaceEvalKeys.add(
+          diamantenRaceKey,
+        );
+      }
+
 
       /*
        * SNIGEL KOMMER fortsätter i samma T-90-pipeline,
@@ -3135,7 +3832,7 @@ async function runCron(env: Env) {
               },
               {
                 onConflict:
-                  "race_id,rule_version,market,signal_phase",
+                  "race_id,rule_version,market,signal_phase,horse_number",
               },
             );
 
@@ -3580,7 +4277,7 @@ async function runCron(env: Env) {
               },
               {
                 onConflict:
-                  "race_id,rule_version,market,signal_phase",
+                  "race_id,rule_version,market,signal_phase,horse_number",
               },
             );
 
@@ -4037,7 +4734,7 @@ async function runCron(env: Env) {
               },
               {
                 onConflict:
-                  "race_id,rule_version,market,signal_phase",
+                  "race_id,rule_version,market,signal_phase,horse_number",
               },
             );
 
@@ -4437,7 +5134,7 @@ async function runCron(env: Env) {
               },
               {
                 onConflict:
-                  "race_id,rule_version,market,signal_phase",
+                  "race_id,rule_version,market,signal_phase,horse_number",
               },
             );
 
@@ -4754,13 +5451,161 @@ async function runCron(env: Env) {
         const plannedStartTime =
           race.startTime;
 
-        if (
-          !plannedStartTime ||
-          !isInSnigelKommerSignalWindow(
+        if (!plannedStartTime) {
+          continue;
+        }
+
+        const inSnigelPushWindow =
+          isInSnigelKommerSignalWindow(
             plannedStartTime,
             startMs,
-          )
+          );
+
+        const inDiamantenPushWindow =
+          isDiamantenProspectiveDate(
+            raceDate,
+          ) &&
+          isInDiamantenSignalWindow(
+            plannedStartTime,
+            startMs,
+          );
+
+        if (
+          !inSnigelPushWindow &&
+          !inDiamantenPushWindow
         ) {
+          continue;
+        }
+
+        /*
+         * DIAMANTEN:
+         * en push per lopp, med alla kvalificerade
+         * WIN-kandidater i samma notis.
+         */
+        if (inDiamantenPushWindow) {
+          try {
+            const {
+              data:
+                diamantenResult,
+              error:
+                diamantenResultError,
+            } = await supabase
+              .from(
+                "win_place_race_evaluations",
+              )
+              .select(
+                "decision,snapshot_json",
+              )
+              .eq(
+                "race_id",
+                race.id,
+              )
+              .eq(
+                "rule_version",
+                DIAMANTEN_RULE_VERSION,
+              )
+              .eq(
+                "signal_phase",
+                "LIVE",
+              )
+              .maybeSingle();
+
+            if (
+              diamantenResultError
+            ) {
+              throw new Error(
+                `Could not load Diamanten signal: ${diamantenResultError.message}`,
+              );
+            }
+
+            const diamantenRow =
+              diamantenResult as {
+                decision: string;
+
+                snapshot_json:
+                  | {
+                      candidates?:
+                        WinPlaceCandidate[];
+                    }
+                  | null;
+              } | null;
+
+            const diamantenCandidates =
+              diamantenRow?.decision ===
+                "PLAY"
+                ? (
+                    diamantenRow
+                      .snapshot_json
+                      ?.candidates ??
+                    []
+                  )
+                : [];
+
+            if (
+              diamantenCandidates.length >
+              0
+            ) {
+              const delivery =
+                await deliverDiamantenNotification({
+                  supabase,
+                  vapid,
+
+                  raceDate,
+
+                  raceId:
+                    race.id,
+
+                  trackId:
+                    track.id,
+
+                  trackName:
+                    track.name,
+
+                  raceNumber:
+                    race.raceNumber,
+
+                  plannedStartTime,
+
+                  candidates:
+                    diamantenCandidates,
+
+                  nowIso,
+                });
+
+              if (
+                delivery.claimed
+              ) {
+                summary
+                  .notificationsClaimed +=
+                  1;
+              }
+
+              summary
+                .notificationsSent +=
+                delivery.sent;
+
+              summary
+                .notificationSubscriptionsAttempted +=
+                delivery.attempted;
+
+              summary
+                .notificationSubscriptionsFailed +=
+                delivery.failed;
+            }
+          } catch (
+            diamantenNotificationError
+          ) {
+            console.warn(
+              `Diamanten notification failed for race ${race.id}: ${
+                diamantenNotificationError instanceof Error
+                  ? diamantenNotificationError.message
+                  : "Unknown error"
+              }`,
+            );
+          }
+        }
+
+        if (!inSnigelPushWindow) {
           continue;
         }
 
@@ -4905,6 +5750,7 @@ async function runCron(env: Env) {
         GRODAN_RULE_VERSION,
         ENSAMVARGEN_RULE_VERSION,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
+        DIAMANTEN_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("result_outcome", "PENDING")
