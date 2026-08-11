@@ -45,6 +45,9 @@ const GRODAN_RULE_VERSION =
 const ENSAMVARGEN_RULE_VERSION =
   "ENSAMVARGEN_V1.0";
 
+const DIAMANTEN_RULE_VERSION =
+  "DIAMANTEN_V1.0";
+
 function kronor(oren: number) {
   return new Intl.NumberFormat("sv-SE", {
     maximumFractionDigits: 0,
@@ -159,6 +162,18 @@ function strategyInformation(
       description:
         "Exakt en häst sänks 5,00–9,99 % · låsodds minst 6,00 · vinnare",
       className: "is-snigel",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    DIAMANTEN_RULE_VERSION
+  ) {
+    return {
+      title: "💎 Diamanten",
+      description:
+        "2140 m · 7–10 startande · låsodds 6,00–25,00 · exakt styrka 3/6 · vinnare",
+      className: "is-diamanten",
     };
   }
 
@@ -425,6 +440,16 @@ export function WinPlaceJournalPanel({
         description:
           "Exakt en häst sänks 5,00–9,99 % · låsodds minst 6,00 · endast vinnare",
         className: "is-snigel",
+        winOnly: true,
+        placeOnly: false,
+      },
+      {
+        ruleVersion:
+          DIAMANTEN_RULE_VERSION,
+        title: "💎 Diamanten",
+        description:
+          "2140 m · 7–10 startande · låsodds 6,00–25,00 · exakt styrka 3/6 · endast vinnare",
+        className: "is-diamanten",
         winOnly: true,
         placeOnly: false,
       },
@@ -708,8 +733,9 @@ export function WinPlaceJournalPanel({
           Kräfta i buren och den ordinarie
           mest-sänkta-regeln redovisas separat.
           Snigel kommer och Jupiter följs
-          framåt från 10 augusti och
-          redovisas separat.
+          framåt från 10 augusti.
+          Diamanten följs framåt från
+          11 augusti och redovisas separat.
         </span>
       </div>
 
