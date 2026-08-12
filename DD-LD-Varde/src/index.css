@@ -3495,3 +3495,18 @@ body,
     font-size: 14px;
   }
 }
+
+.locked-strategy-symbol {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  line-height: 1;
+  vertical-align: middle;
+}

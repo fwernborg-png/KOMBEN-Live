@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "./lib/supabase";
 import { PLACE_RULE_CONFIG_V1, getRaceLockTimeMs } from "./placeModel/config";
-import { SMALLKARAMELL_RULE_CONFIG_V1 } from "./winPlaceModel/config";
+import {
+  BIG_B_MONSTER_RULE_CONFIG_V1,
+  SMALLKARAMELL_RULE_CONFIG_V1,
+  WIN_PLACE_RULE_CONFIG_V1,
+} from "./winPlaceModel/config";
 import { applySettledResult, computePlaceStats, orenToSek, sekToOren } from "./placeModel/economy";
 import { buildPlaceBetsCsv, buildPlaceEvaluationsCsv } from "./placeModel/csv";
 import { evaluatePlaceModelAtLock } from "./placeModel/engine";
@@ -44,6 +48,7 @@ import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 import { DailyResultPeek } from "./winPlaceModel/DailyResultPeek";
 import { loadWinPlaceBetsByDate } from "./winPlaceModel/repository";
 import { ResearchHistoryPanel } from "./researchHistory/ResearchHistoryPanel";
+import { loadResearchHistoryRows } from "./researchHistory/repository";
 import { SpeedAnalysisPanel } from "./speedAnalysis/SpeedAnalysisPanel";
 import {
   findSpeedAnalysisMarker,
@@ -232,6 +237,8 @@ const AUTO_SELECTIONS_STORAGE_KEY = "komben-live-auto-selections-v1";
 const TRACK_RACE_SELECTIONS_STORAGE_KEY = "komben-live-track-race-selections-v1";
 const PLACE_EVALUATIONS_CACHE_KEY = "komben-live-place-evaluations-cache-v1";
 const PLACE_BETS_CACHE_KEY = "komben-live-place-bets-cache-v1";
+const LOCKED_STRENGTH_STORAGE_KEY =
+  "komben-live-locked-strength-v1";
 const ALL_RACES_REFRESH_SECONDS = 60;
 const MAX_HISTORY_POINTS = 720;
 const TVILLING_STAKE = 100;
@@ -242,6 +249,12 @@ const SNIGEL_KOMMER_RULE_VERSION =
 
 const JUPITER_RULE_VERSION =
   "JUPITER_V1.0";
+
+const GRODAN_RULE_VERSION =
+  "GRODAN_V1.0";
+
+const ENSAMVARGEN_RULE_VERSION =
+  "ENSAMVARGEN_V1.0";
 
 type AutoSelection = {
   raceId: string;
@@ -363,6 +376,20 @@ type RaceOddsCollectionMeta = {
   lastOddsPointTimestampMs: number | null;
   actualSignalLockTimeMs: number | null;
   usedOddsPointTimestampMs: number | null;
+};
+
+type LockedStrengthSnapshot = {
+  strength: number;
+  lockedAtMs: number;
+  source: "LOCAL" | "BET" | "RESEARCH";
+  ruleVersion: string | null;
+  secondsBeforeStart: number | null;
+};
+
+type LockedStrategyMarker = {
+  ruleVersion: string;
+  symbol: string;
+  label: string;
 };
 
 const WORKER_API =
@@ -1604,6 +1631,127 @@ function buildTrendRunnersForRace(race: Race, oddsHistory: OddsHistory): TrendRu
   });
 }
 
+function buildTrendRunnersForRaceAtCutoff(
+  race: Race,
+  oddsHistory: OddsHistory,
+  cutoffMs: number,
+): TrendRunner[] {
+  return race.runners.map((runner) => {
+    const storedHistory =
+      oddsHistory[
+        runnerKey(
+          race.id,
+          runner.number,
+        )
+      ] ?? [];
+
+    const history =
+      historyInsideLastHour(
+        storedHistory,
+        race.startTime,
+      ).filter(
+        (point) =>
+          point.timestamp <= cutoffMs,
+      );
+
+    const firstOdds =
+      pickFirstOddsRawInCollectionWindow(
+        history,
+      );
+
+    const currentOdds =
+      history.length > 0
+        ? history[
+            history.length - 1
+          ].odds
+        : null;
+
+    const previousOdds =
+      history.length >= 2
+        ? history[
+            history.length - 2
+          ].odds
+        : currentOdds;
+
+    const changePercent =
+      percentChange(
+        firstOdds,
+        currentOdds,
+      );
+
+    const dropPercent =
+      calculateOddsDropPercent(
+        firstOdds,
+        currentOdds,
+      );
+
+    const latestAbsoluteChange =
+      absoluteOddsChange(
+        previousOdds,
+        currentOdds,
+      );
+
+    let direction:
+      TrendRunner["direction"] =
+        "same";
+
+    if (
+      previousOdds !== null &&
+      currentOdds !== null
+    ) {
+      if (
+        currentOdds <
+        previousOdds
+      ) {
+        direction = "down";
+      }
+
+      if (
+        currentOdds >
+        previousOdds
+      ) {
+        direction = "up";
+      }
+    }
+
+    return {
+      ...runner,
+
+      // Viktigt:
+      // Efter LOCK används aldrig
+      // runner.odds från framtiden.
+      odds: currentOdds,
+
+      firstOdds,
+      previousOdds,
+      changePercent,
+      dropPercent,
+      latestAbsoluteChange,
+      direction,
+
+      recentOdds:
+        history
+          .slice(-5)
+          .map(
+            (point) =>
+              point.odds,
+          ),
+
+      historyOdds:
+        history.map(
+          (point) =>
+            point.odds,
+        ),
+
+      samples:
+        history.length,
+
+      momentum:
+        momentumLabel(history),
+    };
+  });
+}
+
 function applyGallopOverlayToTrendRunners(args: {
   trendRunners: TrendRunner[];
   gallopCacheByHorseId: Record<number, GallopCacheEntry>;
@@ -1880,6 +2028,99 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
   };
 }
 
+function lockedRunnerKey(
+  raceDate: string,
+  trackName: string,
+  raceNumber: number,
+  runnerNumber: number,
+) {
+  return [
+    raceDate,
+    trackName.trim().toLocaleLowerCase("sv-SE"),
+    raceNumber,
+    runnerNumber,
+  ].join(":");
+}
+
+function strategyMarkerForRuleVersion(
+  ruleVersion: string,
+): LockedStrategyMarker | null {
+  if (ruleVersion === ENSAMVARGEN_RULE_VERSION) {
+    return {
+      ruleVersion,
+      symbol: "🐺",
+      label: "Ensamvargen",
+    };
+  }
+
+  if (ruleVersion === GRODAN_RULE_VERSION) {
+    return {
+      ruleVersion,
+      symbol: "🐸",
+      label: "Grodan",
+    };
+  }
+
+  if (ruleVersion === SNIGEL_KOMMER_RULE_VERSION) {
+    return {
+      ruleVersion,
+      symbol: "🐌",
+      label: "Snigel kommer",
+    };
+  }
+
+  if (ruleVersion === JUPITER_RULE_VERSION) {
+    return {
+      ruleVersion,
+      symbol: "🪐",
+      label: "Jupiter",
+    };
+  }
+
+  if (ruleVersion === DIAMANTEN_RULE_VERSION) {
+    return {
+      ruleVersion,
+      symbol: "💎",
+      label: "Diamanten",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion
+  ) {
+    return {
+      ruleVersion,
+      symbol: "👹",
+      label: "Big B Monster",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion
+  ) {
+    return {
+      ruleVersion,
+      symbol: "🦞",
+      label: "Kräfta i buren",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    WIN_PLACE_RULE_CONFIG_V1.ruleVersion
+  ) {
+    return {
+      ruleVersion,
+      symbol: "↘",
+      label: "Mest sänkta",
+    };
+  }
+
+  return null;
+}
+
 export default function App() {
   const initialLinkParamsRef = useRef<URLSearchParams | null>(
     typeof window === "undefined"
@@ -1995,6 +2236,48 @@ export default function App() {
   const [lockedDiamantenByRace, setLockedDiamantenByRace] =
     useState<Record<string, number[]>>({});
 
+  const [
+    lockedStrengthByRunner,
+    setLockedStrengthByRunner,
+  ] = useState<
+    Record<string, LockedStrengthSnapshot>
+  >(() => {
+    if (typeof window === "undefined") {
+      return {};
+    }
+
+    try {
+      const stored =
+        window.localStorage.getItem(
+          LOCKED_STRENGTH_STORAGE_KEY,
+        );
+
+      if (!stored) {
+        return {};
+      }
+
+      const parsed = JSON.parse(stored);
+
+      return parsed &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed)
+        ? parsed as Record<
+            string,
+            LockedStrengthSnapshot
+          >
+        : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [
+    lockedStrategyMarkersByRunner,
+    setLockedStrategyMarkersByRunner,
+  ] = useState<
+    Record<string, LockedStrategyMarker[]>
+  >({});
+
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
   const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
   const [tvillingMarkets, setTvillingMarkets] = useState<Record<string, TvillingRaceMarket>>({});
@@ -2029,6 +2312,7 @@ export default function App() {
   const placeLoadStartedRef = useRef(false);
 
   const smallkaramellPollBucket = Math.floor(nowMs / 30_000);
+  const researchLockPollBucket = Math.floor(nowMs / 60_000);
 
   useEffect(() => {
     let cancelled = false;
@@ -2041,6 +2325,16 @@ export default function App() {
         const nextSnigel: Record<string, number> = {};
         const nextJupiter: Record<string, number> = {};
         const nextDiamanten: Record<string, number[]> = {};
+
+        const nextLockedStrength: Record<
+          string,
+          LockedStrengthSnapshot
+        > = {};
+
+        const nextStrategyMarkers: Record<
+          string,
+          LockedStrategyMarker[]
+        > = {};
 
         for (const bet of bets) {
           if (
@@ -2082,6 +2376,92 @@ export default function App() {
               ];
             }
           }
+
+          const lockKey =
+            lockedRunnerKey(
+              bet.date,
+              bet.trackName,
+              bet.raceNumber,
+              bet.horseNumber,
+            );
+
+          const parsedLockTime =
+            Date.parse(bet.lockTime);
+
+          const lockSnapshot:
+            LockedStrengthSnapshot = {
+              strength: bet.strength,
+              lockedAtMs:
+                Number.isFinite(parsedLockTime)
+                  ? parsedLockTime
+                  : Date.now(),
+              source: "BET",
+              ruleVersion: bet.ruleVersion,
+              secondsBeforeStart:
+                bet.secondsBeforeStart,
+            };
+
+          const existingBetSnapshot =
+            nextLockedStrength[lockKey];
+
+          const newIsDiamanten =
+            bet.ruleVersion ===
+            DIAMANTEN_RULE_VERSION;
+
+          const oldIsDiamanten =
+            existingBetSnapshot?.ruleVersion ===
+            DIAMANTEN_RULE_VERSION;
+
+          const newDistanceToTarget =
+            Math.abs(
+              bet.secondsBeforeStart - 90,
+            );
+
+          const oldDistanceToTarget =
+            existingBetSnapshot
+              ?.secondsBeforeStart === null ||
+            existingBetSnapshot
+              ?.secondsBeforeStart === undefined
+              ? Number.POSITIVE_INFINITY
+              : Math.abs(
+                  existingBetSnapshot
+                    .secondsBeforeStart - 90,
+                );
+
+          if (
+            !existingBetSnapshot ||
+            (newIsDiamanten &&
+              !oldIsDiamanten) ||
+            (!oldIsDiamanten &&
+              newDistanceToTarget <
+                oldDistanceToTarget)
+          ) {
+            nextLockedStrength[lockKey] =
+              lockSnapshot;
+          }
+
+          const strategyMarker =
+            strategyMarkerForRuleVersion(
+              bet.ruleVersion,
+            );
+
+          if (strategyMarker) {
+            const existingMarkers =
+              nextStrategyMarkers[lockKey] ?? [];
+
+            if (
+              !existingMarkers.some(
+                (item) =>
+                  item.ruleVersion ===
+                  strategyMarker.ruleVersion,
+              )
+            ) {
+              nextStrategyMarkers[lockKey] = [
+                ...existingMarkers,
+                strategyMarker,
+              ];
+            }
+          }
         }
 
         setLockedSmallkaramellByRace((current) => ({
@@ -2103,6 +2483,50 @@ export default function App() {
           ...current,
           ...nextDiamanten,
         }));
+
+        setLockedStrategyMarkersByRunner(
+          nextStrategyMarkers,
+        );
+
+        setLockedStrengthByRunner(
+          (current) => {
+            let changed = false;
+            const merged = { ...current };
+
+            for (
+              const [key, snapshot] of
+              Object.entries(
+                nextLockedStrength,
+              )
+            ) {
+              const existing = merged[key];
+
+              if (
+                existing?.source ===
+                "RESEARCH"
+              ) {
+                continue;
+              }
+
+              if (
+                !existing ||
+                existing.strength !==
+                  snapshot.strength ||
+                existing.source !==
+                  snapshot.source ||
+                existing.ruleVersion !==
+                  snapshot.ruleVersion
+              ) {
+                merged[key] = snapshot;
+                changed = true;
+              }
+            }
+
+            return changed
+              ? merged
+              : current;
+          },
+        );
       })
       .catch((loadError) => {
         if (cancelled) return;
@@ -2116,6 +2540,201 @@ export default function App() {
       cancelled = true;
     };
   }, [date, smallkaramellPollBucket]);
+
+  useEffect(() => {
+    const researchTrack =
+      tracks.find(
+        (track) =>
+          String(track.id) === trackId,
+      ) ?? null;
+
+    const researchRace =
+      races.find(
+        (race) =>
+          String(race.id) ===
+          selectedRaceId,
+      ) ??
+      races.find(
+        (race) =>
+          String(race.raceNumber) ===
+          selectedRaceId,
+      ) ??
+      null;
+
+    if (
+      !researchTrack ||
+      !researchRace?.startTime
+    ) {
+      return;
+    }
+
+    const currentNowMs = Date.now();
+
+    const lockTimeMs =
+      getRaceLockTimeMs(
+        researchRace.startTime,
+        PLACE_RULE_CONFIG_V1,
+      );
+
+    if (
+      !Number.isFinite(lockTimeMs) ||
+      currentNowMs < lockTimeMs
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadResearchHistoryRows({
+      dateFrom: date,
+      dateTo: date,
+
+      selection: "ALL_RUNNERS",
+
+      startMethod: "",
+      distanceMeters: null,
+
+      trackName: researchTrack.name,
+      driverName: "",
+
+      startLane: null,
+      laneGroup: "ALL",
+
+      raceCategory: "",
+      raceClassCode: "",
+
+      earningsMin: null,
+      earningsMax: null,
+
+      minStarters: null,
+      maxStarters: null,
+
+      minStrength: null,
+      maxStrength: null,
+
+      krTopFour: null,
+      stTopFour: null,
+      driverTopFour: null,
+      spTopFour: null,
+      gallopTopFour: null,
+      oddsIndicatorTopFour: null,
+
+      minDropPercent: null,
+      maxDropPercent: null,
+
+      minStartOdds: null,
+      maxStartOdds: null,
+
+      minLockOdds: null,
+      maxLockOdds: null,
+
+      completeOnly: false,
+      limit: 500,
+    })
+      .then((rows) => {
+        if (cancelled) return;
+
+        setLockedStrengthByRunner(
+          (current) => {
+            let changed = false;
+            const merged = { ...current };
+
+            for (const row of rows) {
+              if (
+                row.strengthTotal === null ||
+                !row.indicatorDataComplete
+              ) {
+                continue;
+              }
+
+              const key =
+                lockedRunnerKey(
+                  row.raceDate,
+                  row.trackName,
+                  row.raceNumber,
+                  row.runnerNumber,
+                );
+
+              const plannedStartMs =
+                row.plannedStartTime
+                  ? Date.parse(
+                      row.plannedStartTime,
+                    )
+                  : Number.NaN;
+
+              const snapshot:
+                LockedStrengthSnapshot = {
+                  strength:
+                    row.strengthTotal,
+                  lockedAtMs:
+                    Number.isFinite(
+                      plannedStartMs,
+                    )
+                      ? plannedStartMs -
+                        90_000
+                      : 0,
+                  source: "RESEARCH",
+                  ruleVersion: null,
+                  secondsBeforeStart: null,
+                };
+
+              const existing =
+                merged[key];
+
+              if (
+                !existing ||
+                existing.source !==
+                  "RESEARCH" ||
+                existing.strength !==
+                  snapshot.strength
+              ) {
+                merged[key] = snapshot;
+                changed = true;
+              }
+            }
+
+            return changed
+              ? merged
+              : current;
+          },
+        );
+      })
+      .catch((researchError) => {
+        if (cancelled) return;
+
+        console.warn(
+          "Kunde inte läsa fryst LOCK-styrka",
+          researchError,
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    date,
+    researchLockPollBucket,
+    trackId,
+    selectedRaceId,
+    tracks,
+    races,
+  ]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        LOCKED_STRENGTH_STORAGE_KEY,
+        JSON.stringify(
+          lockedStrengthByRunner,
+        ),
+      );
+    } catch (storageError) {
+      console.warn(
+        "Kunde inte spara fryst LOCK-styrka",
+        storageError,
+      );
+    }
+  }, [lockedStrengthByRunner]);
 
   const activatePushNotifications = useCallback(async () => {
     if (
@@ -2520,6 +3139,204 @@ export default function App() {
     }, [selectedRace, oddsHistory, gallopCacheByHorseId, nowMs]);
 
   const raceInsights = useMemo(() => buildRaceInsights(trendRunners), [trendRunners]);
+
+  useEffect(() => {
+    if (
+      !selectedTrack ||
+      !selectedRace?.startTime
+    ) {
+      return;
+    }
+
+    const lockTimeMs =
+      getRaceLockTimeMs(
+        selectedRace.startTime,
+        PLACE_RULE_CONFIG_V1,
+      );
+
+    if (
+      !Number.isFinite(lockTimeMs) ||
+      nowMs < lockTimeMs
+    ) {
+      return;
+    }
+
+    /*
+     * Bygg en historisk kopia av loppet
+     * med ENDAST oddspunkter som fanns
+     * vid eller före LOCK.
+     *
+     * Det gör att en browser som vaknar
+     * efter T-90 fortfarande kan återskapa
+     * samma ODD-indikator som vid låsningen.
+     */
+    const lockBaseRunners =
+      buildTrendRunnersForRaceAtCutoff(
+        selectedRace,
+        oddsHistory,
+        lockTimeMs,
+      );
+
+    /*
+     * G får bara använda cache-information
+     * som faktiskt fanns senast vid LOCK.
+     * Data hämtad efteråt får alltså inte
+     * ändra den frysta styrkan.
+     */
+    const gallopCacheAtLock:
+      Record<
+        number,
+        GallopCacheEntry
+      > = {};
+
+    for (
+      const [
+        horseIdText,
+        entry,
+      ] of Object.entries(
+        gallopCacheByHorseId,
+      )
+    ) {
+      const horseId =
+        Number(horseIdText);
+
+      if (
+        Number.isFinite(horseId) &&
+        entry.fetchedAtMs <=
+          lockTimeMs
+      ) {
+        gallopCacheAtLock[
+          horseId
+        ] = entry;
+      }
+    }
+
+    const lockTrendRunners =
+      applyGallopOverlayToTrendRunners({
+        trendRunners:
+          lockBaseRunners,
+
+        gallopCacheByHorseId:
+          gallopCacheAtLock,
+
+        nowMs:
+          lockTimeMs,
+      });
+
+    const lockInsights =
+      buildRaceInsights(
+        lockTrendRunners,
+      );
+
+    setLockedStrengthByRunner(
+      (current) => {
+        let changed = false;
+        const merged = {
+          ...current,
+        };
+
+        for (
+          const runner of
+          lockTrendRunners
+        ) {
+          if (
+            runner.scratched
+          ) {
+            continue;
+          }
+
+          /*
+           * Utan en riktig oddsutveckling
+           * till LOCK fryser vi inte ett
+           * gissat värde.
+           *
+           * När historiken synkas kommer
+           * effekten att köras igen.
+           */
+          if (
+            runner.firstOdds ===
+              null ||
+            runner.odds ===
+              null ||
+            runner.changePercent ===
+              null
+          ) {
+            continue;
+          }
+
+          const key =
+            lockedRunnerKey(
+              date,
+              selectedTrack.name,
+              selectedRace.raceNumber,
+              runner.number,
+            );
+
+          const existing =
+            merged[key];
+
+          /*
+           * BET är faktisk strategilåsning.
+           * RESEARCH är serverns LOCK.
+           * De får aldrig skrivas över av
+           * den lokala rekonstruktionen.
+           */
+          if (
+            existing?.source ===
+              "BET" ||
+            existing?.source ===
+              "RESEARCH"
+          ) {
+            continue;
+          }
+
+          const lockStrength =
+            lockInsights.byRunner[
+              runner.number
+            ]?.strength ?? 0;
+
+          if (
+            existing?.source ===
+              "LOCAL" &&
+            existing.strength ===
+              lockStrength
+          ) {
+            continue;
+          }
+
+          merged[key] = {
+            strength:
+              lockStrength,
+
+            lockedAtMs:
+              lockTimeMs,
+
+            source:
+              "LOCAL",
+
+            ruleVersion:
+              null,
+
+            secondsBeforeStart:
+              90,
+          };
+
+          changed = true;
+        }
+
+        return changed
+          ? merged
+          : current;
+      },
+    );
+  }, [
+    date,
+    selectedTrack,
+    selectedRace,
+    nowMs,
+    oddsHistory,
+    gallopCacheByHorseId,
+  ]);
 
   useEffect(() => {
     try {
@@ -5365,7 +6182,31 @@ export default function App() {
   }
 
   function runnerStrength(runner: TrendRunner) {
-    return raceInsights.byRunner[runner.number]?.strength ?? 0;
+    if (
+      selectedTrack &&
+      selectedRace
+    ) {
+      const key =
+        lockedRunnerKey(
+          date,
+          selectedTrack.name,
+          selectedRace.raceNumber,
+          runner.number,
+        );
+
+      const locked =
+        lockedStrengthByRunner[key];
+
+      if (locked) {
+        return locked.strength;
+      }
+    }
+
+    return (
+      raceInsights.byRunner[
+        runner.number
+      ]?.strength ?? 0
+    );
   }
 
           function renderOverviewTab() {
@@ -6055,6 +6896,30 @@ export default function App() {
                         const isExpanded = expandedRunnerKey === rowKey;
                         const consistency = runnerInfo?.consistency;
 
+                        const lockedRowKey =
+                          selectedTrack
+                            ? lockedRunnerKey(
+                                date,
+                                selectedTrack.name,
+                                selectedRace.raceNumber,
+                                runner.number,
+                              )
+                            : "";
+
+                        const lockedStrategyMarkers =
+                          lockedRowKey
+                            ? lockedStrategyMarkersByRunner[
+                                lockedRowKey
+                              ] ?? []
+                            : [];
+
+                        const lockedStrengthSnapshot =
+                          lockedRowKey
+                            ? lockedStrengthByRunner[
+                                lockedRowKey
+                              ] ?? null
+                            : null;
+
                         const officialFinishIndex =
                           selectedRace.finishOrder.indexOf(
                             runner.number,
@@ -6197,36 +7062,29 @@ export default function App() {
                                     </span>
                                   ) : null}
 
-                                  {isLockedSmallkaramell ||
-                                  isPotentialSmallkaramell ? (
+                                  {isPotentialSmallkaramell &&
+                                  !isLockedSmallkaramell ? (
                                     <span
-                                      className={`inline-tag smallkaramell-row-tag ${
-                                        isLockedSmallkaramell ? "is-locked" : ""
-                                      }`}
-                                      title={
-                                        isLockedSmallkaramell
-                                          ? "Kräfta i buren – låst kandidat"
-                                          : "Kräfta i buren – potentiell vinnare"
-                                      }
-                                      aria-label={
-                                        isLockedSmallkaramell
-                                          ? "Kräfta i buren, låst kandidat"
-                                          : "Kräfta i buren, potentiell vinnare"
-                                      }
+                                      className="inline-tag smallkaramell-row-tag"
+                                      title="Kräfta i buren – potentiell vinnare"
+                                      aria-label="Kräfta i buren, potentiell vinnare"
                                     >
                                       🦞 KRÄFTA I BUREN
                                     </span>
                                   ) : null}
 
-                                  {isLockedDiamanten ? (
-                                    <span
-                                      className="inline-tag diamanten-row-tag"
-                                      title="Diamanten – låst vinnarspel 100 kr"
-                                      aria-label="Diamanten, låst vinnarspel"
-                                    >
-                                      💎 DIAMANTEN
-                                    </span>
-                                  ) : null}
+                                  {lockedStrategyMarkers.map(
+                                    (marker) => (
+                                      <span
+                                        key={`${rowKey}-${marker.ruleVersion}`}
+                                        className="locked-strategy-symbol"
+                                        title={`${marker.label} – låst signal`}
+                                        aria-label={`${marker.label}, låst signal`}
+                                      >
+                                        {marker.symbol}
+                                      </span>
+                                    ),
+                                  )}
 
                                   <strong title={runner.name}>
                                     {runner.name}
@@ -6258,9 +7116,11 @@ export default function App() {
                                           : "strength-cell--neutral"
                                 }`}
                                 title={
-                                  runnerStrength(runner) === 3
-                                    ? "Exakt styrka 3/6 – Diamantens sweet spot"
-                                    : `Styrka: ${runnerStrength(runner)} av 6. Klicka på raden för detaljer.`
+                                  lockedStrengthSnapshot
+                                    ? `Låst styrka: ${runnerStrength(runner)} av 6`
+                                    : runnerStrength(runner) === 3
+                                      ? "Exakt styrka 3/6 – Diamantens sweet spot"
+                                      : `Styrka: ${runnerStrength(runner)} av 6. Klicka på raden för detaljer.`
                                 }
                               >
                                 <strong>
