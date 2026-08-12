@@ -69,7 +69,10 @@ import {
   evaluateResearchTrialSignals,
   isResearchTrialSignalDate,
 } from "./researchTrialSignals";
-import { PLACE_RULE_CONFIG_V1 } from "../../src/placeModel/config";
+import {
+  PLACE_RULE_CONFIG_V1,
+  PLACE_V2_RETIRED,
+} from "../../src/placeModel/config";
 import { evaluatePlaceModelAtLock } from "../../src/placeModel/engine";
 import { fetchHorseGallopPercentWithRetry } from "./gallopRetry";
 import { buildModelBetFromEvaluation, settleModelBet } from "../../src/placeModel/workflow";
@@ -5151,6 +5154,12 @@ async function runCron(env: Env) {
       }
     }
 
+    /*
+     * PLACE_V2.0 är pensionerad.
+     * Ingen ny evaluation eller modellbet skapas.
+     * Historiska bets ligger kvar och settlement körs fortfarande nedan.
+     */
+    if (!PLACE_V2_RETIRED) {
     const { data: existingEvalRows, error: existingEvalError } = await supabase
       .from("place_race_evaluations")
       .select("race_id,rule_version")
@@ -5435,6 +5444,8 @@ async function runCron(env: Env) {
           existingBetByKey.set(raceKey, bet);
         }
       }
+    }
+
     }
 
     if (vapid) {
