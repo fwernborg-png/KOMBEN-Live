@@ -6956,6 +6956,13 @@ export default function App() {
                               <span className={`number-pill ${isWatched || isLockedPlay || isBiggestDrop || isPotentialSmallkaramell || isLockedSmallkaramell || isLockedDiamanten ? "is-highlight" : ""}`}>{runner.number}</span>
                               <span className="runner-name-cell">
                                 <span className="runner-title-line">
+                                  <strong
+                                    className="runner-horse-name"
+                                    title={runner.name}
+                                  >
+                                    {runner.name}
+                                  </strong>
+
                                   {podiumPosition ? (
                                     <span
                                       className={`finish-position-badge finish-${podiumPosition}`}
@@ -7086,11 +7093,14 @@ export default function App() {
                                     ),
                                   )}
 
-                                  <strong title={runner.name}>
-                                    {runner.name}
-                                  </strong>
                                 </span>
-                                <small>{runner.driver}</small>
+
+                                <small
+                                  className="runner-driver-line"
+                                  title={runner.driver}
+                                >
+                                  {runner.driver || "Kusk saknas"}
+                                </small>
                               </span>
                               <span>{formatOdds(runner.firstOdds)}</span>
                               <span>{formatOdds(runner.odds)}</span>
