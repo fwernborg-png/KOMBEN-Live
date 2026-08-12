@@ -5753,7 +5753,9 @@ async function runCron(env: Env) {
         DIAMANTEN_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
-      .eq("result_outcome", "PENDING")
+      .or(
+        "result_outcome.eq.PENDING,and(result_outcome.eq.HIT,result_status.eq.SAKNAR_ODDS)",
+      )
       .gte("date", lowerDate)
       .order("date", { ascending: true });
 
@@ -5810,6 +5812,19 @@ async function runCron(env: Env) {
           race.status ?? "",
         );
 
+      const vpPayload =
+        race.finishOrder.length > 0
+          ? await fetchJsonOptional(
+              `${apiBaseUrl}/games/vp_${firstBet.date}_${firstBet.track_id}_${firstBet.race_number}`,
+              runController.signal,
+            ).catch(() => null)
+          : null;
+
+      const vpPlaceOddsByRunner =
+        vpPayload
+          ? extractVpPlaceOddsRawByRunner(vpPayload)
+          : new Map<number, number>();
+
       for (const bet of bets) {
         const runner =
           race.runners.find(
@@ -5830,7 +5845,12 @@ async function runCron(env: Env) {
           toDecimalOdds(runner?.oddsRaw ?? null);
 
         const placeOddsDecimal =
-          toDecimalOdds(runner?.placeOddsRaw ?? null);
+          toDecimalOdds(runner?.placeOddsRaw ?? null) ??
+          toDecimalOdds(
+            vpPlaceOddsByRunner.get(
+              bet.horse_number,
+            ) ?? null,
+          );
 
         const activeStartersAtResult =
           race.runners.filter(
@@ -5893,7 +5913,9 @@ async function runCron(env: Env) {
             updated_at: settledAt,
           })
           .eq("id", bet.id)
-          .eq("result_outcome", "PENDING");
+          .or(
+            "result_outcome.eq.PENDING,and(result_outcome.eq.HIT,result_status.eq.SAKNAR_ODDS)",
+          );
 
         if (updateError) {
           throw new Error(
