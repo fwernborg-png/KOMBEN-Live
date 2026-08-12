@@ -12,6 +12,10 @@ export type PlaceRuleConfig = {
   hitMaxOfficialFinishPosition: number;
 };
 
+// PLACE_V2.0 är pensionerad.
+ // Historik och settlement behålls, men inga nya signaler/spel ska skapas.
+export const PLACE_V2_RETIRED = true;
+
 export const PLACE_RULE_CONFIG_V1: PlaceRuleConfig = {
   ruleVersion: "PLACE_V2.0",
   collectionStartMinutesBeforeRace: 60,

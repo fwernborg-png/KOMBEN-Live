@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { supabase } from "./lib/supabase";
-import { PLACE_RULE_CONFIG_V1, getRaceLockTimeMs } from "./placeModel/config";
+import {
+  PLACE_RULE_CONFIG_V1,
+  PLACE_V2_RETIRED,
+  getRaceLockTimeMs,
+} from "./placeModel/config";
 import {
   BIG_B_MONSTER_RULE_CONFIG_V1,
   SMALLKARAMELL_RULE_CONFIG_V1,
@@ -3766,6 +3770,7 @@ export default function App() {
   const candidates = useMemo(() => rankCandidates(trendRunners), [trendRunners]);
 
   const selectedRacePlacePreview = useMemo(() => {
+    if (PLACE_V2_RETIRED) return null;
     if (!selectedTrack || !selectedRace || !selectedRace.startTime) return null;
 
     const placeRace = raceToPlaceRaceInput({ race: selectedRace, track: selectedTrack, date });
@@ -5382,6 +5387,7 @@ export default function App() {
   }, [tracks.length, Object.keys(racesByTrack).length, date]);
 
   useEffect(() => {
+    if (PLACE_V2_RETIRED) return;
     if (PLACE_AUTOMATIC_WRITES_ARE_SERVER_OWNED) return;
     if (!placeJournalLoaded) return;
     if (!selectedTrack || !races.length) return;
@@ -7740,6 +7746,8 @@ export default function App() {
 
         <WinPlaceJournalPanel date={date} mode="journal" />
 
+        {!PLACE_V2_RETIRED ? (
+          <>
         <div className="panel-header-row" style={{ marginTop: 18 }}>
           <div>
             <p style={s.kicker}>ENDAST PLATS</p>
@@ -7876,6 +7884,8 @@ export default function App() {
             </article>
           )) : <p style={s.muted}>Inga platsspel matchar filtreringen.</p>}
         </div>
+          </>
+        ) : null}
       </section>
     );
   }
@@ -7898,6 +7908,8 @@ export default function App() {
 
         <WinPlaceJournalPanel date={date} mode="stats" />
 
+        {!PLACE_V2_RETIRED ? (
+          <>
         <div className="panel-header-row" style={{ marginTop: 22 }}>
           <div>
             <p style={s.kicker}>ENDAST PLATS</p>
@@ -7923,6 +7935,8 @@ export default function App() {
           <div className="mini-stat-card"><span>Traffsvit nu/langst</span><strong>{placeStreaks.currentHitStreak}/{placeStreaks.longestHitStreak}</strong></div>
           <div className="mini-stat-card"><span>Forlustsvit nu/langst</span><strong>{placeStreaks.currentLossStreak}/{placeStreaks.longestLossStreak}</strong></div>
         </div>
+          </>
+        ) : null}
       </section>
     );
   }
