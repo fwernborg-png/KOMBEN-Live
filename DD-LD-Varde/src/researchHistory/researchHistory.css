@@ -2065,3 +2065,298 @@
       1fr 1fr;
   }
 }
+
+
+/* GALLOP READABILITY REFRESH V2 */
+
+/* Sportval */
+.research-sport-tabs {
+  border-color: #d8e2ef;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(25, 48, 82, 0.06);
+}
+
+.research-sport-tabs button {
+  color: #60748f;
+}
+
+.research-sport-tabs button.is-active {
+  color: #123d75;
+  background: #eaf2ff;
+  box-shadow:
+    inset 0 0 0 1px #c9dcf7;
+}
+
+/* Själva galoppsidan */
+.research-dashboard-light.research-gallop-page {
+  color: #17324f;
+  background: #f5f7fb;
+}
+
+/* Behåll den mörkblå toppen som tydlig rubrikyta */
+.research-gallop-page .research-gallop-hero {
+  color: #ffffff;
+}
+
+.research-gallop-page .research-gallop-hero .research-title,
+.research-gallop-page .research-gallop-hero .research-subtitle,
+.research-gallop-page .research-gallop-hero .research-kicker {
+  color: #ffffff;
+}
+
+/* Översiktskort */
+.research-gallop-page .research-gallop-status > div {
+  border: 1px solid #dbe4ef;
+  background: #ffffff;
+  box-shadow: 0 4px 13px rgba(24, 49, 84, 0.06);
+}
+
+.research-gallop-page .research-gallop-status span {
+  color: #647892;
+}
+
+.research-gallop-page .research-gallop-status strong {
+  color: #12345c;
+}
+
+/* Resultatkorten */
+.research-gallop-page .research-gallop-market-grid article {
+  padding: 12px;
+  border: 1px solid #d8e2ef;
+  background: #ffffff;
+  box-shadow: 0 5px 15px rgba(24, 49, 84, 0.07);
+}
+
+.research-gallop-market-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.research-gallop-page
+.research-gallop-market-card-head > span {
+  color: #12a968;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.research-gallop-page
+.research-gallop-market-card-head > small {
+  margin: 0;
+  color: #75879d;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.research-gallop-market-metrics {
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.research-gallop-market-metric {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #e3e8ef;
+  border-radius: 9px;
+  background: #eef1f5;
+}
+
+.research-gallop-page
+.research-gallop-market-metric > span {
+  color: #8190a2;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.research-gallop-page
+.research-gallop-market-metric > strong {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #163456;
+  font-size: clamp(13px, 1.15vw, 16px);
+  font-weight: 900;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-gallop-market-foot {
+  margin-top: 7px;
+  color: #718399;
+  font-size: 10px;
+}
+
+.research-gallop-page .is-positive {
+  color: #08a766 !important;
+}
+
+.research-gallop-page .is-negative {
+  color: #ef334c !important;
+}
+
+/* Filterhuvud */
+.research-gallop-page .research-gallop-filter-head button {
+  color: #173b66;
+  border: 1px solid #ccd9e8;
+  background: #eaf0f7;
+}
+
+.research-gallop-page .research-gallop-filter-head small {
+  color: #6e8198;
+}
+
+/* Filteryta */
+.research-gallop-page .research-gallop-filter-grid {
+  border: 1px solid #d9e3ef;
+  background: #ffffff;
+  box-shadow: 0 4px 13px rgba(24, 49, 84, 0.05);
+}
+
+.research-gallop-page
+.research-gallop-filter-grid label > span {
+  color: #536a85;
+}
+
+.research-gallop-page
+.research-gallop-filter-grid input,
+.research-gallop-page
+.research-gallop-filter-grid select {
+  color: #17324f;
+  border: 1px solid #cbd7e5;
+  background: #ffffff;
+}
+
+.research-gallop-page
+.research-gallop-filter-grid input::placeholder {
+  color: #8190a1;
+  opacity: 1;
+}
+
+/* Fler filter */
+.research-gallop-advanced-toggle-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.research-gallop-page
+.research-gallop-advanced-toggle {
+  min-height: 34px;
+  padding: 0 12px;
+  color: #17406f;
+  border: 1px solid #cbd9e9;
+  border-radius: 8px;
+  background: #edf4fc;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.research-gallop-advanced-toggle span {
+  margin-left: 7px;
+}
+
+.research-gallop-advanced-filters {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  padding-top: 4px;
+}
+
+/* Sektioner och tabeller */
+.research-gallop-page
+.research-gallop-section-heading span,
+.research-gallop-page
+.research-gallop-section-heading small {
+  color: #6c8098;
+}
+
+.research-gallop-page
+.research-gallop-section-heading strong {
+  color: #17375f;
+}
+
+.research-gallop-page
+.research-gallop-country-table-wrap,
+.research-gallop-page
+.research-gallop-table-wrap {
+  border: 1px solid #d9e3ef;
+  background: #ffffff;
+}
+
+.research-gallop-page
+.research-gallop-country-table th,
+.research-gallop-page
+.research-gallop-table th {
+  color: #60758e;
+  border-bottom-color: #dfe7f0;
+  background: #f2f6fa;
+}
+
+.research-gallop-page
+.research-gallop-country-table td,
+.research-gallop-page
+.research-gallop-table td {
+  color: #17324f;
+  border-bottom-color: #e6edf4;
+  background: #ffffff;
+}
+
+.research-gallop-page
+.research-gallop-table td small {
+  color: #73869d;
+}
+
+.research-gallop-page .research-gallop-empty {
+  color: #17324f;
+  border-color: #cbd9e8;
+  background: #ffffff;
+}
+
+.research-gallop-page .research-gallop-empty span {
+  color: #70839a;
+}
+
+/* Tablet */
+@media (max-width: 820px) {
+  .research-gallop-advanced-filters {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Mobil */
+@media (max-width: 520px) {
+  .research-gallop-market-metrics {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .research-gallop-advanced-filters {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .research-gallop-page
+  .research-gallop-market-metric > strong {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 370px) {
+  .research-gallop-advanced-filters {
+    grid-template-columns: 1fr;
+  }
+}

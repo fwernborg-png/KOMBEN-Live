@@ -442,6 +442,11 @@ export function ResearchGallopPanel() {
   ] = useState(true);
 
   const [
+    advancedFiltersOpen,
+    setAdvancedFiltersOpen,
+  ] = useState(false);
+
+  const [
     loadedAt,
     setLoadedAt,
   ] = useState<
@@ -649,6 +654,7 @@ export function ResearchGallopPanel() {
           <p className="research-subtitle">
             Jämför länder, banor, underlag,
             handicap, vikt och oddsrörelser.
+            Varje rad motsvarar hästen i valt urval.
           </p>
         </div>
 
@@ -690,7 +696,7 @@ export function ResearchGallopPanel() {
 
         <div>
           <span>
-            Hästar
+            Urval
           </span>
 
           <strong>
@@ -712,7 +718,7 @@ export function ResearchGallopPanel() {
 
         <div>
           <span>
-            Handicapdata
+            Handicap-täckning
           </span>
 
           <strong>
@@ -728,97 +734,267 @@ export function ResearchGallopPanel() {
       </div>
 
       <div className="research-gallop-market-grid">
-        <article>
-          <span>
-            VINNARE
-          </span>
+        <article className="research-gallop-market-card">
+          <div className="research-gallop-market-card-head">
+            <span>
+              VINNARE
+            </span>
 
-          <strong
-            className={
-              roiClass(
-                summary
-                  .winnerMarket
-                  .roiPercent,
-              )
-            }
-          >
-            {formatPercent(
-              summary
-                .winnerMarket
-                .roiPercent,
-            )}
-          </strong>
+            <small>
+              {RESEARCH_STAKE_SEK} kr per spel
+            </small>
+          </div>
 
-          <small>
-            {summary.wins} vinnare ·{" "}
-            {formatMoney(
-              summary
-                .winnerMarket
-                .net,
-            )} netto
-          </small>
+          <div className="research-gallop-market-metrics">
+            <div className="research-gallop-market-metric">
+              <span>
+                Insats
+              </span>
+
+              <strong>
+                {formatMoney(
+                  summary
+                    .winnerMarket
+                    .stake,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                Åter
+              </span>
+
+              <strong>
+                {formatMoney(
+                  summary
+                    .winnerMarket
+                    .returnAmount,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                Netto
+              </span>
+
+              <strong
+                className={roiClass(
+                  summary
+                    .winnerMarket
+                    .net,
+                )}
+              >
+                {formatMoney(
+                  summary
+                    .winnerMarket
+                    .net,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                ROI
+              </span>
+
+              <strong
+                className={roiClass(
+                  summary
+                    .winnerMarket
+                    .roiPercent,
+                )}
+              >
+                {formatPercent(
+                  summary
+                    .winnerMarket
+                    .roiPercent,
+                )}
+              </strong>
+            </div>
+          </div>
+
+          <div className="research-gallop-market-foot">
+            {summary.wins} vinnare av{" "}
+            {summary.bets} spel
+          </div>
         </article>
 
-        <article>
-          <span>
-            PLATS
-          </span>
+        <article className="research-gallop-market-card">
+          <div className="research-gallop-market-card-head">
+            <span>
+              PLATS
+            </span>
 
-          <strong
-            className={
-              roiClass(
-                summary
-                  .placeMarket
-                  .roiPercent,
-              )
-            }
-          >
-            {formatPercent(
-              summary
-                .placeMarket
-                .roiPercent,
-            )}
-          </strong>
+            <small>
+              {RESEARCH_STAKE_SEK} kr per spel
+            </small>
+          </div>
 
-          <small>
-            {summary.places} plats ·{" "}
-            {formatMoney(
-              summary
-                .placeMarket
-                .net,
-            )} netto
-          </small>
+          <div className="research-gallop-market-metrics">
+            <div className="research-gallop-market-metric">
+              <span>
+                Insats
+              </span>
+
+              <strong>
+                {formatMoney(
+                  summary
+                    .placeMarket
+                    .stake,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                Åter
+              </span>
+
+              <strong>
+                {formatMoney(
+                  summary
+                    .placeMarket
+                    .returnAmount,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                Netto
+              </span>
+
+              <strong
+                className={roiClass(
+                  summary
+                    .placeMarket
+                    .net,
+                )}
+              >
+                {formatMoney(
+                  summary
+                    .placeMarket
+                    .net,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                ROI
+              </span>
+
+              <strong
+                className={roiClass(
+                  summary
+                    .placeMarket
+                    .roiPercent,
+                )}
+              >
+                {formatPercent(
+                  summary
+                    .placeMarket
+                    .roiPercent,
+                )}
+              </strong>
+            </div>
+          </div>
+
+          <div className="research-gallop-market-foot">
+            {summary.places} platser av{" "}
+            {summary.bets} spel
+          </div>
         </article>
 
-        <article>
-          <span>
-            VINNARE + PLATS
-          </span>
+        <article className="research-gallop-market-card">
+          <div className="research-gallop-market-card-head">
+            <span>
+              VINNARE + PLATS
+            </span>
 
-          <strong
-            className={
-              roiClass(
-                summary
-                  .combinedMarket
-                  .roiPercent,
-              )
-            }
-          >
-            {formatPercent(
-              summary
-                .combinedMarket
-                .roiPercent,
-            )}
-          </strong>
+            <small>
+              {RESEARCH_STAKE_SEK * 2} kr{" "}
+              {filters.selection === "ALL_RUNNERS"
+                ? "per häst"
+                : "per lopp"}
+            </small>
+          </div>
 
-          <small>
-            {formatMoney(
-              summary
-                .combinedMarket
-                .stake,
-            )} insats ·{" "}
-            {RESEARCH_STAKE_SEK} kr/marknad
-          </small>
+          <div className="research-gallop-market-metrics">
+            <div className="research-gallop-market-metric">
+              <span>
+                Insats
+              </span>
+
+              <strong>
+                {formatMoney(
+                  summary
+                    .combinedMarket
+                    .stake,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                Åter
+              </span>
+
+              <strong>
+                {formatMoney(
+                  summary
+                    .combinedMarket
+                    .returnAmount,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                Netto
+              </span>
+
+              <strong
+                className={roiClass(
+                  summary
+                    .combinedMarket
+                    .net,
+                )}
+              >
+                {formatMoney(
+                  summary
+                    .combinedMarket
+                    .net,
+                )}
+              </strong>
+            </div>
+
+            <div className="research-gallop-market-metric">
+              <span>
+                ROI
+              </span>
+
+              <strong
+                className={roiClass(
+                  summary
+                    .combinedMarket
+                    .roiPercent,
+                )}
+              >
+                {formatPercent(
+                  summary
+                    .combinedMarket
+                    .roiPercent,
+                )}
+              </strong>
+            </div>
+          </div>
+
+          <div className="research-gallop-market-foot">
+            {summary.bets} urval · två marknader
+          </div>
         </article>
       </div>
 
@@ -1096,6 +1272,30 @@ export function ResearchGallopPanel() {
             </select>
           </label>
 
+          <div className="research-gallop-advanced-toggle-row">
+            <button
+              type="button"
+              className="research-gallop-advanced-toggle"
+              onClick={() =>
+                setAdvancedFiltersOpen(
+                  (current) => !current,
+                )
+              }
+            >
+              {advancedFiltersOpen
+                ? "Färre filter"
+                : "Fler filter"}
+
+              <span>
+                {advancedFiltersOpen
+                  ? "⌃"
+                  : "⌄"}
+              </span>
+            </button>
+          </div>
+
+          {advancedFiltersOpen ? (
+            <div className="research-gallop-advanced-filters">
           <label>
             <span>
               Min startande
@@ -1343,6 +1543,8 @@ export function ResearchGallopPanel() {
               }
             />
           </label>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
