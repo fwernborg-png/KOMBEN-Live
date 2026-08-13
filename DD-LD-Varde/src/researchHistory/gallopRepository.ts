@@ -1,11 +1,109 @@
-import { supabase } from "../lib/supabase";
+import {
+  supabase,
+} from "../lib/supabase";
 
 import type {
-  ResearchHistoryFilters,
-  ResearchHistoryOptions,
   ResearchHistoryRow,
-  ResearchSelection,
 } from "./types";
+
+export type GallopSelection =
+  | "S1"
+  | "S2"
+  | "ALL_RUNNERS";
+
+export type GallopHistoryFilters = {
+  dateFrom: string;
+  dateTo: string;
+
+  selection:
+    GallopSelection;
+
+  countryCode: string;
+  trackName: string;
+  surface: string;
+
+  distanceMeters:
+    number | null;
+
+  minStarters:
+    number | null;
+
+  maxStarters:
+    number | null;
+
+  minHandicapRating:
+    number | null;
+
+  maxHandicapRating:
+    number | null;
+
+  minCarriedWeightKg:
+    number | null;
+
+  maxCarriedWeightKg:
+    number | null;
+
+  minDropPercent:
+    number | null;
+
+  maxDropPercent:
+    number | null;
+
+  minLockOdds:
+    number | null;
+
+  maxLockOdds:
+    number | null;
+
+  limit: number;
+};
+
+export type GallopHistoryOptions = {
+  minDate: string | null;
+  maxDate: string | null;
+
+  raceCount: number;
+
+  countries: string[];
+  tracks: string[];
+  surfaces: string[];
+  distances: number[];
+};
+
+export type GallopHistoryRow =
+  ResearchHistoryRow & {
+    gallopSelection:
+      GallopSelection;
+
+    countryCode: string;
+
+    surface: string | null;
+    going: string | null;
+
+    isHandicapRace:
+      boolean | null;
+
+    handicapRating:
+      number | null;
+
+    handicapRank:
+      number | null;
+
+    handicapDeltaFromTop:
+      number | null;
+
+    carriedWeightKg:
+      number | null;
+
+    weightRank:
+      number | null;
+
+    riderId:
+      string | null;
+
+    riderName:
+      string | null;
+  };
 
 type UnknownRecord =
   Record<string, unknown>;
@@ -36,29 +134,7 @@ function asNullableString(
   const parsed =
     asString(value).trim();
 
-  return parsed
-    ? parsed
-    : null;
-}
-
-function asNullableId(
-  value: unknown,
-): string | null {
-  if (
-    typeof value === "string" &&
-    value.trim() !== ""
-  ) {
-    return value.trim();
-  }
-
-  if (
-    typeof value === "number" &&
-    Number.isFinite(value)
-  ) {
-    return String(value);
-  }
-
-  return null;
+  return parsed || null;
 }
 
 function asNumber(
@@ -78,7 +154,9 @@ function asNumber(
     const parsed =
       Number(value);
 
-    return Number.isFinite(parsed)
+    return Number.isFinite(
+      parsed,
+    )
       ? parsed
       : null;
   }
@@ -107,7 +185,8 @@ function asBoolean(
 function asNullableBoolean(
   value: unknown,
 ): boolean | null {
-  return typeof value === "boolean"
+  return typeof value ===
+    "boolean"
     ? value
     : null;
 }
@@ -121,7 +200,10 @@ function asStringArray(
 
   return value
     .map(asString)
-    .map((item) => item.trim())
+    .map(
+      (item) =>
+        item.trim(),
+    )
     .filter(Boolean);
 }
 
@@ -135,29 +217,30 @@ function asNumberArray(
   return value
     .map(asNumber)
     .filter(
-      (item): item is number =>
-        item !== null,
+      (
+        value,
+      ): value is number =>
+        value !== null,
     )
     .map(Math.round);
 }
 
-function parseSelection(
+function parseGallopSelection(
   value: unknown,
-): ResearchSelection {
+): GallopSelection {
   if (
-    value === "SMOOTHEST" ||
-    value === "FAVORITE" ||
+    value === "S2" ||
     value === "ALL_RUNNERS"
   ) {
     return value;
   }
 
-  return "MOST_SHORTENED";
+  return "S1";
 }
 
-function parseHistoryRow(
+export function parseGallopHistoryRow(
   value: unknown,
-): ResearchHistoryRow | null {
+): GallopHistoryRow | null {
   const row =
     asRecord(value);
 
@@ -171,24 +254,52 @@ function parseHistoryRow(
   const raceDate =
     asString(row.race_date);
 
+  const countryCode =
+    asString(
+      row.country_code,
+    );
+
   const trackName =
-    asString(row.track_name);
+    asString(
+      row.track_name,
+    );
 
   const horseName =
-    asString(row.horse_name);
+    asString(
+      row.horse_name,
+    );
 
   if (
     !raceKey ||
     !raceDate ||
+    !countryCode ||
     !trackName ||
     !horseName
   ) {
     return null;
   }
 
+  const gallopSelection =
+    parseGallopSelection(
+      row.selection_kind,
+    );
+
+  const riderIdValue =
+    row.rider_id;
+
+  const riderId =
+    typeof riderIdValue ===
+      "number"
+      ? String(riderIdValue)
+      : asNullableString(
+          riderIdValue,
+        );
+
   return {
     raceKey,
     raceDate,
+
+    countryCode,
 
     trackName,
 
@@ -217,35 +328,29 @@ function parseHistoryRow(
         row.distance_meters,
       ),
 
-    raceCategory:
-      asNullableString(
-        row.race_category,
-      ),
+    raceCategory: null,
+    raceClassCode: null,
 
-    raceClassCode:
-      asNullableString(
-        row.race_class_code,
-      ),
-
-    earningsMin:
-      asNumber(
-        row.earnings_min,
-      ),
-
-    earningsMax:
-      asNumber(
-        row.earnings_max,
-      ),
+    earningsMin: null,
+    earningsMax: null,
 
     starters:
       asNumber(
         row.starters,
       ),
 
+    /*
+     * Standardanalysen använder inte
+     * selectionKind i ROI-uträkningen.
+     * S1/S2 ligger separat i gallopSelection.
+     */
     selectionKind:
-      parseSelection(
-        row.selection_kind,
-      ),
+      gallopSelection ===
+        "ALL_RUNNERS"
+        ? "ALL_RUNNERS"
+        : "MOST_SHORTENED",
+
+    gallopSelection,
 
     runnerNumber:
       asInteger(
@@ -254,29 +359,64 @@ function parseHistoryRow(
 
     horseName,
 
-    startLane:
-      asNumber(
-        row.start_lane,
-      ),
-
-    startDistanceMeters:
-      asNumber(
-        row.start_distance_meters,
-      ),
-
+    startLane: null,
+    startDistanceMeters: null,
     distanceHandicapMeters:
-      asNumber(
-        row.distance_handicap_meters,
+      null,
+
+    riderId,
+
+    riderName:
+      asNullableString(
+        row.rider_name,
       ),
 
     driverId:
-      asNullableId(
-        row.driver_id,
-      ),
+      riderId,
 
     driverName:
       asNullableString(
-        row.driver_name,
+        row.rider_name,
+      ),
+
+    handicapRating:
+      asNumber(
+        row.handicap_rating,
+      ),
+
+    handicapRank:
+      asNumber(
+        row.handicap_rank,
+      ),
+
+    handicapDeltaFromTop:
+      asNumber(
+        row.handicap_delta_from_top,
+      ),
+
+    carriedWeightKg:
+      asNumber(
+        row.carried_weight_kg,
+      ),
+
+    weightRank:
+      asNumber(
+        row.weight_rank,
+      ),
+
+    surface:
+      asNullableString(
+        row.surface,
+      ),
+
+    going:
+      asNullableString(
+        row.going,
+      ),
+
+    isHandicapRace:
+      asNullableBoolean(
+        row.is_handicap_race,
       ),
 
     strengthTotal:
@@ -320,39 +460,14 @@ function parseHistoryRow(
       ),
 
     isFavoriteAtLock:
-      asBoolean(
-        row.is_favorite_at_lock,
-      ),
+      false,
 
-    krValue:
-      asNumber(
-        row.kr_value,
-      ),
-
-    stValue:
-      asNumber(
-        row.st_value,
-      ),
-
-    driverValue:
-      asNumber(
-        row.driver_value,
-      ),
-
-    spValue:
-      asNumber(
-        row.sp_value,
-      ),
-
-    gallopValue:
-      asNumber(
-        row.gallop_value,
-      ),
-
-    oddsIndicatorValue:
-      asNumber(
-        row.odds_indicator_value,
-      ),
+    krValue: null,
+    stValue: null,
+    driverValue: null,
+    spValue: null,
+    gallopValue: null,
+    oddsIndicatorValue: null,
 
     started:
       asNullableBoolean(
@@ -431,18 +546,19 @@ function parseHistoryRow(
   };
 }
 
-export async function loadResearchHistoryOptions():
-  Promise<ResearchHistoryOptions> {
+export async function
+loadGallopHistoryOptions():
+Promise<GallopHistoryOptions> {
   const {
     data,
     error,
   } = await supabase.rpc(
-    "research_trot_history_options_v1",
+    "research_gallop_history_options_v1",
   );
 
   if (error) {
     throw new Error(
-      `Kunde inte läsa Trav-analysfilter: ${error.message}`,
+      `Kunde inte läsa galoppfilter: ${error.message}`,
     );
   }
 
@@ -461,15 +577,10 @@ export async function loadResearchHistoryOptions():
 
       raceCount: 0,
 
+      countries: [],
       tracks: [],
+      surfaces: [],
       distances: [],
-      startMethods: [],
-
-      raceCategories: [],
-      raceClassCodes: [],
-
-      drivers: [],
-      startLanes: [],
     };
   }
 
@@ -489,91 +600,64 @@ export async function loadResearchHistoryOptions():
         row.race_count,
       ),
 
+    countries:
+      asStringArray(
+        row.countries,
+      ),
+
     tracks:
       asStringArray(
         row.tracks,
+      ),
+
+    surfaces:
+      asStringArray(
+        row.surfaces,
       ),
 
     distances:
       asNumberArray(
         row.distances,
       ),
-
-    startMethods:
-      asStringArray(
-        row.start_methods,
-      ),
-
-    raceCategories:
-      asStringArray(
-        row.race_categories,
-      ),
-
-    raceClassCodes:
-      asStringArray(
-        row.race_class_codes,
-      ),
-
-    drivers:
-      asStringArray(
-        row.drivers,
-      ),
-
-    startLanes:
-      asNumberArray(
-        row.start_lanes,
-      ),
   };
 }
 
-async function loadResearchHistoryRowsForTrack(
-  filters: ResearchHistoryFilters,
-  trackName: string | null,
-): Promise<ResearchHistoryRow[]> {
+export async function
+loadGallopHistoryRows(
+  filters:
+    GallopHistoryFilters,
+): Promise<GallopHistoryRow[]> {
   const {
     data,
     error,
   } = await supabase.rpc(
-    "research_trot_history_rows_v1",
+    "research_gallop_history_rows_v1",
     {
       p_date_from:
-        filters.dateFrom || null,
+        filters.dateFrom ||
+        null,
 
       p_date_to:
-        filters.dateTo || null,
+        filters.dateTo ||
+        null,
 
       p_selection:
         filters.selection,
 
-      p_start_method:
-        filters.startMethod || null,
+      p_country_code:
+        filters.countryCode ||
+        null,
+
+      p_track_name:
+        filters.trackName ||
+        null,
+
+      p_surface:
+        filters.surface ||
+        null,
 
       p_distance_meters:
         filters.distanceMeters,
-
-      p_track_name:
-        trackName,
-
-      p_driver_name:
-        filters.driverName || null,
-
-      p_start_lane:
-        filters.startLane,
-
-      p_lane_group:
-        filters.laneGroup || "ALL",
-
-      p_race_category:
-        filters.raceCategory || null,
-
-      p_race_class_code:
-        filters.raceClassCode || null,
-
-      p_earnings_min:
-        filters.earningsMin,
-
-      p_earnings_max:
-        filters.earningsMax,
 
       p_min_starters:
         filters.minStarters,
@@ -581,29 +665,17 @@ async function loadResearchHistoryRowsForTrack(
       p_max_starters:
         filters.maxStarters,
 
-      p_min_strength:
-        filters.minStrength,
+      p_min_handicap_rating:
+        filters.minHandicapRating,
 
-      p_max_strength:
-        filters.maxStrength,
+      p_max_handicap_rating:
+        filters.maxHandicapRating,
 
-      p_kr_top4:
-        filters.krTopFour,
+      p_min_carried_weight_kg:
+        filters.minCarriedWeightKg,
 
-      p_st_top4:
-        filters.stTopFour,
-
-      p_driver_top4:
-        filters.driverTopFour,
-
-      p_sp_top4:
-        filters.spTopFour,
-
-      p_gallop_top4:
-        filters.gallopTopFour,
-
-      p_odds_indicator_top4:
-        filters.oddsIndicatorTopFour,
+      p_max_carried_weight_kg:
+        filters.maxCarriedWeightKg,
 
       p_min_drop_percent:
         filters.minDropPercent,
@@ -611,20 +683,11 @@ async function loadResearchHistoryRowsForTrack(
       p_max_drop_percent:
         filters.maxDropPercent,
 
-      p_min_start_odds:
-        filters.minStartOdds,
-
-      p_max_start_odds:
-        filters.maxStartOdds,
-
       p_min_lock_odds:
         filters.minLockOdds,
 
       p_max_lock_odds:
         filters.maxLockOdds,
-
-      p_complete_only:
-        filters.completeOnly,
 
       p_limit:
         filters.limit,
@@ -633,7 +696,7 @@ async function loadResearchHistoryRowsForTrack(
 
   if (error) {
     throw new Error(
-      `Kunde inte läsa Trav-historiken: ${error.message}`,
+      `Kunde inte läsa galopphistoriken: ${error.message}`,
     );
   }
 
@@ -642,20 +705,13 @@ async function loadResearchHistoryRowsForTrack(
   }
 
   return data
-    .map(parseHistoryRow)
+    .map(
+      parseGallopHistoryRow,
+    )
     .filter(
       (
         row,
-      ): row is ResearchHistoryRow =>
+      ): row is GallopHistoryRow =>
         row !== null,
     );
-}
-
-export async function loadResearchHistoryRows(
-  filters: ResearchHistoryFilters,
-): Promise<ResearchHistoryRow[]> {
-  return loadResearchHistoryRowsForTrack(
-    filters,
-    filters.trackName || null,
-  );
 }

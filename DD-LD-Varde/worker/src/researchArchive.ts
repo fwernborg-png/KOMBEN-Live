@@ -22,6 +22,7 @@ import {
   inferResearchMeetingTimeCategory,
   parseResearchProducts,
   type ParsedResearchProduct,
+  type ParsedResearchSport,
   type ParsedResearchStartMethod,
 } from "./researchRaceParser";
 
@@ -51,6 +52,12 @@ export type ResearchArchiveRunnerInput = {
   startLane: number | null;
   startDistanceMeters: number | null;
 
+  handicapRating?: number | null;
+  carriedWeightKg?: number | null;
+
+  riderId?: number | null;
+  riderName?: string | null;
+
   driverId: number | null;
   driverName: string | null;
 
@@ -75,8 +82,8 @@ export type ResearchArchiveRaceInput = {
   meetingId: string | null;
   meetingName: string | null;
 
-  countryCode: "SE" | "NO" | "DK" | "FR";
-  currencyCode: "SEK" | "NOK" | "DKK" | "EUR";
+  countryCode: string;
+  currencyCode: string;
 
   trackId: number;
   trackName: string;
@@ -88,6 +95,11 @@ export type ResearchArchiveRaceInput = {
   actualStartTime: string | null;
 
   raceStatus: string | null;
+
+  sport?: ParsedResearchSport;
+  surface?: string | null;
+  going?: string | null;
+  isHandicapRace?: boolean | null;
 
   startMethod: ParsedResearchStartMethod;
   distanceMeters: number | null;
@@ -707,22 +719,63 @@ export function buildResearchLockArchiveRows(
           ?.validOddsPoints ?? 0) >= 5,
     );
 
+  /*
+   * Trav kräver fortfarande samtliga sex
+   * indikatorer.
+   *
+   * Internationell galopp ska däremot inte
+   * bli permanent PARTIAL bara för att
+   * travspecifika KR/ST/K/SP/G saknas.
+   *
+   * För GALLOP kräver vi en fungerande
+   * odds-signal; oddsComplete + lockComplete
+   * kontrolleras dessutom separat nedan.
+   */
   const indicatorsComplete =
-    activeRunners.every((runner) =>
-      [
-        runner.stats.earningsPerStart,
-        runner.stats.winPercent,
-        runner.stats.driverWinPercent,
-        runner.stats.startPoints,
-        runner.stats.gallopPercent,
-        metricByRunner.get(runner.number)
-          ?.oddsDropToLockPercent ?? null,
-      ].every(
-        (value) =>
-          value !== null &&
-          Number.isFinite(value),
-      ),
-    );
+    race.sport === "GALLOP"
+      ? activeRunners.every(
+          (runner) => {
+            const value =
+              metricByRunner.get(
+                runner.number,
+              )
+                ?.oddsDropToLockPercent ??
+              null;
+
+            return (
+              value !== null &&
+              Number.isFinite(
+                value,
+              )
+            );
+          },
+        )
+      : activeRunners.every(
+          (runner) =>
+            [
+              runner.stats
+                .earningsPerStart,
+              runner.stats
+                .winPercent,
+              runner.stats
+                .driverWinPercent,
+              runner.stats
+                .startPoints,
+              runner.stats
+                .gallopPercent,
+              metricByRunner.get(
+                runner.number,
+              )
+                ?.oddsDropToLockPercent ??
+                null,
+            ].every(
+              (value) =>
+                value !== null &&
+                Number.isFinite(
+                  value,
+                ),
+            ),
+        );
 
   const snapshotComplete =
     oddsComplete &&
@@ -788,6 +841,25 @@ export function buildResearchLockArchiveRows(
 
       const missingFields: string[] = [];
 
+      const runnerIndicatorValues = [
+        runner.stats.earningsPerStart,
+        runner.stats.winPercent,
+        runner.stats.driverWinPercent,
+        runner.stats.startPoints,
+        runner.stats.gallopPercent,
+        metric?.oddsDropToLockPercent ??
+          null,
+      ];
+
+      const runnerIndicatorsComplete =
+        runnerIndicatorValues.every(
+          (value) =>
+            value !== null &&
+            Number.isFinite(
+              value,
+            ),
+        );
+
       if (runner.startLane === null) {
         missingFields.push("startLane");
       }
@@ -838,6 +910,18 @@ export function buildResearchLockArchiveRows(
         horse_age: runner.horseAge,
         horse_sex: runner.horseSex,
 
+        handicap_rating:
+          runner.handicapRating ?? null,
+
+        carried_weight_kg:
+          runner.carriedWeightKg ?? null,
+
+        rider_id:
+          runner.riderId ?? null,
+
+        rider_name:
+          runner.riderName ?? null,
+
         start_lane: runner.startLane,
         start_distance_meters:
           runner.startDistanceMeters,
@@ -884,7 +968,16 @@ export function buildResearchLockArchiveRows(
             runner.number,
           ) ?? null,
 
-        strength_total: strength,
+        /*
+         * Visa inte ett artificiellt 0/6 eller
+         * 1/6 på internationell galopp när
+         * travindikatorerna saknas.
+         */
+        strength_total:
+          race.sport === "GALLOP" &&
+          !runnerIndicatorsComplete
+            ? null
+            : strength,
 
         odds_drop_rank:
           metric?.oddsDropRank ?? null,
@@ -911,19 +1004,7 @@ export function buildResearchLockArchiveRows(
           metric?.isFavoriteAtLock ?? false,
 
         indicator_data_complete:
-          [
-            runner.stats.earningsPerStart,
-            runner.stats.winPercent,
-            runner.stats.driverWinPercent,
-            runner.stats.startPoints,
-            runner.stats.gallopPercent,
-            metric?.oddsDropToLockPercent ??
-              null,
-          ].every(
-            (value) =>
-              value !== null &&
-              Number.isFinite(value),
-          ),
+          runnerIndicatorsComplete,
 
         odds_data_complete:
           (metric?.validOddsPoints ?? 0) >= 5 &&
@@ -1198,6 +1279,23 @@ export function buildResearchLockArchiveRows(
 
     country_code: race.countryCode,
     currency_code: race.currencyCode,
+
+    sport_type:
+      race.sport ??
+      (
+        race.isMonte
+          ? "MONTE"
+          : "TROT"
+      ),
+
+    surface:
+      race.surface ?? null,
+
+    going:
+      race.going ?? null,
+
+    is_handicap_race:
+      race.isHandicapRace ?? null,
 
     track_id: race.trackId,
     track_name: race.trackName,

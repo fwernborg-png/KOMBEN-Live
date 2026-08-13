@@ -7,6 +7,7 @@ export type ResearchResultBackfillRow = {
   source_race_id: string;
 
   race_date: string;
+  country_code: string;
 
   track_id: number;
   track_name: string;
@@ -22,6 +23,7 @@ export type ResearchResultBackfillRaceItem = {
   track: {
     id: number;
     name: string;
+    countryCode: string;
   };
 
   race: {
@@ -127,6 +129,7 @@ export async function backfillMissingResearchResults<
         "race_key",
         "source_race_id",
         "race_date",
+        "country_code",
         "track_id",
         "track_name",
         "race_number",

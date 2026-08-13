@@ -11,7 +11,6 @@ import {
 } from "./analytics";
 
 import {
-  GALLOP_TRACK_FILTER,
   loadResearchHistoryOptions,
   loadResearchHistoryRows,
 } from "./repository";
@@ -120,13 +119,6 @@ const INDICATOR_FILTER_DEFINITIONS = [
 function trackFilterLabel(
   value: string,
 ): string {
-  if (
-    value ===
-    GALLOP_TRACK_FILTER
-  ) {
-    return "Galopp – 3 banor";
-  }
-
   return value;
 }
 
@@ -1887,16 +1879,7 @@ export function ResearchHistoryPanel() {
                 <option value="">
                   Alla banor
                 </option>
-
-                <option
-                  value={
-                    GALLOP_TRACK_FILTER
-                  }
-                >
-                  Galopp – alla tre banor
-                </option>
-
-                {options.tracks.map(
+{options.tracks.map(
                   (track) => (
                     <option
                       key={track}

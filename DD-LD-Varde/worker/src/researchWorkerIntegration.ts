@@ -5,6 +5,7 @@ import type {
 } from "./researchArchive";
 import type {
   ParsedResearchProduct,
+  ParsedResearchSport,
   ParsedResearchStartMethod,
 } from "./researchRaceParser";
 
@@ -24,6 +25,12 @@ export type WorkerResearchRunner = {
 
   startLane: number | null;
   startDistanceMeters: number | null;
+
+  handicapRating?: number | null;
+  carriedWeightKg?: number | null;
+
+  riderId?: number | null;
+  riderName?: string | null;
 
   driverId: number | null;
   driverName: string | null;
@@ -49,6 +56,11 @@ export type WorkerResearchRace = {
   meetingName: string | null;
 
   raceName: string | null;
+
+  sport?: ParsedResearchSport;
+  surface?: string | null;
+  going?: string | null;
+  isHandicapRace?: boolean | null;
 
   startMethod: ParsedResearchStartMethod;
   distanceMeters: number | null;
@@ -76,7 +88,7 @@ export type WorkerResearchRace = {
 export type WorkerResearchTrack = {
   id: number;
   name: string;
-  countryCode: "SE" | "FR";
+  countryCode: string;
 };
 
 export type WorkerResearchDbOddsRow = {
@@ -261,12 +273,46 @@ export function mergeResearchProducts(
   return merged;
 }
 
+function currencyCodeForCountry(
+  countryCode: string,
+): string {
+  const byCountry: Record<string, string> = {
+    SE: "SEK",
+    NO: "NOK",
+    DK: "DKK",
+    FR: "EUR",
+    IE: "EUR",
+    DE: "EUR",
+    GB: "GBP",
+    ZA: "ZAR",
+    AU: "AUD",
+    NZ: "NZD",
+    US: "USD",
+    CA: "CAD",
+    HK: "HKD",
+    AE: "AED",
+  };
+
+  return byCountry[countryCode] ?? "XXX";
+}
+
 export function buildResearchArchiveRaceInput(args: {
   raceDate: string;
   track: WorkerResearchTrack;
   race: WorkerResearchRace;
 }): ResearchArchiveRaceInput {
   const { raceDate, track, race } = args;
+
+  const countryCode =
+    track.countryCode
+      .trim()
+      .toUpperCase();
+
+  if (!/^[A-Z]{2}$/.test(countryCode)) {
+    throw new Error(
+      `Ogiltig landskod för ${track.name}: ${track.countryCode}`,
+    );
+  }
 
   if (!race.startTime) {
     throw new Error(
@@ -282,12 +328,12 @@ export function buildResearchArchiveRaceInput(args: {
     meetingId: race.meetingId,
     meetingName: race.meetingName,
 
-    countryCode: track.countryCode,
+    countryCode,
 
     currencyCode:
-      track.countryCode === "FR"
-        ? "EUR"
-        : "SEK",
+      currencyCodeForCountry(
+        countryCode,
+      ),
 
     trackId: track.id,
     trackName: track.name,
@@ -299,6 +345,23 @@ export function buildResearchArchiveRaceInput(args: {
     actualStartTime: null,
 
     raceStatus: race.status ?? null,
+
+    sport:
+      race.sport ??
+      (
+        race.isMonte
+          ? "MONTE"
+          : "TROT"
+      ),
+
+    surface:
+      race.surface ?? null,
+
+    going:
+      race.going ?? null,
+
+    isHandicapRace:
+      race.isHandicapRace ?? null,
 
     startMethod: race.startMethod,
     distanceMeters: race.distanceMeters,
@@ -335,6 +398,18 @@ export function buildResearchArchiveRaceInput(args: {
       startLane: runner.startLane,
       startDistanceMeters:
         runner.startDistanceMeters,
+
+      handicapRating:
+        runner.handicapRating ?? null,
+
+      carriedWeightKg:
+        runner.carriedWeightKg ?? null,
+
+      riderId:
+        runner.riderId ?? null,
+
+      riderName:
+        runner.riderName ?? null,
 
       driverId: runner.driverId,
       driverName: runner.driverName,

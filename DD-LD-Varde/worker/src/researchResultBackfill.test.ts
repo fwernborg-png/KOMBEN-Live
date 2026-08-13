@@ -30,6 +30,8 @@ describe(
             race_date:
               "2026-07-30",
 
+            country_code: "SE",
+
             track_id: 1,
             track_name: "Testbanan",
             race_number: 4,
@@ -52,6 +54,8 @@ describe(
             race_date:
               "2026-07-30",
 
+            country_code: "SE",
+
             track_id: 1,
             track_name: "Testbanan",
             race_number: 5,
@@ -73,6 +77,8 @@ describe(
 
             race_date:
               "2026-07-31",
+
+            country_code: "ZA",
 
             track_id: 2,
             track_name: "Andra banan",
@@ -174,6 +180,7 @@ describe(
           vi.fn(
             async (row: {
               race_date: string;
+              country_code: string;
               track_id: number;
               track_name: string;
               race_number: number;
@@ -185,6 +192,9 @@ describe(
 
                 name:
                   row.track_name,
+
+                countryCode:
+                  row.country_code,
               },
 
               race: {
@@ -287,6 +297,11 @@ describe(
 
             races: [
               expect.objectContaining({
+                track:
+                  expect.objectContaining({
+                    countryCode: "ZA",
+                  }),
+
                 race:
                   expect.objectContaining({
                     id: "race-1",

@@ -51,7 +51,7 @@ import type {
 import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 import { DailyResultPeek } from "./winPlaceModel/DailyResultPeek";
 import { loadWinPlaceBetsByDate } from "./winPlaceModel/repository";
-import { ResearchHistoryPanel } from "./researchHistory/ResearchHistoryPanel";
+import { ResearchHistoryHub } from "./researchHistory/ResearchHistoryHub";
 import { loadResearchHistoryRows } from "./researchHistory/repository";
 import { SpeedAnalysisPanel } from "./speedAnalysis/SpeedAnalysisPanel";
 import {
@@ -8046,7 +8046,7 @@ export default function App() {
           {activeTab === "journal" ? renderJournalTab() : null}
           {activeTab === "stats" ? renderStatsTab() : null}
           {activeTab === "speed" ? renderSpeedTab() : null}
-          {activeTab === "history" ? <ResearchHistoryPanel /> : null}
+          {activeTab === "history" ? <ResearchHistoryHub /> : null}
 
           <footer className="footer-compact">
             <span>Banor {tracks.length}</span>

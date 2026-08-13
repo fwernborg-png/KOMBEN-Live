@@ -10,6 +10,12 @@ export type ParsedResearchMeetingTimeCategory =
   | "NIGHT"
   | "UNKNOWN";
 
+export type ParsedResearchSport =
+  | "TROT"
+  | "GALLOP"
+  | "MONTE"
+  | "UNKNOWN";
+
 export type ParsedResearchProduct = {
   productCode: string;
   productId: string | null;
@@ -20,6 +26,11 @@ export type ParsedResearchProduct = {
 
 export type ParsedResearchRaceMeta = {
   raceName: string | null;
+
+  sport: ParsedResearchSport;
+  surface: string | null;
+  going: string | null;
+  isHandicapRace: boolean | null;
   startMethod: ParsedResearchStartMethod;
   distanceMeters: number | null;
   raceClassCode: string | null;
@@ -37,6 +48,12 @@ export type ParsedResearchRaceMeta = {
 export type ParsedResearchRunnerMeta = {
   startLane: number | null;
   startDistanceMeters: number | null;
+
+  handicapRating: number | null;
+  carriedWeightKg: number | null;
+
+  riderId: number | null;
+  riderName: string | null;
 
   horseAge: number | null;
   horseSex: string | null;
@@ -173,6 +190,139 @@ function collectStrings(
   );
 }
 
+function normalizeResearchSport(
+  value: unknown,
+): ParsedResearchSport {
+  const raw =
+    firstString(value, [
+      ["sport"],
+      ["raceSport"],
+      ["sportType"],
+      ["discipline"],
+    ]) ?? "";
+
+  const normalized =
+    raw.trim().toLowerCase();
+
+  if (
+    normalized === "gallop" ||
+    normalized === "galopp"
+  ) {
+    return "GALLOP";
+  }
+
+  if (
+    normalized === "monté" ||
+    normalized === "monte"
+  ) {
+    return "MONTE";
+  }
+
+  if (
+    normalized === "trot" ||
+    normalized === "trav"
+  ) {
+    return "TROT";
+  }
+
+  return "UNKNOWN";
+}
+
+function normalizeWeightKg(
+  value: number | null,
+): number | null {
+  if (
+    value === null ||
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
+    return null;
+  }
+
+  /*
+   * Observerat ATG-format för galopp:
+   * 57500 = 57,5 kg.
+   *
+   * Acceptera även redan normaliserade
+   * kilogram om ATG använder det någonstans.
+   */
+  if (
+    value >= 30 &&
+    value <= 100
+  ) {
+    return value;
+  }
+
+  if (
+    value >= 30_000 &&
+    value <= 100_000
+  ) {
+    return value / 1_000;
+  }
+
+  return null;
+}
+
+function positiveOrNull(
+  value: number | null,
+): number | null {
+  if (
+    value === null ||
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
+    return null;
+  }
+
+  return value;
+}
+
+function parseResearchSurface(
+  value: unknown,
+): string | null {
+  const surface =
+    firstString(value, [
+      ["track", "surface"],
+      ["surface"],
+      ["conditions", "surface"],
+    ]);
+
+  return surface
+    ? surface.toLowerCase()
+    : null;
+}
+
+function parseResearchGoing(
+  value: unknown,
+): string | null {
+  return firstString(value, [
+    ["going"],
+    ["ground"],
+    ["trackCondition"],
+    ["conditions", "going"],
+    ["conditions", "ground"],
+    ["conditions", "trackCondition"],
+  ]);
+}
+
+function parseResearchIsHandicapRace(
+  value: unknown,
+): boolean | null {
+  const text =
+    collectStrings(value)
+      .join(" ")
+      .toLowerCase();
+
+  /*
+   * TRUE endast när ATG-data faktiskt
+   * innehåller handicap-beteckning.
+   * Annars NULL = okänt, inte FALSE.
+   */
+  return /\bhandicap\b/i.test(text)
+    ? true
+    : null;
+}
+
 function parseStartMethod(
   value: unknown,
 ): ParsedResearchStartMethod {
@@ -216,7 +366,7 @@ function parseDistanceFromText(
   const text = collectStrings(value).join(" ");
 
   const match = text.match(
-    /\b(1[0-9]{3}|2[0-9]{3}|3[0-9]{3}|4[0-9]{3})\s*m(?:eter)?\b/i,
+    /\b([5-9][0-9]{2}|1[0-9]{3}|2[0-9]{3}|3[0-9]{3}|4[0-9]{3})\s*m(?:eter)?\b/i,
   );
 
   if (!match) {
@@ -233,7 +383,7 @@ function normalizeDistance(
 ): number | null {
   if (
     value === null ||
-    value < 1_000 ||
+    value < 500 ||
     value > 5_000
   ) {
     return null;
@@ -539,6 +689,18 @@ export function parseResearchRaceMeta(
       ["conditions", "name"],
     ]),
 
+    sport:
+      normalizeResearchSport(value),
+
+    surface:
+      parseResearchSurface(value),
+
+    going:
+      parseResearchGoing(value),
+
+    isHandicapRace:
+      parseResearchIsHandicapRace(value),
+
     startMethod: parseStartMethod(value),
 
     distanceMeters:
@@ -615,12 +777,42 @@ export function parseResearchRunnerMeta(
     asRecord(getPath(value, ["horse"])) ??
     asRecord(value);
 
+  const riderRecord =
+    asRecord(getPath(value, ["rider"]));
+
+  /*
+   * För bakåtkompatibilitet får driver
+   * fortfarande falla tillbaka på rider.
+   * Men galoppens jockey/rider sparas också
+   * som ett eget forskningsfält.
+   */
   const driverRecord =
     asRecord(getPath(value, ["driver"])) ??
-    asRecord(getPath(value, ["rider"]));
+    riderRecord;
 
   const trainerRecord =
     asRecord(getPath(value, ["trainer"]));
+
+  const rawHandicap =
+    firstNumber(horseRecord, [
+      ["handicap"],
+      ["rating"],
+      ["officialRating"],
+      ["officialHandicap"],
+    ]) ??
+    firstNumber(value, [
+      ["handicap"],
+      ["rating"],
+      ["officialRating"],
+    ]);
+
+  const rawWeight =
+    firstNumber(value, [
+      ["weight"],
+      ["carriedWeight"],
+      ["carriedWeightKg"],
+      ["weightKg"],
+    ]);
 
   return {
     startLane: firstNumber(value, [
@@ -641,6 +833,36 @@ export function parseResearchRunnerMeta(
         ["start", "distance"],
       ]),
     ),
+
+    /*
+     * ATG ger handicap=0 när uppgiften
+     * saknas. Det ska inte analyseras som
+     * en verklig rating på noll.
+     */
+    handicapRating:
+      positiveOrNull(rawHandicap),
+
+    carriedWeightKg:
+      normalizeWeightKg(rawWeight),
+
+    riderId:
+      firstNumber(riderRecord, [
+        ["id"],
+        ["riderId"],
+        ["personId"],
+      ]) ??
+      firstNumber(value, [
+        ["riderId"],
+      ]),
+
+    riderName:
+      firstString(riderRecord, [
+        ["name"],
+        ["fullName"],
+      ]) ??
+      firstString(value, [
+        ["riderName"],
+      ]),
 
     horseAge: firstNumber(horseRecord, [
       ["age"],

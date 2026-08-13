@@ -108,8 +108,15 @@ import {
   parseResearchRaceMeta,
   parseResearchRunnerMeta,
   type ParsedResearchProduct,
+  type ParsedResearchSport,
   type ParsedResearchStartMethod,
 } from "./researchRaceParser";
+
+import {
+  normalizeCalendarSport,
+  shouldIncludeResearchTrack,
+  shouldIncludeStrategyTrack,
+} from "./researchTrackScope";
 import {
   isResearchArchiveEnabled,
   mergeResearchProducts,
@@ -165,7 +172,8 @@ type Env = {
 type Track = {
   id: number;
   name: string;
-  countryCode: "SE" | "FR";
+  countryCode: string;
+  sport: string | null;
 };
 
 type MeetingRaceRef = {
@@ -207,6 +215,12 @@ type Runner = {
   startLane: number | null;
   startDistanceMeters: number | null;
 
+  handicapRating: number | null;
+  carriedWeightKg: number | null;
+
+  riderId: number | null;
+  riderName: string | null;
+
   driverId: number | null;
   driverName: string | null;
 
@@ -233,6 +247,11 @@ type Race = {
   meetingName: string | null;
 
   raceName: string | null;
+
+  sport: ParsedResearchSport;
+  surface: string | null;
+  going: string | null;
+  isHandicapRace: boolean | null;
 
   startMethod: ParsedResearchStartMethod;
   distanceMeters: number | null;
@@ -485,19 +504,100 @@ function toIsoMinute(ms: number) {
   return new Date(bucket).toISOString();
 }
 
-function parseCountryCode(value: unknown): "SE" | "FR" | null {
+function parseCountryCode(
+  value: unknown,
+): string | null {
   const rec = asRecord(value);
-  if (!rec) return null;
 
-  const direct = [rec.countryCode, rec.country, rec.nation]
-    .map((item) => asString(item).toUpperCase())
-    .find((item) => item === "SE" || item === "FR");
+  if (!rec) {
+    return null;
+  }
 
-  if (direct === "SE" || direct === "FR") return direct;
+  const direct =
+    [
+      rec.countryCode,
+      rec.country,
+      rec.nation,
+    ]
+      .map(
+        (item) =>
+          asString(item)
+            .trim()
+            .toUpperCase(),
+      )
+      .find(
+        (item) =>
+          /^[A-Z]{2}$/.test(item),
+      );
 
-  const strings = collectStrings(rec).map((item) => item.toUpperCase());
-  if (strings.some((item) => item === "SE" || item.includes("SWEDEN") || item.includes("SVERIGE"))) return "SE";
-  if (strings.some((item) => item === "FR" || item.includes("FRANCE"))) return "FR";
+  if (direct) {
+    return direct;
+  }
+
+  /*
+   * Fallback används bara när ATG inte
+   * ger ISO-landskoden direkt.
+   */
+  const strings =
+    collectStrings(rec)
+      .map(
+        (item) =>
+          item.toUpperCase(),
+      );
+
+  if (
+    strings.some(
+      (item) =>
+        item === "SE" ||
+        item.includes("SWEDEN") ||
+        item.includes("SVERIGE"),
+    )
+  ) {
+    return "SE";
+  }
+
+  if (
+    strings.some(
+      (item) =>
+        item === "FR" ||
+        item.includes("FRANCE"),
+    )
+  ) {
+    return "FR";
+  }
+
+  if (
+    strings.some(
+      (item) =>
+        item === "NO" ||
+        item.includes("NORWAY") ||
+        item.includes("NORGE"),
+    )
+  ) {
+    return "NO";
+  }
+
+  if (
+    strings.some(
+      (item) =>
+        item === "DK" ||
+        item.includes("DENMARK") ||
+        item.includes("DANMARK"),
+    )
+  ) {
+    return "DK";
+  }
+
+  if (
+    strings.some(
+      (item) =>
+        item === "ZA" ||
+        item.includes("SOUTH AFRICA"),
+    )
+  ) {
+    return "ZA";
+  }
+
   return null;
 }
 
@@ -510,21 +610,104 @@ function collectStrings(value: unknown, depth = 0): string[] {
   return Object.values(rec).flatMap((item) => collectStrings(item, depth + 1));
 }
 
-function parseTrack(value: unknown): Track | null {
+function parseTrack(
+  value: unknown,
+): Track | null {
   const rec = asRecord(value);
-  if (!rec) return null;
-  const countryCode = parseCountryCode(rec);
-  if (countryCode !== "SE") return null;
 
-  const id = asNumber(rec.id) ?? asNumber(rec.trackId) ?? asNumber(rec.number);
-  const name = asString(rec.name) || asString(rec.trackName) || asString(rec.displayName);
+  if (!rec) {
+    return null;
+  }
 
-  if (!id || !name) return null;
+  const countryCode =
+    parseCountryCode(rec);
+
+  if (
+    !shouldIncludeStrategyTrack(
+      countryCode,
+    )
+  ) {
+    return null;
+  }
+
+  const id =
+    asNumber(rec.id) ??
+    asNumber(rec.trackId) ??
+    asNumber(rec.number);
+
+  const name =
+    asString(rec.name) ||
+    asString(rec.trackName) ||
+    asString(rec.displayName);
+
+  if (
+    !id ||
+    !name ||
+    !countryCode
+  ) {
+    return null;
+  }
 
   return {
     id,
     name,
     countryCode,
+
+    sport:
+      normalizeCalendarSport(
+        rec.sport,
+      ) || null,
+  };
+}
+
+function parseResearchTrack(
+  value: unknown,
+): Track | null {
+  const rec = asRecord(value);
+
+  if (!rec) {
+    return null;
+  }
+
+  const countryCode =
+    parseCountryCode(rec);
+
+  if (
+    !shouldIncludeResearchTrack({
+      countryCode,
+      sport: rec.sport,
+    })
+  ) {
+    return null;
+  }
+
+  const id =
+    asNumber(rec.id) ??
+    asNumber(rec.trackId) ??
+    asNumber(rec.number);
+
+  const name =
+    asString(rec.name) ||
+    asString(rec.trackName) ||
+    asString(rec.displayName);
+
+  if (
+    !id ||
+    !name ||
+    !countryCode
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    countryCode,
+
+    sport:
+      normalizeCalendarSport(
+        rec.sport,
+      ) || null,
   };
 }
 
@@ -646,6 +829,18 @@ function parseRunner(value: unknown, fallbackNumber: number): Runner | null {
     startDistanceMeters:
       researchMeta.startDistanceMeters,
 
+    handicapRating:
+      researchMeta.handicapRating,
+
+    carriedWeightKg:
+      researchMeta.carriedWeightKg,
+
+    riderId:
+      researchMeta.riderId,
+
+    riderName:
+      researchMeta.riderName,
+
     driverId: researchMeta.driverId,
     driverName: researchMeta.driverName,
 
@@ -745,6 +940,18 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
 
     raceName: researchMeta.raceName,
 
+    sport:
+      researchMeta.sport,
+
+    surface:
+      researchMeta.surface,
+
+    going:
+      researchMeta.going,
+
+    isHandicapRace:
+      researchMeta.isHandicapRace,
+
     startMethod:
       researchMeta.startMethod,
 
@@ -813,6 +1020,47 @@ function shouldCollectOdds(startTime: string | undefined, nowMs: number) {
   const window = raceCollectionWindow(startTime);
   if (!window) return false;
   return nowMs >= window.collectionStartMs && nowMs < window.startMs;
+}
+
+function shouldFetchResearchRace(
+  startTime: string | undefined,
+  nowMs: number,
+) {
+  if (!startTime) {
+    return false;
+  }
+
+  const startRaceMs =
+    parseAtgStartTimeMs(
+      startTime,
+    );
+
+  if (
+    !Number.isFinite(
+      startRaceMs,
+    )
+  ) {
+    return false;
+  }
+
+  /*
+   * Utländska research-lopp behöver inte
+   * hämtas hela dagen varje minut.
+   *
+   * T-60 min:
+   * börjar oddsinsamlingen.
+   *
+   * T+90 min:
+   * ger gott om tid för officiellt resultat.
+   */
+  return (
+    nowMs >=
+      startRaceMs -
+        60 * 60_000 &&
+    nowMs <=
+      startRaceMs +
+        90 * 60_000
+  );
 }
 
 function isValidRawWinOdds(value: number | null) {
@@ -985,13 +1233,51 @@ async function loadTracksAndMeetings(args: { apiBaseUrl: string; raceDate: strin
 
   const tracks = tracksRaw
     .map(parseTrack)
-    .filter((item): item is Track => item !== null)
-    .sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    .filter(
+      (item): item is Track =>
+        item !== null,
+    )
+    .sort(
+      (a, b) =>
+        a.name.localeCompare(
+          b.name,
+          "sv",
+        ),
+    );
 
-  const meetingRefs = new Map<number, MeetingRaceRef[]>();
-  for (const rawTrack of tracksRaw) {
-    const parsed = parseTrack(rawTrack);
-    if (!parsed) continue;
+  const researchTracks =
+    tracksRaw
+      .map(parseResearchTrack)
+      .filter(
+        (item): item is Track =>
+          item !== null,
+      )
+      .sort(
+        (a, b) =>
+          a.name.localeCompare(
+            b.name,
+            "sv",
+          ),
+      );
+
+  const meetingRefs =
+    new Map<
+      number,
+      MeetingRaceRef[]
+    >();
+
+  for (
+    const rawTrack
+    of tracksRaw
+  ) {
+    const parsed =
+      parseResearchTrack(
+        rawTrack,
+      );
+
+    if (!parsed) {
+      continue;
+    }
 
     const refs =
       parseMeetingRaceRefs(
@@ -1017,6 +1303,7 @@ async function loadTracksAndMeetings(args: { apiBaseUrl: string; raceDate: strin
 
   return {
     tracks,
+    researchTracks,
     meetingRefs,
   };
 }
@@ -1697,6 +1984,10 @@ async function runCron(env: Env) {
     raceDate,
     tracks: 0,
     racesFetched: 0,
+
+    researchTracks: 0,
+    researchRacesFetched: 0,
+
     oddsPointsInserted: 0,
 
     researchArchiveEnabled,
@@ -1761,10 +2052,33 @@ async function runCron(env: Env) {
   };
 
   try {
-    const { tracks, meetingRefs } = await loadTracksAndMeetings({ apiBaseUrl, raceDate, signal: runController.signal });
-    summary.tracks = tracks.length;
+    const {
+      tracks,
+      researchTracks,
+      meetingRefs,
+    } =
+      await loadTracksAndMeetings({
+        apiBaseUrl,
+        raceDate,
+        signal:
+          runController.signal,
+      });
 
-    const allRaces: Array<{ track: Track; race: Race }> = [];
+    summary.tracks =
+      tracks.length;
+
+    summary.researchTracks =
+      researchTracks.length;
+
+    /*
+     * allRaces = exakt den gamla svenska
+     * strategi-loppmängden.
+     */
+    const allRaces:
+      Array<{
+        track: Track;
+        race: Race;
+      }> = [];
 
     for (const track of tracks) {
       throwIfRunTimedOut(startMs);
@@ -1816,11 +2130,110 @@ async function runCron(env: Env) {
       }
     }
 
+    /*
+     * researchRaces får alla svenska lopp som tidigare,
+     * plus utländska galopplopp.
+     *
+     * Dessa extra lopp läggs INTE i allRaces och når
+     * därför inte spelstrategierna.
+     */
+    const researchRaces:
+      Array<{
+        track: Track;
+        race: Race;
+      }> = [
+        ...allRaces,
+      ];
+
+    const strategyTrackIds =
+      new Set(
+        tracks.map(
+          (track) =>
+            track.id,
+        ),
+      );
+
+    for (
+      const track
+      of researchTracks
+    ) {
+      if (
+        strategyTrackIds.has(
+          track.id,
+        )
+      ) {
+        continue;
+      }
+
+      throwIfRunTimedOut(
+        startMs,
+      );
+
+      const refs =
+        meetingRefs.get(
+          track.id,
+        ) ?? [];
+
+      for (const ref of refs) {
+        if (
+          !shouldFetchResearchRace(
+            ref.startTime,
+            startMs,
+          )
+        ) {
+          continue;
+        }
+
+        throwIfRunTimedOut(
+          startMs,
+        );
+
+        const race =
+          await fetchRaceForTrack({
+            apiBaseUrl,
+            raceDate,
+            trackId:
+              track.id,
+            raceNumber:
+              ref.raceNumber,
+            meetingRef:
+              ref,
+            signal:
+              runController.signal,
+          }).catch(
+            () => null,
+          );
+
+        if (!race) {
+          continue;
+        }
+
+        researchRaces.push({
+          track,
+          race,
+        });
+      }
+    }
+
+    summary.researchRacesFetched =
+      researchRaces.length;
+
     // Berika forskningsloppen med galoppdata före LOCK-arkivering.
     // Samma värde följer sedan med vidare till platsmodellen.
     if (researchArchiveEnabled) {
-      for (const { race } of allRaces) {
-        throwIfRunTimedOut(startMs);
+      for (
+        const { race }
+        of researchRaces
+      ) {
+        throwIfRunTimedOut(
+          startMs,
+        );
+
+        if (
+          race.sport === "GALLOP"
+        ) {
+          continue;
+        }
 
         if (
           !race.startTime ||
@@ -1889,8 +2302,13 @@ async function runCron(env: Env) {
       }
     }
 
-    const pointTsIso = toIsoMinute(startMs);
-    for (const item of allRaces) {
+    const pointTsIso =
+      toIsoMinute(startMs);
+
+    for (
+      const item
+      of researchRaces
+    ) {
       throwIfRunTimedOut(startMs);
       const { track, race } = item;
       if (!shouldCollectOdds(race.startTime, startMs)) continue;
@@ -1955,7 +2373,8 @@ async function runCron(env: Env) {
         raceDate,
         nowMs: startMs,
 
-        races: allRaces,
+        races:
+          researchRaces,
 
         adapter:
           createSupabaseResearchArchiveAdapter(
@@ -1997,7 +2416,7 @@ async function runCron(env: Env) {
         raceDate,
 
         races:
-          allRaces,
+          researchRaces,
 
         nowIso,
       });
@@ -2103,7 +2522,7 @@ async function runCron(env: Env) {
                     row.track_name,
 
                   countryCode:
-                    "SE",
+                    row.country_code,
                 },
 
                 race,
