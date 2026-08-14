@@ -149,6 +149,9 @@ import {
   mergeVpPayloadIntoWinnerPayload,
 } from "../../src/atg/vpPayload";
 import {
+  isExcludedAtgNonRacingTrackName,
+} from "../../src/atg/trackScope";
+import {
   extractRunnerStats,
 } from "./runnerStatistics";
 
@@ -641,6 +644,14 @@ function parseTrack(
     asString(rec.displayName);
 
   if (
+    isExcludedAtgNonRacingTrackName(
+      name,
+    )
+  ) {
+    return null;
+  }
+
+  if (
     !id ||
     !name ||
     !countryCode
@@ -690,6 +701,14 @@ function parseResearchTrack(
     asString(rec.name) ||
     asString(rec.trackName) ||
     asString(rec.displayName);
+
+  if (
+    isExcludedAtgNonRacingTrackName(
+      name,
+    )
+  ) {
+    return null;
+  }
 
   if (
     !id ||

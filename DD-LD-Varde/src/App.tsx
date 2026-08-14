@@ -61,6 +61,7 @@ import {
 import { loadSpeedAnalysisMarkersByDate } from "./speedAnalysis/repository";
 import type { SpeedAnalysisMarker } from "./speedAnalysis/types";
 import { mergeVpPayloadIntoWinnerPayload } from "./atg/vpPayload";
+import { isExcludedAtgNonRacingTrackName } from "./atg/trackScope";
 import {
   findNextUpcomingRace,
   isRaceFinished,
@@ -660,6 +661,15 @@ function parseTrack(value: unknown): Track | null {
     asString(value.firstStartTime) ||
     asString(value.firstRaceStartTime);
   const products = extractTargetProducts(value);
+
+  if (
+    isExcludedAtgNonRacingTrackName(
+      name,
+    )
+  ) {
+    return null;
+  }
+
   const parsedCountry = parseCountryCode(value);
   const isSwedish = parsedCountry === "SE" || isSwedishTrackName(name);
 
