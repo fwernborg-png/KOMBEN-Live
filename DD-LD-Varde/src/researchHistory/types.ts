@@ -2,7 +2,8 @@ export type ResearchSelection =
   | "MOST_SHORTENED"
   | "SMOOTHEST"
   | "FAVORITE"
-  | "ALL_RUNNERS";
+  | "ALL_RUNNERS"
+  | "STRONG_STAR";
 
 export type ResearchIndicatorFilter =
   boolean | null;
@@ -29,6 +30,8 @@ export type ResearchGrouping =
 export type ResearchHistoryFilters = {
   dateFrom: string;
   dateTo: string;
+
+  countryCode: string;
 
   selection: ResearchSelection;
 
@@ -79,7 +82,10 @@ export type ResearchHistoryOptions = {
 
   raceCount: number;
 
+  countries: string[];
   tracks: string[];
+  tracksByCountry: Record<string, string[]>;
+
   distances: number[];
   startMethods: string[];
 

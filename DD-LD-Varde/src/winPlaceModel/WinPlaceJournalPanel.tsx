@@ -80,6 +80,8 @@ function buildStrongStarHistoryFilters(
 
     selection: "ALL_RUNNERS",
 
+    countryCode: "",
+
     startMethod: "",
     distanceMeters: null,
 

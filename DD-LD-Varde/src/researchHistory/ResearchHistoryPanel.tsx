@@ -11,6 +11,10 @@ import {
 } from "./analytics";
 
 import {
+  STRONG_STAR_RULE_V1,
+} from "../strongStar";
+
+import {
   loadResearchHistoryOptions,
   loadResearchHistoryRows,
 } from "./repository";
@@ -36,7 +40,10 @@ const DEFAULT_OPTIONS:
 
     raceCount: 0,
 
+    countries: [],
     tracks: [],
+    tracksByCountry: {},
+
     distances: [],
     startMethods: [],
 
@@ -116,6 +123,37 @@ const INDICATOR_FILTER_DEFINITIONS = [
   chipLabel: string;
 }>;
 
+const COUNTRY_FILTER_OPTIONS = [
+  {
+    code: "SE",
+    label: "Sverige",
+  },
+  {
+    code: "NO",
+    label: "Norge",
+  },
+  {
+    code: "DK",
+    label: "Danmark",
+  },
+  {
+    code: "FR",
+    label: "Frankrike",
+  },
+] as const;
+
+function countryFilterLabel(
+  value: string,
+): string {
+  return (
+    COUNTRY_FILTER_OPTIONS.find(
+      (item) =>
+        item.code === value,
+    )?.label ??
+    value
+  );
+}
+
 function trackFilterLabel(
   value: string,
 ): string {
@@ -182,6 +220,8 @@ function buildInitialFilters(
     dateFrom,
     dateTo,
 
+    countryCode: "",
+
     selection:
       "MOST_SHORTENED",
 
@@ -230,6 +270,10 @@ function buildInitialFilters(
 function selectionLabel(
   value: ResearchSelection,
 ): string {
+  if (value === "STRONG_STAR") {
+    return "⭐ Stjärnhästar";
+  }
+
   if (value === "ALL_RUNNERS") {
     return "Alla startande hästar";
   }
@@ -613,6 +657,14 @@ function activeQuestion(
     ),
   ];
 
+  if (filters.countryCode) {
+    parts.push(
+      countryFilterLabel(
+        filters.countryCode,
+      ),
+    );
+  }
+
   if (filters.startMethod) {
     parts.push(
       filters.startMethod === "AUTO"
@@ -980,6 +1032,73 @@ export function ResearchHistoryPanel() {
     );
   }
 
+  function applySelection(
+    selection: ResearchSelection,
+  ) {
+    setFilters(
+      (current) => {
+        if (
+          selection ===
+          "STRONG_STAR"
+        ) {
+          return {
+            ...current,
+
+            selection,
+
+            minStrength:
+              STRONG_STAR_RULE_V1
+                .strengthTotal,
+
+            maxStrength:
+              STRONG_STAR_RULE_V1
+                .strengthTotal,
+
+            krTopFour:
+              STRONG_STAR_RULE_V1
+                .krTopFour,
+
+            spTopFour:
+              STRONG_STAR_RULE_V1
+                .spTopFour,
+
+            oddsIndicatorTopFour:
+              STRONG_STAR_RULE_V1
+                .oddsIndicatorTopFour,
+
+            completeOnly: true,
+          };
+        }
+
+        if (
+          current.selection ===
+          "STRONG_STAR"
+        ) {
+          return {
+            ...current,
+
+            selection,
+
+            minStrength: null,
+            maxStrength: null,
+
+            krTopFour: null,
+            spTopFour: null,
+            oddsIndicatorTopFour:
+              null,
+
+            completeOnly: false,
+          };
+        }
+
+        return {
+          ...current,
+          selection,
+        };
+      },
+    );
+  }
+
   function updateNumber(
     key: NumericFilterKey,
     rawValue: string,
@@ -1092,6 +1211,13 @@ export function ResearchHistoryPanel() {
   const activeFilterLabels: string[] = [
     `Urval: ${selectionLabel(filters.selection)}`,
     `Datum: ${filters.dateFrom || "–"} – ${filters.dateTo || "–"}`,
+    `Land: ${
+      filters.countryCode
+        ? countryFilterLabel(
+            filters.countryCode,
+          )
+        : "Alla"
+    }`,
     `Startmetod: ${filters.startMethod || "Alla"}`,
   ];
 
@@ -1164,6 +1290,15 @@ export function ResearchHistoryPanel() {
       );
     }
   }
+
+  const availableTracks =
+    filters.countryCode
+      ? (
+          options.tracksByCountry[
+            filters.countryCode
+          ] ?? []
+        )
+      : options.tracks;
 
   const completedRows =
     rows.filter(
@@ -1366,8 +1501,7 @@ export function ResearchHistoryPanel() {
                 onChange={(
                   event,
                 ) =>
-                  updateFilter(
-                    "selection",
+                  applySelection(
                     event.target
                       .value as ResearchSelection,
                   )
@@ -1375,6 +1509,10 @@ export function ResearchHistoryPanel() {
               >
                 <option value="ALL_RUNNERS">
                   Alla startande hästar
+                </option>
+
+                <option value="STRONG_STAR">
+                  ⭐ Stjärnhästar
                 </option>
 
                 <option value="MOST_SHORTENED">
@@ -1856,10 +1994,49 @@ export function ResearchHistoryPanel() {
 
         <fieldset className="research-filter-section">
           <legend>
-            4. Bana och kusk
+            4. Land, bana och kusk
           </legend>
 
           <div className="research-filter-grid">
+            <label>
+              <span>Land</span>
+
+              <select
+                value={
+                  filters.countryCode
+                }
+                onChange={(
+                  event,
+                ) => {
+                  const countryCode =
+                    event.target.value;
+
+                  setFilters(
+                    (current) => ({
+                      ...current,
+                      countryCode,
+                      trackName: "",
+                    }),
+                  );
+                }}
+              >
+                <option value="">
+                  Alla länder
+                </option>
+
+                {COUNTRY_FILTER_OPTIONS.map(
+                  (country) => (
+                    <option
+                      key={country.code}
+                      value={country.code}
+                    >
+                      {country.label}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
             <label>
               <span>Bana</span>
 
@@ -1879,7 +2056,7 @@ export function ResearchHistoryPanel() {
                 <option value="">
                   Alla banor
                 </option>
-{options.tracks.map(
+{availableTracks.map(
                   (track) => (
                     <option
                       key={track}

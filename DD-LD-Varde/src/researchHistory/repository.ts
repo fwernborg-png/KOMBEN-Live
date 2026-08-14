@@ -1,5 +1,9 @@
 import { supabase } from "../lib/supabase";
 
+import {
+  STRONG_STAR_RULE_V1,
+} from "../strongStar";
+
 import type {
   ResearchHistoryFilters,
   ResearchHistoryOptions,
@@ -125,6 +129,30 @@ function asStringArray(
     .filter(Boolean);
 }
 
+function asStringArrayMap(
+  value: unknown,
+): Record<string, string[]> {
+  const record =
+    asRecord(value);
+
+  if (!record) {
+    return {};
+  }
+
+  const result:
+    Record<string, string[]> = {};
+
+  for (const [
+    key,
+    item,
+  ] of Object.entries(record)) {
+    result[key] =
+      asStringArray(item);
+  }
+
+  return result;
+}
+
 function asNumberArray(
   value: unknown,
 ): number[] {
@@ -147,7 +175,8 @@ function parseSelection(
   if (
     value === "SMOOTHEST" ||
     value === "FAVORITE" ||
-    value === "ALL_RUNNERS"
+    value === "ALL_RUNNERS" ||
+    value === "STRONG_STAR"
   ) {
     return value;
   }
@@ -437,7 +466,7 @@ export async function loadResearchHistoryOptions():
     data,
     error,
   } = await supabase.rpc(
-    "research_trot_history_options_v1",
+    "research_trot_history_options_v2",
   );
 
   if (error) {
@@ -461,7 +490,10 @@ export async function loadResearchHistoryOptions():
 
       raceCount: 0,
 
+      countries: [],
       tracks: [],
+      tracksByCountry: {},
+
       distances: [],
       startMethods: [],
 
@@ -489,9 +521,19 @@ export async function loadResearchHistoryOptions():
         row.race_count,
       ),
 
+    countries:
+      asStringArray(
+        row.countries,
+      ),
+
     tracks:
       asStringArray(
         row.tracks,
+      ),
+
+    tracksByCountry:
+      asStringArrayMap(
+        row.tracks_by_country,
       ),
 
     distances:
@@ -530,11 +572,20 @@ async function loadResearchHistoryRowsForTrack(
   filters: ResearchHistoryFilters,
   trackName: string | null,
 ): Promise<ResearchHistoryRow[]> {
+  const strongStar =
+    filters.selection ===
+    "STRONG_STAR";
+
+  const databaseSelection =
+    strongStar
+      ? "ALL_RUNNERS"
+      : filters.selection;
+
   const {
     data,
     error,
   } = await supabase.rpc(
-    "research_trot_history_rows_v1",
+    "research_trot_history_rows_v2",
     {
       p_date_from:
         filters.dateFrom || null,
@@ -543,13 +594,16 @@ async function loadResearchHistoryRowsForTrack(
         filters.dateTo || null,
 
       p_selection:
-        filters.selection,
+        databaseSelection,
 
       p_start_method:
         filters.startMethod || null,
 
       p_distance_meters:
         filters.distanceMeters,
+
+      p_country_code:
+        filters.countryCode || null,
 
       p_track_name:
         trackName,
@@ -582,13 +636,19 @@ async function loadResearchHistoryRowsForTrack(
         filters.maxStarters,
 
       p_min_strength:
-        filters.minStrength,
+        strongStar
+          ? STRONG_STAR_RULE_V1.strengthTotal
+          : filters.minStrength,
 
       p_max_strength:
-        filters.maxStrength,
+        strongStar
+          ? STRONG_STAR_RULE_V1.strengthTotal
+          : filters.maxStrength,
 
       p_kr_top4:
-        filters.krTopFour,
+        strongStar
+          ? STRONG_STAR_RULE_V1.krTopFour
+          : filters.krTopFour,
 
       p_st_top4:
         filters.stTopFour,
@@ -597,13 +657,18 @@ async function loadResearchHistoryRowsForTrack(
         filters.driverTopFour,
 
       p_sp_top4:
-        filters.spTopFour,
+        strongStar
+          ? STRONG_STAR_RULE_V1.spTopFour
+          : filters.spTopFour,
 
       p_gallop_top4:
         filters.gallopTopFour,
 
       p_odds_indicator_top4:
-        filters.oddsIndicatorTopFour,
+        strongStar
+          ? STRONG_STAR_RULE_V1
+              .oddsIndicatorTopFour
+          : filters.oddsIndicatorTopFour,
 
       p_min_drop_percent:
         filters.minDropPercent,
@@ -624,7 +689,9 @@ async function loadResearchHistoryRowsForTrack(
         filters.maxLockOdds,
 
       p_complete_only:
-        filters.completeOnly,
+        strongStar
+          ? true
+          : filters.completeOnly,
 
       p_limit:
         filters.limit,
@@ -641,7 +708,7 @@ async function loadResearchHistoryRowsForTrack(
     return [];
   }
 
-  return data
+  const parsedRows = data
     .map(parseHistoryRow)
     .filter(
       (
@@ -649,6 +716,18 @@ async function loadResearchHistoryRowsForTrack(
       ): row is ResearchHistoryRow =>
         row !== null,
     );
+
+  if (!strongStar) {
+    return parsedRows;
+  }
+
+  return parsedRows.map(
+    (row) => ({
+      ...row,
+      selectionKind:
+        "STRONG_STAR",
+    }),
+  );
 }
 
 export async function loadResearchHistoryRows(
