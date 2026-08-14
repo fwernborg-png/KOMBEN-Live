@@ -35,13 +35,20 @@ export function shouldIncludeResearchTrack(
    * Research:
    * - all svensk racing som tidigare
    * - all galopp oavsett land
+   * - all trav oavsett land
    *
-   * Utländsk trav öppnas alltså INTE.
+   * Spelstrategierna påverkas inte.
+   * De fortsätter vara Sverige-only via
+   * shouldIncludeStrategyTrack().
    */
-  return (
-    countryCode === "SE" ||
+  const normalizedSport =
     normalizeCalendarSport(
       sport,
-    ) === "gallop"
+    );
+
+  return (
+    countryCode === "SE" ||
+    normalizedSport === "gallop" ||
+    normalizedSport === "trot"
   );
 }

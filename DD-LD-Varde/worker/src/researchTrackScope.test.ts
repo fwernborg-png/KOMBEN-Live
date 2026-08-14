@@ -67,19 +67,38 @@ describe(
     );
 
     it(
-      "does not open foreign trot",
+      "includes foreign trot for research",
       () => {
         expect(
           shouldIncludeResearchTrack({
             countryCode: "FR",
             sport: "trot",
           }),
-        ).toBe(false);
+        ).toBe(true);
 
         expect(
           shouldIncludeResearchTrack({
             countryCode: "DK",
             sport: "trot",
+          }),
+        ).toBe(true);
+
+        expect(
+          shouldIncludeResearchTrack({
+            countryCode: "NO",
+            sport: "trot",
+          }),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "still rejects unknown foreign sports",
+      () => {
+        expect(
+          shouldIncludeResearchTrack({
+            countryCode: "FR",
+            sport: "jumping",
           }),
         ).toBe(false);
       },
