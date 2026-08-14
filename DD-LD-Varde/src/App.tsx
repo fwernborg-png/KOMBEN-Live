@@ -52,7 +52,8 @@ import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 import { DailyResultPeek } from "./winPlaceModel/DailyResultPeek";
 import { loadWinPlaceBetsByDate } from "./winPlaceModel/repository";
 import { ResearchHistoryHub } from "./researchHistory/ResearchHistoryHub";
-import { loadResearchHistoryRows } from "./researchHistory/repository";
+import { loadLiveLockStrength } from "./liveLockRepository";
+import { isStrongStarProfile } from "./strongStar";
 import { SpeedAnalysisPanel } from "./speedAnalysis/SpeedAnalysisPanel";
 import {
   findSpeedAnalysisMarker,
@@ -389,6 +390,10 @@ type LockedStrengthSnapshot = {
   source: "LOCAL" | "BET" | "RESEARCH";
   ruleVersion: string | null;
   secondsBeforeStart: number | null;
+
+  krTopFour?: boolean;
+  spTopFour?: boolean;
+  oddsIndicatorTopFour?: boolean;
 };
 
 type LockedStrategyMarker = {
@@ -2582,8 +2587,6 @@ export default function App() {
       return;
     }
 
-    const currentNowMs = Date.now();
-
     const lockTimeMs =
       getRaceLockTimeMs(
         researchRace.startTime,
@@ -2592,87 +2595,49 @@ export default function App() {
 
     if (
       !Number.isFinite(lockTimeMs) ||
-      currentNowMs < lockTimeMs
+      Date.now() < lockTimeMs
     ) {
       return;
     }
 
     let cancelled = false;
 
-    void loadResearchHistoryRows({
-      dateFrom: date,
-      dateTo: date,
+    void loadLiveLockStrength({
+      raceDate:
+        date,
 
-      selection: "ALL_RUNNERS",
+      trackName:
+        researchTrack.name,
 
-      startMethod: "",
-      distanceMeters: null,
-
-      trackName: researchTrack.name,
-      driverName: "",
-
-      startLane: null,
-      laneGroup: "ALL",
-
-      raceCategory: "",
-      raceClassCode: "",
-
-      earningsMin: null,
-      earningsMax: null,
-
-      minStarters: null,
-      maxStarters: null,
-
-      minStrength: null,
-      maxStrength: null,
-
-      krTopFour: null,
-      stTopFour: null,
-      driverTopFour: null,
-      spTopFour: null,
-      gallopTopFour: null,
-      oddsIndicatorTopFour: null,
-
-      minDropPercent: null,
-      maxDropPercent: null,
-
-      minStartOdds: null,
-      maxStartOdds: null,
-
-      minLockOdds: null,
-      maxLockOdds: null,
-
-      completeOnly: false,
-      limit: 500,
+      raceNumber:
+        researchRace.raceNumber,
     })
       .then((rows) => {
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
 
         setLockedStrengthByRunner(
           (current) => {
             let changed = false;
-            const merged = { ...current };
+
+            const merged = {
+              ...current,
+            };
 
             for (const row of rows) {
-              if (
-                row.strengthTotal === null ||
-                !row.indicatorDataComplete
-              ) {
-                continue;
-              }
-
               const key =
                 lockedRunnerKey(
-                  row.raceDate,
-                  row.trackName,
-                  row.raceNumber,
+                  date,
+                  researchTrack.name,
+                  researchRace.raceNumber,
                   row.runnerNumber,
                 );
 
-              const plannedStartMs =
-                row.plannedStartTime
+              const parsedSnapshotMs =
+                row.actualSnapshotTime
                   ? Date.parse(
-                      row.plannedStartTime,
+                      row.actualSnapshotTime,
                     )
                   : Number.NaN;
 
@@ -2680,16 +2645,31 @@ export default function App() {
                 LockedStrengthSnapshot = {
                   strength:
                     row.strengthTotal,
+
                   lockedAtMs:
                     Number.isFinite(
-                      plannedStartMs,
+                      parsedSnapshotMs,
                     )
-                      ? plannedStartMs -
-                        90_000
-                      : 0,
-                  source: "RESEARCH",
-                  ruleVersion: null,
-                  secondsBeforeStart: null,
+                      ? parsedSnapshotMs
+                      : lockTimeMs,
+
+                  source:
+                    "RESEARCH",
+
+                  ruleVersion:
+                    null,
+
+                  secondsBeforeStart:
+                    90,
+
+                  krTopFour:
+                    row.krTopFour,
+
+                  spTopFour:
+                    row.spTopFour,
+
+                  oddsIndicatorTopFour:
+                    row.oddsIndicatorTopFour,
                 };
 
               const existing =
@@ -2700,9 +2680,17 @@ export default function App() {
                 existing.source !==
                   "RESEARCH" ||
                 existing.strength !==
-                  snapshot.strength
+                  snapshot.strength ||
+                existing.krTopFour !==
+                  snapshot.krTopFour ||
+                existing.spTopFour !==
+                  snapshot.spTopFour ||
+                existing.oddsIndicatorTopFour !==
+                  snapshot.oddsIndicatorTopFour
               ) {
-                merged[key] = snapshot;
+                merged[key] =
+                  snapshot;
+
                 changed = true;
               }
             }
@@ -2713,12 +2701,14 @@ export default function App() {
           },
         );
       })
-      .catch((researchError) => {
-        if (cancelled) return;
+      .catch((lockError) => {
+        if (cancelled) {
+          return;
+        }
 
         console.warn(
-          "Kunde inte läsa fryst LOCK-styrka",
-          researchError,
+          "Kunde inte läsa serverns LIVE LOCK-styrka",
+          lockError,
         );
       });
 
@@ -3304,10 +3294,39 @@ export default function App() {
             continue;
           }
 
-          const lockStrength =
+          const lockRunnerInsights =
             lockInsights.byRunner[
               runner.number
-            ]?.strength ?? 0;
+            ];
+
+          const lockStrength =
+            lockRunnerInsights
+              ?.strength ?? 0;
+
+          const lockIndicators =
+            lockRunnerInsights
+              ?.indicators ?? [];
+
+          const lockKrTopFour =
+            lockIndicators.some(
+              (indicator) =>
+                indicator.key === "KR" &&
+                indicator.positive,
+            );
+
+          const lockSpTopFour =
+            lockIndicators.some(
+              (indicator) =>
+                indicator.key === "SP" &&
+                indicator.positive,
+            );
+
+          const lockOddsTopFour =
+            lockIndicators.some(
+              (indicator) =>
+                indicator.key === "ODD" &&
+                indicator.positive,
+            );
 
           if (
             existing?.source ===
@@ -3333,6 +3352,15 @@ export default function App() {
 
             secondsBeforeStart:
               90,
+
+            krTopFour:
+              lockKrTopFour,
+
+            spTopFour:
+              lockSpTopFour,
+
+            oddsIndicatorTopFour:
+              lockOddsTopFour,
           };
 
           changed = true;
@@ -6225,6 +6253,101 @@ export default function App() {
     );
   }
 
+  function runnerStrongStar(
+    runner: TrendRunner,
+  ) {
+    const runnerInfo =
+      raceInsights.byRunner[
+        runner.number
+      ];
+
+    if (
+      selectedTrack &&
+      selectedRace
+    ) {
+      const key =
+        lockedRunnerKey(
+          date,
+          selectedTrack.name,
+          selectedRace.raceNumber,
+          runner.number,
+        );
+
+      const locked =
+        lockedStrengthByRunner[key];
+
+      if (locked) {
+        return isStrongStarProfile({
+          strengthTotal:
+            locked.strength,
+
+          krTopFour:
+            locked.krTopFour === true,
+
+          spTopFour:
+            locked.spTopFour === true,
+
+          oddsIndicatorTopFour:
+            locked.oddsIndicatorTopFour ===
+            true,
+        });
+      }
+
+      if (selectedRace.startTime) {
+        const lockTimeMs =
+          getRaceLockTimeMs(
+            selectedRace.startTime,
+            PLACE_RULE_CONFIG_V1,
+          );
+
+        /*
+         * Efter T-90 får aldrig aktuella
+         * efterhandsvärden skapa en ny ★.
+         * Vänta i så fall på LOCAL/server-LOCK.
+         */
+        if (
+          Number.isFinite(lockTimeMs) &&
+          nowMs >= lockTimeMs
+        ) {
+          return false;
+        }
+      }
+    }
+
+    /*
+     * Före LOCK får ★ vara preliminär.
+     * Vid T-90 fryses exakt samma typ av profil.
+     */
+    const indicators =
+      runnerInfo?.indicators ?? [];
+
+    return isStrongStarProfile({
+      strengthTotal:
+        runnerInfo?.strength ?? null,
+
+      krTopFour:
+        indicators.some(
+          (indicator) =>
+            indicator.key === "KR" &&
+            indicator.positive,
+        ),
+
+      spTopFour:
+        indicators.some(
+          (indicator) =>
+            indicator.key === "SP" &&
+            indicator.positive,
+        ),
+
+      oddsIndicatorTopFour:
+        indicators.some(
+          (indicator) =>
+            indicator.key === "ODD" &&
+            indicator.positive,
+        ),
+    });
+  }
+
           function renderOverviewTab() {
     return (
       <section className="tab-section">
@@ -7131,7 +7254,7 @@ export default function App() {
                               <span>{consistency == null ? "–" : consistency.toFixed(2).replace(".", ",")}</span>
                               <span
                                 className={`strength-cell ${
-                                  runnerStrength(runner) === 3
+                                  runnerStrongStar(runner)
                                     ? "strength-cell--sweetspot"
                                     : runnerStrength(runner) >= 6
                                       ? "strength-cell--strong"
@@ -7142,16 +7265,16 @@ export default function App() {
                                           : "strength-cell--neutral"
                                 }`}
                                 title={
-                                  lockedStrengthSnapshot
-                                    ? `Låst styrka: ${runnerStrength(runner)} av 6`
-                                    : runnerStrength(runner) === 3
-                                      ? "Exakt styrka 3/6 – Diamantens sweet spot"
+                                  runnerStrongStar(runner)
+                                    ? `${lockedStrengthSnapshot ? "Låst " : ""}★ Stark stjärna: 3/6 med KR + ODD utan SP`
+                                    : lockedStrengthSnapshot
+                                      ? `Låst styrka: ${runnerStrength(runner)} av 6`
                                       : `Styrka: ${runnerStrength(runner)} av 6. Klicka på raden för detaljer.`
                                 }
                               >
                                 <strong>
                                   {runnerStrength(runner)}/6
-                                  {runnerStrength(runner) === 3 ? (
+                                  {runnerStrongStar(runner) ? (
                                     <span
                                       className="strength-sweetspot-star"
                                       aria-hidden="true"
