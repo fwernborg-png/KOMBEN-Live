@@ -108,8 +108,12 @@ function buildFilters(
     minHandicapRating: null,
     maxHandicapRating: null,
 
+    handicapRank: "",
+
     minCarriedWeightKg: null,
     maxCarriedWeightKg: null,
+
+    weightRank: "",
 
     minDropPercent: null,
     maxDropPercent: null,
@@ -1396,6 +1400,50 @@ export function ResearchGallopPanel() {
 
           <label>
             <span>
+              HCP-rank
+            </span>
+
+            <select
+              value={
+                filters.handicapRank
+              }
+              onChange={(
+                event,
+              ) =>
+                updateFilter(
+                  "handicapRank",
+                  event.target.value as GallopHistoryFilters["handicapRank"],
+                )
+              }
+            >
+              <option value="">
+                Alla
+              </option>
+
+              <option value="1">
+                1 – högst HCP
+              </option>
+
+              <option value="2">
+                2
+              </option>
+
+              <option value="3">
+                3
+              </option>
+
+              <option value="4">
+                4
+              </option>
+
+              <option value="5+">
+                5+
+              </option>
+            </select>
+          </label>
+
+          <label>
+            <span>
               Min vikt kg
             </span>
 
@@ -1442,6 +1490,50 @@ export function ResearchGallopPanel() {
                 )
               }
             />
+          </label>
+
+          <label>
+            <span>
+              Viktrank
+            </span>
+
+            <select
+              value={
+                filters.weightRank
+              }
+              onChange={(
+                event,
+              ) =>
+                updateFilter(
+                  "weightRank",
+                  event.target.value as GallopHistoryFilters["weightRank"],
+                )
+              }
+            >
+              <option value="">
+                Alla
+              </option>
+
+              <option value="1">
+                1 – högst vikt
+              </option>
+
+              <option value="2">
+                2
+              </option>
+
+              <option value="3">
+                3
+              </option>
+
+              <option value="4">
+                4
+              </option>
+
+              <option value="5+">
+                5+
+              </option>
+            </select>
           </label>
 
           <label>

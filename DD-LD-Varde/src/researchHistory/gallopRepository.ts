@@ -11,6 +11,14 @@ export type GallopSelection =
   | "S2"
   | "ALL_RUNNERS";
 
+export type GallopRankFilter =
+  | ""
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5+";
+
 export type GallopHistoryFilters = {
   dateFrom: string;
   dateTo: string;
@@ -37,11 +45,17 @@ export type GallopHistoryFilters = {
   maxHandicapRating:
     number | null;
 
+  handicapRank:
+    GallopRankFilter;
+
   minCarriedWeightKg:
     number | null;
 
   maxCarriedWeightKg:
     number | null;
+
+  weightRank:
+    GallopRankFilter;
 
   minDropPercent:
     number | null;
@@ -631,7 +645,7 @@ loadGallopHistoryRows(
     data,
     error,
   } = await supabase.rpc(
-    "research_gallop_history_rows_v1",
+    "research_gallop_history_rows_v2",
     {
       p_date_from:
         filters.dateFrom ||
@@ -671,11 +685,19 @@ loadGallopHistoryRows(
       p_max_handicap_rating:
         filters.maxHandicapRating,
 
+      p_handicap_rank:
+        filters.handicapRank ||
+        null,
+
       p_min_carried_weight_kg:
         filters.minCarriedWeightKg,
 
       p_max_carried_weight_kg:
         filters.maxCarriedWeightKg,
+
+      p_weight_rank:
+        filters.weightRank ||
+        null,
 
       p_min_drop_percent:
         filters.minDropPercent,
