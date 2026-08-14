@@ -11,10 +11,6 @@ import {
 } from "./analytics";
 
 import {
-  STRONG_STAR_RULE_V1,
-} from "../strongStar";
-
-import {
   loadResearchHistoryOptions,
   loadResearchHistoryRows,
 } from "./repository";
@@ -228,49 +224,6 @@ function buildInitialFilters(
 
     completeOnly: false,
     limit: 5000,
-  };
-}
-
-function buildStrongStarFilters(
-  options: ResearchHistoryOptions,
-): ResearchHistoryFilters {
-  const base =
-    buildInitialFilters(options);
-
-  return {
-    ...base,
-
-    // Hela insamlingsperioden.
-    dateFrom:
-      options.minDate ??
-      base.dateFrom,
-
-    dateTo:
-      options.maxDate ??
-      base.dateTo,
-
-    // Alla hästar måste kunna testas mot stjärnregeln.
-    selection:
-      "ALL_RUNNERS",
-
-    minStrength:
-      STRONG_STAR_RULE_V1.strengthTotal,
-
-    maxStrength:
-      STRONG_STAR_RULE_V1.strengthTotal,
-
-    krTopFour:
-      STRONG_STAR_RULE_V1.krTopFour,
-
-    spTopFour:
-      STRONG_STAR_RULE_V1.spTopFour,
-
-    oddsIndicatorTopFour:
-      STRONG_STAR_RULE_V1.oddsIndicatorTopFour,
-
-    // Pågående lopp ska inte räknas som förluster.
-    completeOnly:
-      true,
   };
 }
 
@@ -1103,21 +1056,6 @@ export function ResearchHistoryPanel() {
     }
   }
 
-  function runStrongStarAnalysis() {
-    const nextFilters =
-      buildStrongStarFilters(
-        options,
-      );
-
-    setFilters(
-      nextFilters,
-    );
-
-    void runAnalysis(
-      nextFilters,
-    );
-  }
-
   function resetFilters() {
     const initial =
       buildInitialFilters(
@@ -1275,16 +1213,6 @@ export function ResearchHistoryPanel() {
         </div>
 
         <div className="research-dashboard-actions">
-          <button
-            type="button"
-            className="research-reset-primary"
-            onClick={runStrongStarAnalysis}
-            disabled={loading}
-            title="3/6 + KR topp 4 + ODD topp 4 + SP inte topp 4"
-          >
-            ⭐ Stjärnhästar – hela historiken
-          </button>
-
           <button
             type="button"
             className="research-reset-primary"

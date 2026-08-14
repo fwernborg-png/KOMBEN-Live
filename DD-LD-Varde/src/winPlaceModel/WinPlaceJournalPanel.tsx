@@ -15,6 +15,8 @@ import {
   computeWinPlaceStats,
   type WinPlaceBetRecord,
   type WinPlaceMarket,
+  type WinPlaceResultOutcome,
+  type WinPlaceResultStatus,
   type WinPlaceStats,
 } from "./journal";
 
@@ -22,12 +24,26 @@ import {
   loadWinPlaceBetsByRange,
 } from "./repository";
 
+import {
+  STRONG_STAR_RULE_V1,
+} from "../strongStar";
+
+import {
+  loadResearchHistoryOptions,
+  loadResearchHistoryRows,
+} from "../researchHistory/repository";
+
+import type {
+  ResearchHistoryFilters,
+  ResearchHistoryRow,
+} from "../researchHistory/types";
+
 type Props = {
   date: string;
   mode: "journal" | "stats";
 };
 
-type PeriodMode = "DAY" | "TEST_PERIOD";
+type PeriodMode = "DAY" | "TEST_PERIOD" | "ALL_COLLECTION";
 
 const TEST_START_DATE = "2026-08-03";
 const TEST_END_DATE = "2026-08-16";
@@ -47,6 +63,235 @@ const ENSAMVARGEN_RULE_VERSION =
 
 const DIAMANTEN_RULE_VERSION =
   "DIAMANTEN_V1.0";
+
+const STRONG_STAR_RULE_VERSION =
+  "STRONG_STAR_V1.0";
+
+const STRONG_STAR_STAKE_OREN =
+  10_000;
+
+function buildStrongStarHistoryFilters(
+  dateFrom: string,
+  dateTo: string,
+): ResearchHistoryFilters {
+  return {
+    dateFrom,
+    dateTo,
+
+    selection: "ALL_RUNNERS",
+
+    startMethod: "",
+    distanceMeters: null,
+
+    trackName: "",
+    driverName: "",
+
+    startLane: null,
+    laneGroup: "ALL",
+
+    raceCategory: "",
+    raceClassCode: "",
+
+    earningsMin: null,
+    earningsMax: null,
+
+    minStarters: null,
+    maxStarters: null,
+
+    minStrength:
+      STRONG_STAR_RULE_V1.strengthTotal,
+
+    maxStrength:
+      STRONG_STAR_RULE_V1.strengthTotal,
+
+    krTopFour:
+      STRONG_STAR_RULE_V1.krTopFour,
+
+    stTopFour: null,
+    driverTopFour: null,
+
+    spTopFour:
+      STRONG_STAR_RULE_V1.spTopFour,
+
+    gallopTopFour: null,
+
+    oddsIndicatorTopFour:
+      STRONG_STAR_RULE_V1.oddsIndicatorTopFour,
+
+    minDropPercent: null,
+    maxDropPercent: null,
+
+    minStartOdds: null,
+    maxStartOdds: null,
+
+    minLockOdds: null,
+    maxLockOdds: null,
+
+    completeOnly: true,
+    limit: 5000,
+  };
+}
+
+function buildStrongStarBetRecords(
+  rows: ResearchHistoryRow[],
+): WinPlaceBetRecord[] {
+  const result: WinPlaceBetRecord[] = [];
+
+  for (const row of rows) {
+    const markets: WinPlaceMarket[] = [
+      "WIN",
+      "PLACE",
+    ];
+
+    for (const market of markets) {
+      const hit =
+        market === "WIN"
+          ? row.winnerOfficial
+          : row.placedOfficial === true;
+
+      const payoutOdds =
+        market === "WIN"
+          ? row.officialWinOddsDecimal
+          : row.officialPlaceOddsDecimal;
+
+      const resultOutcome:
+        WinPlaceResultOutcome =
+        row.betVoid
+          ? "VOID"
+          : hit
+            ? "HIT"
+            : "MISS";
+
+      const resultStatus:
+        WinPlaceResultStatus =
+        row.betVoid
+          ? "VOID"
+          : hit && payoutOdds === null
+            ? "SAKNAR_ODDS"
+            : "RESULT_READY";
+
+      const returnOren =
+        row.betVoid
+          ? 0
+          : hit
+            ? payoutOdds === null
+              ? null
+              : Math.round(
+                  STRONG_STAR_STAKE_OREN *
+                  payoutOdds,
+                )
+            : 0;
+
+      const netOren =
+        returnOren === null
+          ? null
+          : row.betVoid
+            ? 0
+            : returnOren -
+              STRONG_STAR_STAKE_OREN;
+
+      const timestamp =
+        row.plannedStartTime ??
+        `${row.raceDate}T00:00:00`;
+
+      result.push({
+        id:
+          `strong-star:${row.raceKey}:` +
+          `${row.runnerNumber}:${market}`,
+
+        betId:
+          `strong-star:${row.raceKey}:` +
+          `${row.runnerNumber}:${market}`,
+
+        raceId: row.raceKey,
+        ruleVersion:
+          STRONG_STAR_RULE_VERSION,
+
+        market,
+        signalPhase: "BACKTEST",
+
+        date: row.raceDate,
+
+        trackId: 0,
+        trackName: row.trackName,
+        raceNumber: row.raceNumber,
+
+        plannedStartTime: timestamp,
+        lockTime: timestamp,
+        secondsBeforeStart: 90,
+
+        horseNumber: row.runnerNumber,
+        horseName: row.horseName,
+        horseId: null,
+
+        startLane: row.startLane,
+        startMethod: row.startMethod,
+        distanceMeters: row.distanceMeters,
+        starters: row.starters,
+
+        startOdds: row.startOdds ?? 0,
+        lockedWinOdds: row.lockOdds ?? 0,
+
+        oddsDropPercent:
+          row.oddsDropToLockPercent ?? 0,
+
+        cvRaw: row.cvPercent,
+        cvDisplay: row.cvPercent,
+
+        strength:
+          row.strengthTotal ?? 0,
+
+        indicatorsGreen: [
+          "KR",
+          "ODD",
+        ],
+
+        validOddsPoints:
+          row.validOddsPoints,
+
+        stakeOren:
+          STRONG_STAR_STAKE_OREN,
+
+        resultOutcome,
+        resultStatus,
+
+        finishPositionOfficial:
+          row.finishPositionOfficial,
+
+        officialWinOddsDecimal:
+          row.officialWinOddsDecimal,
+
+        placeOddsDecimal:
+          row.officialPlaceOddsDecimal,
+
+        returnOren,
+        netOren,
+
+        roiPct:
+          netOren === null ||
+          row.betVoid
+            ? null
+            : (
+                netOren /
+                STRONG_STAR_STAKE_OREN
+              ) * 100,
+
+        automaticModelBet: false,
+        userActuallyPlayed: false,
+
+        resultSource:
+          "RESEARCH_ARCHIVE",
+
+        resultUpdatedAt: null,
+
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+  }
+
+  return result;
+}
 
 function kronor(oren: number) {
   return new Intl.NumberFormat("sv-SE", {
@@ -323,7 +568,11 @@ export function WinPlaceJournalPanel({
   mode,
 }: Props) {
   const [periodMode, setPeriodMode] =
-    useState<PeriodMode>("DAY");
+    useState<PeriodMode>(
+      mode === "stats"
+        ? "ALL_COLLECTION"
+        : "DAY",
+    );
 
   const [bets, setBets] =
     useState<WinPlaceBetRecord[]>([]);
@@ -340,7 +589,85 @@ export function WinPlaceJournalPanel({
   const [lastUpdatedAt, setLastUpdatedAt] =
     useState<Date | null>(null);
 
+  const [
+    strongStarRows,
+    setStrongStarRows,
+  ] = useState<ResearchHistoryRow[]>([]);
+
+  const [
+    collectionRange,
+    setCollectionRange,
+  ] = useState<{
+    from: string;
+    to: string;
+  } | null>(null);
+
+  useEffect(() => {
+    setPeriodMode(
+      mode === "stats"
+        ? "ALL_COLLECTION"
+        : "DAY",
+    );
+  }, [mode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCollectionRange() {
+      try {
+        const options =
+          await loadResearchHistoryOptions();
+
+        if (cancelled) {
+          return;
+        }
+
+        const from =
+          options.minDate ??
+          TEST_START_DATE;
+
+        const to =
+          options.maxDate &&
+          options.maxDate > date
+            ? options.maxDate
+            : date;
+
+        setCollectionRange({
+          from,
+          to,
+        });
+      } catch {
+        if (!cancelled) {
+          setCollectionRange({
+            from: TEST_START_DATE,
+            to: date,
+          });
+        }
+      }
+    }
+
+    void loadCollectionRange();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [date]);
+
   const dateRange = useMemo(() => {
+    if (periodMode === "ALL_COLLECTION") {
+      return {
+        from:
+          collectionRange?.from ??
+          TEST_START_DATE,
+
+        to:
+          collectionRange?.to ??
+          date,
+
+        label: "Hela insamlingen",
+      };
+    }
+
     if (periodMode === "TEST_PERIOD") {
       return {
         from: TEST_START_DATE,
@@ -354,7 +681,11 @@ export function WinPlaceJournalPanel({
       to: date,
       label: date,
     };
-  }, [date, periodMode]);
+  }, [
+    collectionRange,
+    date,
+    periodMode,
+  ]);
 
   const loadBets = useCallback(
     async (silent = false) => {
@@ -365,14 +696,33 @@ export function WinPlaceJournalPanel({
       }
 
       try {
-        const rows =
-          await loadWinPlaceBetsByRange(
+        const [
+          rows,
+          loadedStrongStarRows,
+        ] = await Promise.all([
+          loadWinPlaceBetsByRange(
             dateRange.from,
             dateRange.to,
             "LIVE",
-          );
+          ),
+
+          mode === "stats"
+            ? loadResearchHistoryRows(
+                buildStrongStarHistoryFilters(
+                  dateRange.from,
+                  dateRange.to,
+                ),
+              )
+            : Promise.resolve(
+                [] as ResearchHistoryRow[],
+              ),
+        ]);
 
         setBets(rows);
+
+        setStrongStarRows(
+          loadedStrongStarRows,
+        );
         setError("");
         setLastUpdatedAt(new Date());
       } catch (loadError) {
@@ -386,7 +736,11 @@ export function WinPlaceJournalPanel({
         setRefreshing(false);
       }
     },
-    [dateRange.from, dateRange.to],
+    [
+      dateRange.from,
+      dateRange.to,
+      mode,
+    ],
   );
 
   useEffect(() => {
@@ -487,36 +841,114 @@ export function WinPlaceJournalPanel({
     [],
   );
 
+  const strongStarBets =
+    useMemo(
+      () =>
+        buildStrongStarBetRecords(
+          strongStarRows,
+        ),
+      [strongStarRows],
+    );
+
   const strategyGroups = useMemo(
-    () =>
-      strategyDefinitions.map((definition) => {
-        const strategyBets = bets.filter(
-          (bet) =>
-            bet.ruleVersion ===
-            definition.ruleVersion,
+    () => {
+      const regularGroups =
+        strategyDefinitions.map(
+          (definition) => {
+            const strategyBets =
+              bets.filter(
+                (bet) =>
+                  bet.ruleVersion ===
+                  definition.ruleVersion,
+              );
+
+            return {
+              ...definition,
+              bets: strategyBets,
+
+              winStats:
+                computeWinPlaceStats(
+                  strategyBets,
+                  "WIN",
+                ),
+
+              placeStats:
+                computeWinPlaceStats(
+                  strategyBets,
+                  "PLACE",
+                ),
+
+              combinedStats:
+                computeWinPlaceStats(
+                  strategyBets,
+                ),
+            };
+          },
         );
 
-        return {
-          ...definition,
-          bets: strategyBets,
-          winStats: computeWinPlaceStats(
-            strategyBets,
+      const strongStarGroup = {
+        ruleVersion:
+          STRONG_STAR_RULE_VERSION,
+
+        title: "⭐ Stjärnhästar",
+
+        description:
+          "3/6 · KR topp 4 · ODD topp 4 · " +
+          "SP inte topp 4 · vinnare + plats · " +
+          "historiskt omräknad",
+
+        className: "is-diamanten",
+
+        winOnly: false,
+        placeOnly: false,
+
+        bets: strongStarBets,
+
+        winStats:
+          computeWinPlaceStats(
+            strongStarBets,
             "WIN",
           ),
-          placeStats: computeWinPlaceStats(
-            strategyBets,
+
+        placeStats:
+          computeWinPlaceStats(
+            strongStarBets,
             "PLACE",
           ),
-          combinedStats:
-            computeWinPlaceStats(strategyBets),
-        };
-      }),
-    [bets, strategyDefinitions],
+
+        combinedStats:
+          computeWinPlaceStats(
+            strongStarBets,
+          ),
+      };
+
+      return [
+        strongStarGroup,
+        ...regularGroups,
+      ];
+    },
+    [
+      bets,
+      strongStarBets,
+      strategyDefinitions,
+    ],
   );
 
   const combinedStats = useMemo(
-    () => computeWinPlaceStats(bets),
-    [bets],
+    () =>
+      computeWinPlaceStats(
+        mode === "stats"
+          ? [
+              ...bets,
+              ...strongStarBets,
+            ]
+          : bets,
+      ),
+    [
+      bets,
+      mode,
+      strongStarBets,
+    ],
   );
 
   const raceGroups = useMemo(() => {
@@ -581,6 +1013,12 @@ export function WinPlaceJournalPanel({
     );
   }, [bets]);
 
+  const overallSignalCount =
+    mode === "stats"
+      ? raceGroups.length +
+        strongStarRows.length
+      : raceGroups.length;
+
   return (
     <section className="signal-journal-shell">
       <div className="signal-journal-toolbar">
@@ -633,6 +1071,25 @@ export function WinPlaceJournalPanel({
             >
               Hela testperioden
             </button>
+
+            {mode === "stats" ? (
+              <button
+                type="button"
+                className={
+                  periodMode ===
+                  "ALL_COLLECTION"
+                    ? "is-active"
+                    : ""
+                }
+                onClick={() =>
+                  setPeriodMode(
+                    "ALL_COLLECTION",
+                  )
+                }
+              >
+                Hela insamlingen
+              </button>
+            ) : null}
           </div>
 
           <button
@@ -662,7 +1119,7 @@ export function WinPlaceJournalPanel({
       <div className="signal-overall-summary">
         <SummaryCard
           label="Signaler"
-          value={String(raceGroups.length)}
+          value={String(overallSignalCount)}
         />
 
         <SummaryCard
@@ -736,6 +1193,12 @@ export function WinPlaceJournalPanel({
           framåt från 10 augusti.
           Diamanten följs framåt från
           11 augusti och redovisas separat.
+          Stjärnhästar räknas om från
+          forskningsarkivets LOCK-data med
+          dagens stjärnregel och ingår i
+          Strategistatistikens total med
+          100 kr vinnare + 100 kr plats
+          per stjärnhäst.
         </span>
       </div>
 
