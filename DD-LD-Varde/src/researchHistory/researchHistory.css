@@ -2452,3 +2452,549 @@
 .research-sport-tabs button.is-active::after {
   display: none;
 }
+
+
+/* KOMBEN RESEARCH FILTER WORKSPACE V3 */
+
+.research-dashboard-light .research-filter-panel-v2 {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: start;
+  gap: 14px;
+  padding: 16px;
+}
+
+.research-dashboard-light .research-filter-group-title {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 2px 7px;
+  border-bottom: 1px solid #e2e8f1;
+}
+
+.research-dashboard-light
+.research-filter-group-title > div {
+  display: grid;
+  gap: 2px;
+}
+
+.research-dashboard-light
+.research-filter-group-title span {
+  color: #071b43;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.research-dashboard-light
+.research-filter-group-title small {
+  color: #71809a;
+  font-size: 10px;
+}
+
+.research-dashboard-light
+.research-filter-group-title.is-base {
+  order: 0;
+}
+
+.research-dashboard-light
+.research-filter-group-title.is-analysis {
+  order: 3;
+  margin-top: 3px;
+}
+
+.research-dashboard-light .research-filter-section {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid #dde5ef;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow:
+    0 2px 8px rgba(24, 50, 88, 0.035);
+}
+
+.research-dashboard-light
+.research-filter-section legend {
+  padding: 0 6px;
+  color: #102c5a;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.045em;
+}
+
+/* GRUNDURVAL */
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(1) {
+  order: 1;
+  grid-column: span 7;
+}
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(4) {
+  order: 2;
+  grid-column: span 5;
+}
+
+/* ANALYS */
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(2) {
+  order: 4;
+  grid-column: span 6;
+}
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(6) {
+  order: 5;
+  grid-column: span 6;
+}
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(7) {
+  order: 6;
+  grid-column: 1 / -1;
+}
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(7)
+.research-filter-grid {
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+}
+
+/* AVANCERAT */
+
+.research-dashboard-light
+.research-advanced-toggle {
+  order: 7;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 14px;
+  width: 100%;
+  min-height: 52px;
+  padding: 9px 14px;
+  text-align: left;
+  cursor: pointer;
+  color: #17355f;
+  border: 1px solid #dce5f0;
+  border-radius: 10px;
+  background: #f8fafd;
+}
+
+.research-dashboard-light
+.research-advanced-toggle:hover {
+  border-color: #bfd0e5;
+  background: #f3f7fc;
+}
+
+.research-dashboard-light
+.research-advanced-toggle span {
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.research-dashboard-light
+.research-advanced-toggle small {
+  grid-column: 1;
+  color: #7889a2;
+  font-size: 10px;
+}
+
+.research-dashboard-light
+.research-advanced-toggle strong {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  color: #1264e8;
+  font-size: 23px;
+  font-weight: 500;
+}
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(3) {
+  order: 8;
+  grid-column: span 4;
+}
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(5) {
+  order: 9;
+  grid-column: span 5;
+}
+
+.research-dashboard-light
+.research-filter-section:nth-of-type(8) {
+  order: 10;
+  grid-column: span 3;
+}
+
+.research-dashboard-light
+.research-filter-panel-v2:not(.is-advanced-open)
+.research-filter-section:nth-of-type(3),
+.research-dashboard-light
+.research-filter-panel-v2:not(.is-advanced-open)
+.research-filter-section:nth-of-type(5),
+.research-dashboard-light
+.research-filter-panel-v2:not(.is-advanced-open)
+.research-filter-section:nth-of-type(8) {
+  display: none;
+}
+
+.research-dashboard-light
+.research-filter-panel-v2.is-advanced-open
+.research-filter-section:nth-of-type(3),
+.research-dashboard-light
+.research-filter-panel-v2.is-advanced-open
+.research-filter-section:nth-of-type(5),
+.research-dashboard-light
+.research-filter-panel-v2.is-advanced-open
+.research-filter-section:nth-of-type(8) {
+  background: #fbfcfe;
+}
+
+/* FORMULÄR */
+
+.research-dashboard-light
+.research-filter-panel-v2 label > span {
+  overflow: visible;
+  color: #314b72;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.research-dashboard-light
+.research-filter-panel-v2 input,
+.research-dashboard-light
+.research-filter-panel-v2 select {
+  min-height: 40px;
+  border-color: #d5dfeb;
+  border-radius: 8px;
+}
+
+.research-dashboard-light
+.research-filter-panel-v2 input:hover,
+.research-dashboard-light
+.research-filter-panel-v2 select:hover {
+  border-color: #b9c9dd;
+}
+
+.research-dashboard-light
+.research-preset-row {
+  gap: 7px;
+}
+
+.research-dashboard-light
+.research-preset-row button {
+  min-height: 33px;
+  font-size: 10px;
+}
+
+.research-dashboard-light
+.research-active-filter-chips span {
+  padding: 6px 9px;
+  color: #234f86;
+  border-color: #d9e5f3;
+  background: #f7fafe;
+}
+
+/* Den övre knappraden är huvudåtgärden. */
+.research-dashboard-light
+.research-filter-actions-v2 {
+  display: none;
+}
+
+/* MELLANSTOR SKÄRM */
+
+@media (max-width: 1180px) {
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(1),
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(4),
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(2),
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(6) {
+    grid-column: span 6;
+  }
+
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(7) {
+    grid-column: 1 / -1;
+  }
+
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(3),
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(5) {
+    grid-column: span 6;
+  }
+
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(8) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* MOBIL */
+
+@media (max-width: 760px) {
+  .research-dashboard-light
+  .research-filter-panel-v2 {
+    display: grid;
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .research-dashboard-light
+  .research-filter-group-title,
+  .research-dashboard-light
+  .research-advanced-toggle,
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(n) {
+    grid-column: 1 / -1;
+  }
+
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(7)
+  .research-filter-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .research-dashboard-light
+  .research-filter-section:nth-of-type(7)
+  .research-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .research-dashboard-light
+  .research-filter-group-title small {
+    line-height: 1.35;
+  }
+}
+
+/* KOMBEN RESEARCH SOFT PREMIUM LIGHT V4 */
+
+/*
+  Mål:
+  - mindre bländande än kritvitt
+  - behåll professionell ljus dashboard
+  - tydlig nivå mellan bakgrund, kort och formulärfält
+*/
+
+.research-dashboard-light {
+  --research-text: #102747;
+  --research-muted: #64758d;
+  --research-line: #d3dce8;
+  --research-surface: #f7f9fc;
+  --research-soft: #edf2f7;
+
+  background:
+    linear-gradient(
+      180deg,
+      #edf2f7 0%,
+      #e7edf4 100%
+    );
+}
+
+/* Övre filteröversikten */
+.research-dashboard-light
+.research-filter-summary-bar {
+  border-color: #d1dbe8;
+  background: #f7f9fc;
+  box-shadow:
+    0 3px 12px rgba(23, 48, 90, 0.045);
+}
+
+/* Hela öppna filterytan */
+.research-dashboard-light
+.research-filter-panel,
+.research-dashboard-light
+.research-filter-panel-v2 {
+  border-color: #ced9e6;
+  background: #e9eff6;
+  box-shadow:
+    0 5px 18px rgba(25, 48, 80, 0.055);
+}
+
+/* Grundurval / Analysfilter */
+.research-dashboard-light
+.research-filter-group-title {
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid #d4dee9;
+  border-radius: 9px;
+  background:
+    linear-gradient(
+      180deg,
+      #f2f6fa,
+      #ebf1f6
+    );
+}
+
+.research-dashboard-light
+.research-filter-group-title span {
+  color: #0a2955;
+}
+
+.research-dashboard-light
+.research-filter-group-title small {
+  color: #697b94;
+}
+
+/* De stora filterkorten */
+.research-dashboard-light
+.research-filter-section {
+  border-color: #d0dbe7;
+  background:
+    linear-gradient(
+      180deg,
+      #f8fafc 0%,
+      #f3f6f9 100%
+    );
+  box-shadow:
+    0 2px 8px rgba(24, 50, 88, 0.035);
+}
+
+/* Avancerade kort */
+.research-dashboard-light
+.research-filter-panel-v2.is-advanced-open
+.research-filter-section:nth-of-type(3),
+.research-dashboard-light
+.research-filter-panel-v2.is-advanced-open
+.research-filter-section:nth-of-type(5),
+.research-dashboard-light
+.research-filter-panel-v2.is-advanced-open
+.research-filter-section:nth-of-type(8) {
+  background:
+    linear-gradient(
+      180deg,
+      #f4f7fa,
+      #eef3f7
+    );
+}
+
+/* Rubriker inne i korten */
+.research-dashboard-light
+.research-filter-section legend {
+  color: #102f5d;
+}
+
+.research-dashboard-light
+.research-filter-panel-v2 label > span,
+.research-dashboard-light
+.research-preset-area > span {
+  color: #304969;
+}
+
+/* Formulärfält – fortfarande ljusa men inte kritvita */
+.research-dashboard-light
+.research-filter-panel-v2 input,
+.research-dashboard-light
+.research-filter-panel-v2 select {
+  color: #132b4c;
+  border-color: #c9d5e3;
+  background: #fbfcfd;
+  box-shadow:
+    inset 0 1px 2px rgba(28, 49, 77, 0.025);
+}
+
+.research-dashboard-light
+.research-filter-panel-v2 input:hover,
+.research-dashboard-light
+.research-filter-panel-v2 select:hover {
+  border-color: #aebfd3;
+  background: #ffffff;
+}
+
+.research-dashboard-light
+.research-filter-panel-v2 input:focus,
+.research-dashboard-light
+.research-filter-panel-v2 select:focus {
+  border-color: #3979d6;
+  background: #ffffff;
+  outline: 3px solid rgba(18, 100, 232, 0.10);
+}
+
+/* Snabbval odds */
+.research-dashboard-light
+.research-preset-row button {
+  color: #244b7a;
+  border-color: #cbd8e6;
+  background: #f3f7fb;
+}
+
+.research-dashboard-light
+.research-preset-row button:hover {
+  color: #0d4fae;
+  border-color: #9eb7d5;
+  background: #eaf2fa;
+}
+
+/* Sammanfattningschips */
+.research-dashboard-light
+.research-active-filter-chips span {
+  color: #285580;
+  border-color: #cfdeeb;
+  background: #edf4fa;
+}
+
+/* Fler filter */
+.research-dashboard-light
+.research-advanced-toggle {
+  color: #183d68;
+  border-color: #cbd8e5;
+  background:
+    linear-gradient(
+      180deg,
+      #f3f7fa,
+      #eaf0f5
+    );
+}
+
+.research-dashboard-light
+.research-advanced-toggle:hover {
+  border-color: #aec1d5;
+  background: #e6eef6;
+}
+
+/* Resultatdelen får också mjukare kontrast */
+.research-dashboard-light
+.research-summary-grid > *,
+.research-dashboard-light
+.research-market-grid > article,
+.research-dashboard-light
+.research-breakdown-panel,
+.research-dashboard-light
+.research-detail-panel {
+  border-color: #d2dce7;
+  background: #f8fafc;
+  box-shadow:
+    0 4px 14px rgba(23, 48, 90, 0.04);
+}
+
+.research-dashboard-light th {
+  background: #edf2f7;
+}
+
+.research-dashboard-light td {
+  background: #f8fafc;
+}
+
+.research-dashboard-light
+tbody tr:hover td {
+  background: #eef4f9;
+}
+
+/* Mjukare scrollbar där webbläsaren stödjer det */
+.research-dashboard-light {
+  scrollbar-color: #bcc9d8 #e7edf4;
+}

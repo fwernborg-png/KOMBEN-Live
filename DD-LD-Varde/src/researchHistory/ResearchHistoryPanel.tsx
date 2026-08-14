@@ -905,6 +905,11 @@ export function ResearchHistoryPanel() {
     setFiltersOpen,
   ] = useState(false);
 
+  const [
+    advancedFiltersOpen,
+    setAdvancedFiltersOpen,
+  ] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1185,6 +1190,8 @@ export function ResearchHistoryPanel() {
       initial,
     );
 
+    setAdvancedFiltersOpen(false);
+
     void runAnalysis(
       initial,
     );
@@ -1211,15 +1218,25 @@ export function ResearchHistoryPanel() {
   const activeFilterLabels: string[] = [
     `Urval: ${selectionLabel(filters.selection)}`,
     `Datum: ${filters.dateFrom || "–"} – ${filters.dateTo || "–"}`,
-    `Land: ${
-      filters.countryCode
-        ? countryFilterLabel(
-            filters.countryCode,
-          )
-        : "Alla"
-    }`,
-    `Startmetod: ${filters.startMethod || "Alla"}`,
   ];
+
+  if (filters.countryCode) {
+    activeFilterLabels.push(
+      `Land: ${countryFilterLabel(filters.countryCode)}`,
+    );
+  }
+
+  if (filters.startMethod) {
+    activeFilterLabels.push(
+      `Startmetod: ${
+        filters.startMethod === "AUTO"
+          ? "Autostart"
+          : filters.startMethod === "VOLT"
+            ? "Voltstart"
+            : filters.startMethod
+      }`,
+    );
+  }
 
   if (filters.distanceMeters !== null) {
     activeFilterLabels.push(
@@ -1269,9 +1286,55 @@ export function ResearchHistoryPanel() {
     );
   }
 
+  if (
+    filters.minStartOdds !== null ||
+    filters.maxStartOdds !== null
+  ) {
+    activeFilterLabels.push(
+      `Startodds: ${filters.minStartOdds ?? "lägst"}–${filters.maxStartOdds ?? "högst"}`,
+    );
+  }
+
+  if (
+    filters.earningsMin !== null ||
+    filters.earningsMax !== null
+  ) {
+    activeFilterLabels.push(
+      `Inkomst: ${filters.earningsMin ?? "lägst"}–${filters.earningsMax ?? "högst"}`,
+    );
+  }
+
+  if (
+    filters.minStarters !== null ||
+    filters.maxStarters !== null
+  ) {
+    activeFilterLabels.push(
+      `Startfält: ${filters.minStarters ?? "min"}–${filters.maxStarters ?? "max"}`,
+    );
+  }
+
+  if (
+    filters.minStrength !== null ||
+    filters.maxStrength !== null
+  ) {
+    activeFilterLabels.push(
+      `Styrka: ${filters.minStrength ?? "min"}–${filters.maxStrength ?? "max"}/6`,
+    );
+  }
+
   if (filters.raceClassCode) {
     activeFilterLabels.push(
       `Loppklass: ${filters.raceClassCode}`,
+    );
+  } else if (filters.raceCategory) {
+    activeFilterLabels.push(
+      `Loppkategori: ${filters.raceCategory}`,
+    );
+  }
+
+  if (filters.completeOnly) {
+    activeFilterLabels.push(
+      "Komplett LOCK-data",
     );
   }
 
@@ -1484,10 +1547,31 @@ export function ResearchHistoryPanel() {
             : "is-closed"
         }`}
       >
-        <div className="research-filter-panel research-filter-panel-v2">
+        <div
+          className={`research-filter-panel research-filter-panel-v2 ${
+            advancedFiltersOpen ? "is-advanced-open" : ""
+          }`}
+        >
+          <div className="research-filter-group-title is-base">
+            <div>
+              <span>Grundurval</span>
+              <small>
+                Välj vilka lopp och hästar analysen ska omfatta.
+              </small>
+            </div>
+          </div>
+
+          <div className="research-filter-group-title is-analysis">
+            <div>
+              <span>Analysfilter</span>
+              <small>
+                Begränsa på odds, styrka och indikatorer.
+              </small>
+            </div>
+          </div>
         <fieldset className="research-filter-section">
           <legend>
-            1. Urval och period
+            Urval & period
           </legend>
 
           <div className="research-filter-grid">
@@ -1657,7 +1741,7 @@ export function ResearchHistoryPanel() {
 
         <fieldset className="research-filter-section">
           <legend>
-            2. Odds och marknadsrörelse
+            Odds & marknad
           </legend>
 
           <div className="research-preset-area">
@@ -1899,7 +1983,7 @@ export function ResearchHistoryPanel() {
 
         <fieldset className="research-filter-section">
           <legend>
-            3. Startspår
+            Startspår
           </legend>
 
           <div className="research-filter-grid">
@@ -1994,7 +2078,7 @@ export function ResearchHistoryPanel() {
 
         <fieldset className="research-filter-section">
           <legend>
-            4. Land, bana och kusk
+            Land, bana & kusk
           </legend>
 
           <div className="research-filter-grid">
@@ -2105,7 +2189,7 @@ export function ResearchHistoryPanel() {
 
         <fieldset className="research-filter-section">
           <legend>
-            5. Loppklass och inkomstgräns
+            Loppklass & inkomstgräns
           </legend>
 
           <div className="research-filter-grid">
@@ -2227,7 +2311,7 @@ export function ResearchHistoryPanel() {
 
         <fieldset className="research-filter-section">
           <legend>
-            6. Startfält och styrka
+            Styrka & startfält
           </legend>
 
           <div className="research-filter-grid">
@@ -2353,7 +2437,7 @@ export function ResearchHistoryPanel() {
 
         <fieldset className="research-filter-section research-indicator-filter-section">
           <legend>
-            7. Indikatorer – grön / topp 4
+            Indikatorer – grön / topp 4
           </legend>
 
           <div className="research-filter-grid">
@@ -2408,7 +2492,7 @@ export function ResearchHistoryPanel() {
 
         <fieldset className="research-filter-section">
           <legend>
-            8. Datakvalitet
+            Datakvalitet
           </legend>
 
           <div className="research-filter-grid">
@@ -2470,6 +2554,31 @@ export function ResearchHistoryPanel() {
             </label>
           </div>
         </fieldset>
+
+        <button
+          type="button"
+          className="research-advanced-toggle"
+          onClick={() =>
+            setAdvancedFiltersOpen(
+              (current) => !current,
+            )
+          }
+          aria-expanded={advancedFiltersOpen}
+        >
+          <span>
+            {advancedFiltersOpen
+              ? "Dölj fler filter"
+              : "Fler filter"}
+          </span>
+
+          <small>
+            Startspår · loppklass · datakvalitet
+          </small>
+
+          <strong aria-hidden="true">
+            {advancedFiltersOpen ? "−" : "+"}
+          </strong>
+        </button>
 
         <div className="research-filter-actions research-filter-actions-v2">
           <button
