@@ -5,6 +5,12 @@ import {
   useState,
 } from "react";
 
+import {
+  loadGallopHistoryOptions,
+  loadGallopHistoryRows,
+  type GallopHistoryRow,
+} from "../researchHistory/gallopRepository";
+
 import "./gallopToday.css";
 
 const WORKER_API =
@@ -807,6 +813,667 @@ function flag(
   );
 }
 
+type GallopPerformanceStats = {
+  bets: number;
+  wins: number;
+  hitPercent: number | null;
+  roiPercent: number | null;
+  netSek: number | null;
+};
+
+function shiftIsoDate(
+  value: string,
+  deltaDays: number,
+): string {
+  const parts =
+    value
+      .split("-")
+      .map(Number);
+
+  if (
+    parts.length !== 3 ||
+    parts.some(
+      (part) =>
+        !Number.isFinite(part),
+    )
+  ) {
+    return value;
+  }
+
+  const date =
+    new Date(
+      Date.UTC(
+        parts[0],
+        parts[1] - 1,
+        parts[2],
+      ),
+    );
+
+  date.setUTCDate(
+    date.getUTCDate() +
+      deltaDays,
+  );
+
+  return date
+    .toISOString()
+    .slice(0, 10);
+}
+
+function summarizeGallopPerformance(
+  rows: GallopHistoryRow[],
+  dateFrom?: string,
+  dateTo?: string,
+): GallopPerformanceStats {
+  const validRows =
+    rows.filter(
+      (row) => {
+        if (
+          dateFrom &&
+          row.raceDate < dateFrom
+        ) {
+          return false;
+        }
+
+        if (
+          dateTo &&
+          row.raceDate > dateTo
+        ) {
+          return false;
+        }
+
+        return (
+          !row.betVoid &&
+          row.started !== false &&
+          row.finishPositionOfficial !==
+            null &&
+          row.validOddsPoints >= 2
+        );
+      },
+    );
+
+  const bets =
+    validRows.length;
+
+  const winnerRows =
+    validRows.filter(
+      (row) =>
+        row.winnerOfficial ||
+        row.finishPositionOfficial ===
+          1,
+    );
+
+  const wins =
+    winnerRows.length;
+
+  const roiComplete =
+    winnerRows.every(
+      (row) =>
+        row.officialWinOddsDecimal !==
+          null &&
+        row.officialWinOddsDecimal >
+          0,
+    );
+
+  if (!bets) {
+    return {
+      bets: 0,
+      wins: 0,
+      hitPercent: null,
+      roiPercent: null,
+      netSek: 0,
+    };
+  }
+
+  const hitPercent =
+    (wins / bets) * 100;
+
+  if (!roiComplete) {
+    return {
+      bets,
+      wins,
+      hitPercent,
+      roiPercent: null,
+      netSek: null,
+    };
+  }
+
+  const stakeSek =
+    bets * 100;
+
+  const returnSek =
+    winnerRows.reduce(
+      (sum, row) =>
+        sum +
+        100 *
+          (
+            row
+              .officialWinOddsDecimal ??
+            0
+          ),
+      0,
+    );
+
+  const netSek =
+    returnSek -
+    stakeSek;
+
+  return {
+    bets,
+    wins,
+    hitPercent,
+    roiPercent:
+      stakeSek > 0
+        ? (
+            netSek /
+            stakeSek
+          ) *
+          100
+        : null,
+    netSek,
+  };
+}
+
+function performanceRaceKey(
+  raceDate: string,
+  trackName: string,
+  raceNumber: number,
+): string {
+  return [
+    raceDate,
+    trackName
+      .trim()
+      .toLowerCase(),
+    raceNumber,
+  ].join("|");
+}
+
+function summarizeGallopPerformanceWithLiveDate({
+  rows,
+  liveDate,
+  dateFrom,
+  dateTo,
+  tracks,
+  raceRunners,
+  lockedSignals,
+  minDropPercent,
+  maxOdds,
+}: {
+  rows: GallopHistoryRow[];
+  liveDate: string;
+  dateFrom?: string;
+  dateTo?: string;
+  tracks: GallopTrack[];
+  raceRunners: RaceRunners;
+  lockedSignals: GallopLockedSignals;
+  minDropPercent: number;
+  maxOdds: number;
+}): GallopPerformanceStats {
+  const inRange = (
+    raceDate: string,
+  ) => {
+    if (
+      dateFrom &&
+      raceDate < dateFrom
+    ) {
+      return false;
+    }
+
+    if (
+      dateTo &&
+      raceDate > dateTo
+    ) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const historyRows =
+    rows.filter(
+      (row) =>
+        inRange(
+          row.raceDate,
+        ),
+    );
+
+  const historyByRace =
+    new Map<
+      string,
+      GallopHistoryRow
+    >();
+
+  for (
+    const row of historyRows
+  ) {
+    historyByRace.set(
+      performanceRaceKey(
+        row.raceDate,
+        row.trackName,
+        row.raceNumber,
+      ),
+      row,
+    );
+  }
+
+  const liveRaceKeys =
+    new Set<string>();
+
+  const liveBets: {
+    won: boolean;
+    winOdds: number | null;
+  }[] = [];
+
+  /*
+   * Lägg till färdiga LIVE-lopp för
+   * det datum som visas.
+   *
+   * Finns samma lopp redan i historiken
+   * ersätts historikraden av liveversionen
+   * så loppet aldrig dubbelräknas.
+   */
+  if (
+    inRange(
+      liveDate,
+    )
+  ) {
+    for (
+      const track of tracks
+    ) {
+      for (
+        const race of
+        track.races
+      ) {
+        const runners =
+          raceRunners[
+            raceKey(
+              track.id,
+              race.raceNumber,
+            )
+          ] ?? [];
+
+        if (!runners.length) {
+          continue;
+        }
+
+        const activeRunners =
+          runners.filter(
+            (runner) =>
+              !runner.scratched,
+          );
+
+        const expectedResults =
+          Math.min(
+            3,
+            activeRunners.length,
+          );
+
+        const resultCount =
+          activeRunners.filter(
+            (runner) =>
+              runner.finishPosition !==
+                null &&
+              runner.finishPosition >=
+                1 &&
+              runner.finishPosition <=
+                3,
+          ).length;
+
+        const isFinished =
+          expectedResults > 0 &&
+          resultCount >=
+            expectedResults;
+
+        if (!isFinished) {
+          continue;
+        }
+
+        const signal =
+          lockedSignals[
+            lockedSignalKey(
+              liveDate,
+              track.id,
+              race.raceNumber,
+            )
+          ];
+
+        if (!signal) {
+          continue;
+        }
+
+        const lockOdds =
+          decimalOdds(
+            signal.lockOddsRaw,
+          );
+
+        /*
+         * Samma filter som
+         * historikkorten använder nu.
+         */
+        const qualifiesNow =
+          signal.samples >= 2 &&
+          signal.dropPercent >=
+            minDropPercent &&
+          lockOdds !== null &&
+          lockOdds <=
+            maxOdds;
+
+        if (!qualifiesNow) {
+          continue;
+        }
+
+        const lockedRunner =
+          runners.find(
+            (runner) =>
+              runner.number ===
+              signal.runnerNumber,
+          );
+
+        if (
+          !lockedRunner ||
+          lockedRunner.scratched
+        ) {
+          continue;
+        }
+
+        const winningRunner =
+          activeRunners.find(
+            (runner) =>
+              runner.finishPosition ===
+              1,
+          ) ?? null;
+
+        if (!winningRunner) {
+          continue;
+        }
+
+        const key =
+          performanceRaceKey(
+            liveDate,
+            track.name,
+            race.raceNumber,
+          );
+
+        const historyMatch =
+          historyByRace.get(
+            key,
+          );
+
+        const won =
+          winningRunner.number ===
+          signal.runnerNumber;
+
+        /*
+         * Officiellt odds från historiken
+         * är förstahandsval.
+         *
+         * Om loppet ännu inte hunnit
+         * arkiveras används ATG:s odds
+         * från det färdiga loppet.
+         */
+        const winOdds =
+          won
+            ? (
+                historyMatch
+                  ?.officialWinOddsDecimal ??
+                decimalOdds(
+                  lockedRunner
+                    .oddsRaw,
+                )
+              )
+            : null;
+
+        liveRaceKeys.add(
+          key,
+        );
+
+        liveBets.push({
+          won,
+          winOdds,
+        });
+      }
+    }
+  }
+
+  const historyWithoutLive =
+    historyRows.filter(
+      (row) =>
+        !liveRaceKeys.has(
+          performanceRaceKey(
+            row.raceDate,
+            row.trackName,
+            row.raceNumber,
+          ),
+        ),
+    );
+
+  const historical =
+    summarizeGallopPerformance(
+      historyWithoutLive,
+    );
+
+  const liveWins =
+    liveBets.filter(
+      (bet) =>
+        bet.won,
+    ).length;
+
+  const bets =
+    historical.bets +
+    liveBets.length;
+
+  const wins =
+    historical.wins +
+    liveWins;
+
+  if (!bets) {
+    return {
+      bets: 0,
+      wins: 0,
+      hitPercent: null,
+      roiPercent: null,
+      netSek: 0,
+    };
+  }
+
+  const hitPercent =
+    (
+      wins /
+      bets
+    ) *
+    100;
+
+  const liveOddsComplete =
+    liveBets.every(
+      (bet) =>
+        !bet.won ||
+        (
+          bet.winOdds !==
+            null &&
+          bet.winOdds >
+            0
+        ),
+    );
+
+  if (
+    historical.netSek ===
+      null ||
+    !liveOddsComplete
+  ) {
+    return {
+      bets,
+      wins,
+      hitPercent,
+      roiPercent: null,
+      netSek: null,
+    };
+  }
+
+  const historicalStake =
+    historical.bets *
+    100;
+
+  const historicalReturn =
+    historicalStake +
+    historical.netSek;
+
+  const liveReturn =
+    liveBets.reduce(
+      (sum, bet) =>
+        sum +
+        (
+          bet.won
+            ? 100 *
+              (
+                bet.winOdds ??
+                0
+              )
+            : 0
+        ),
+      0,
+    );
+
+  const stakeSek =
+    bets * 100;
+
+  const returnSek =
+    historicalReturn +
+    liveReturn;
+
+  const netSek =
+    returnSek -
+    stakeSek;
+
+  return {
+    bets,
+    wins,
+    hitPercent,
+    netSek,
+    roiPercent:
+      (
+        netSek /
+        stakeSek
+      ) *
+      100,
+  };
+}
+
+function formatSignedPercent(
+  value: number | null,
+): string {
+  if (value === null) {
+    return "–";
+  }
+
+  const rounded =
+    Math.round(value);
+
+  return `${
+    rounded > 0 ? "+" : ""
+  }${rounded} %`;
+}
+
+function formatSignedSek(
+  value: number | null,
+): string {
+  if (value === null) {
+    return "–";
+  }
+
+  const rounded =
+    Math.round(value);
+
+  return `${
+    rounded > 0 ? "+" : ""
+  }${rounded.toLocaleString(
+    "sv-SE",
+  )} kr`;
+}
+
+function performanceTone(
+  value: number | null,
+): string {
+  if (value === null) {
+    return "";
+  }
+
+  if (value > 0) {
+    return "is-positive";
+  }
+
+  if (value < 0) {
+    return "is-negative";
+  }
+
+  return "is-neutral";
+}
+
+function GallopPerformanceCard({
+  label,
+  stats,
+  loading,
+  error,
+  className,
+}: {
+  label: string;
+  stats: GallopPerformanceStats;
+  loading: boolean;
+  error: boolean;
+  className: string;
+}) {
+  return (
+    <div
+      className={
+        `gallop-performance-card ${className}`
+      }
+    >
+      <span>
+        {label}
+      </span>
+
+      <strong
+        className={
+          performanceTone(
+            stats.roiPercent,
+          )
+        }
+      >
+        {loading
+          ? "Hämtar…"
+          : error
+            ? "ROI –"
+            : `ROI ${formatSignedPercent(
+                stats.roiPercent,
+              )}`}
+      </strong>
+
+      <div className="gallop-performance-meta">
+        <small>
+          {loading
+            ? "100 kr vinnare"
+            : error
+              ? "Statistik saknas"
+              : `${formatSignedSek(
+                  stats.netSek,
+                )} · ${stats.bets} spel`}
+        </small>
+
+        <small>
+          {!loading &&
+          !error
+            ? `${stats.wins} vinnare · ${
+                stats.hitPercent === null
+                  ? "–"
+                  : `${Math.round(
+                      stats.hitPercent,
+                    )} %`
+              }`
+            : "Mest sänkta"}
+        </small>
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   date: string;
 };
@@ -983,6 +1650,176 @@ export function GallopTodayPanel({
         return 20;
       }
     },
+  );
+
+  const [
+    performanceRows,
+    setPerformanceRows,
+  ] = useState<
+    GallopHistoryRow[]
+  >([]);
+
+  const [
+    performanceLoading,
+    setPerformanceLoading,
+  ] = useState(true);
+
+  const [
+    performanceError,
+    setPerformanceError,
+  ] = useState(false);
+
+  const [
+    showRuleDetails,
+    setShowRuleDetails,
+  ] = useState(false);
+
+  useEffect(
+    () => {
+      let cancelled =
+        false;
+
+      const timer =
+        window.setTimeout(
+          () => {
+            async function loadPerformance() {
+              setPerformanceLoading(
+                true,
+              );
+
+              setPerformanceError(
+                false,
+              );
+
+              try {
+                const options =
+                  await loadGallopHistoryOptions();
+
+                const historyStart =
+                  options.minDate &&
+                  options.minDate <= date
+                    ? options.minDate
+                    : date;
+
+                const rows =
+                  await loadGallopHistoryRows(
+                    {
+                      dateFrom:
+                        historyStart,
+
+                      dateTo:
+                        date,
+
+                      selection:
+                        "S1",
+
+                      countryCode:
+                        "",
+
+                      trackName:
+                        "",
+
+                      surface:
+                        "",
+
+                      distanceMeters:
+                        null,
+
+                      minStarters:
+                        null,
+
+                      maxStarters:
+                        null,
+
+                      minHandicapRating:
+                        null,
+
+                      maxHandicapRating:
+                        null,
+
+                      handicapRank:
+                        "",
+
+                      minCarriedWeightKg:
+                        null,
+
+                      maxCarriedWeightKg:
+                        null,
+
+                      weightRank:
+                        "",
+
+                      minDropPercent,
+
+                      maxDropPercent:
+                        null,
+
+                      minLockOdds:
+                        null,
+
+                      maxLockOdds:
+                        maxOdds,
+
+                      limit:
+                        10000,
+                    },
+                  );
+
+                if (cancelled) {
+                  return;
+                }
+
+                setPerformanceRows(
+                  rows,
+                );
+              } catch (
+                statsError
+              ) {
+                if (cancelled) {
+                  return;
+                }
+
+                console.error(
+                  "Kunde inte läsa Galopp-resultatstatistik",
+                  statsError,
+                );
+
+                setPerformanceRows(
+                  [],
+                );
+
+                setPerformanceError(
+                  true,
+                );
+              } finally {
+                if (
+                  !cancelled
+                ) {
+                  setPerformanceLoading(
+                    false,
+                  );
+                }
+              }
+            }
+
+            void loadPerformance();
+          },
+          300,
+        );
+
+      return () => {
+        cancelled = true;
+
+        window.clearTimeout(
+          timer,
+        );
+      };
+    },
+    [
+      date,
+      minDropPercent,
+      maxOdds,
+    ],
   );
 
   useEffect(
@@ -1934,13 +2771,127 @@ export function GallopTodayPanel({
       [tracks],
     );
 
+  const todayPerformance =
+    useMemo(
+      () =>
+        summarizeGallopPerformanceWithLiveDate({
+          rows:
+            performanceRows,
+
+          liveDate:
+            date,
+
+          dateFrom:
+            date,
+
+          dateTo:
+            date,
+
+          tracks,
+          raceRunners,
+          lockedSignals,
+          minDropPercent,
+          maxOdds,
+        }),
+      [
+        performanceRows,
+        date,
+        tracks,
+        raceRunners,
+        lockedSignals,
+        minDropPercent,
+        maxOdds,
+      ],
+    );
+
+  const sevenDayPerformance =
+    useMemo(
+      () =>
+        summarizeGallopPerformanceWithLiveDate({
+          rows:
+            performanceRows,
+
+          liveDate:
+            date,
+
+          dateFrom:
+            shiftIsoDate(
+              date,
+              -6,
+            ),
+
+          dateTo:
+            date,
+
+          tracks,
+          raceRunners,
+          lockedSignals,
+          minDropPercent,
+          maxOdds,
+        }),
+      [
+        performanceRows,
+        date,
+        tracks,
+        raceRunners,
+        lockedSignals,
+        minDropPercent,
+        maxOdds,
+      ],
+    );
+
+  const allTimePerformance =
+    useMemo(
+      () =>
+        summarizeGallopPerformanceWithLiveDate({
+          rows:
+            performanceRows,
+
+          liveDate:
+            date,
+
+          tracks,
+          raceRunners,
+          lockedSignals,
+          minDropPercent,
+          maxOdds,
+        }),
+      [
+        performanceRows,
+        date,
+        tracks,
+        raceRunners,
+        lockedSignals,
+        minDropPercent,
+        maxOdds,
+      ],
+    );
+
   return (
     <section className="gallop-live-shell">
       <div className="gallop-live-hero">
-        <div>
-          <p className="gallop-live-kicker">
-            GALOPP · LIVE V1
-          </p>
+        <div className="gallop-live-intro">
+          <div className="gallop-live-kicker-row">
+            <p className="gallop-live-kicker">
+              GALOPP · LIVE V1
+            </p>
+
+            <button
+              type="button"
+              className="gallop-rule-trigger"
+              aria-expanded={
+                showRuleDetails
+              }
+              onClick={() =>
+                setShowRuleDetails(
+                  (current) =>
+                    !current,
+                )
+              }
+            >
+              ⓘ Regel
+            </button>
+          </div>
 
           <h2>
             🏇 Galopp idag
@@ -1948,13 +2899,12 @@ export function GallopTodayPanel({
 
           <p>
             Dagens galoppbanor från ATG.
-            Välj en bana så börjar
-            Platsjägaren följa
-            vinnaroddsen varje minut.
+            Följ Mest sänkta från första
+            odds till låst signal.
           </p>
         </div>
 
-        <div className="gallop-live-summary">
+        <div className="gallop-live-counts">
           <div>
             <span>
               Banor
@@ -1987,84 +2937,155 @@ export function GallopTodayPanel({
         </div>
       </div>
 
-      <div className="gallop-rule-card">
-        <div>
+      <section className="gallop-performance-section">
+        <div className="gallop-performance-heading">
+          <span>
+            RESULTAT · MEST SÄNKTA
+          </span>
+
           <small>
-            TESTREGEL
+            100 kr vinnare per kvalificerad signal
           </small>
-
-          <strong>
-            ↘ GALOPP V1 · MEST SÄNKTA HÄST
-          </strong>
-
-          <p>
-            I varje lopp visas alltid hästen
-            med störst procentuell
-            oddssänkning. Serverhistorik
-            används när den finns.
-          </p>
         </div>
 
-        <label>
-          Minsta sänkning
-          <div>
+        <div className="gallop-performance-grid">
+          <GallopPerformanceCard
+            label="Idag"
+            stats={
+              todayPerformance
+            }
+            loading={
+              performanceLoading
+            }
+            error={
+              performanceError
+            }
+            className="gallop-stat-today"
+          />
+
+          <GallopPerformanceCard
+            label="7 dagar"
+            stats={
+              sevenDayPerformance
+            }
+            loading={
+              performanceLoading
+            }
+            error={
+              performanceError
+            }
+            className="gallop-stat-week"
+          />
+
+          <GallopPerformanceCard
+            label="Från start"
+            stats={
+              allTimePerformance
+            }
+            loading={
+              performanceLoading
+            }
+            error={
+              performanceError
+            }
+            className="gallop-stat-all"
+          />
+        </div>
+      </section>
+
+      {showRuleDetails ? (
+        <div className="gallop-rule-drawer">
+          <div className="gallop-rule-drawer-copy">
+            <small>
+              GALOPP V1
+            </small>
+
+            <strong>
+              Mest sänkta häst
+            </strong>
+
+            <p>
+              Oddsinsamling under loppets
+              sista 60 minuter. Mest sänkta
+              häst låses vid T−90.
+              Resultaten ovan räknas med
+              100 kr vinnare.
+            </p>
+          </div>
+
+          <label>
+            Minsta sänkning
+
+            <div>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={
+                  minDropPercent
+                }
+                onChange={(
+                  event,
+                ) =>
+                  setMinDropPercent(
+                    Math.max(
+                      0,
+                      Number(
+                        event
+                          .target
+                          .value,
+                      ) || 0,
+                    ),
+                  )
+                }
+              />
+
+              <span>
+                %
+              </span>
+            </div>
+          </label>
+
+          <label>
+            Maxodds
+
             <input
               type="number"
-              min="0"
-              step="1"
+              min="1"
+              step="0.5"
               value={
-                minDropPercent
+                maxOdds
               }
               onChange={(
                 event,
               ) =>
-                setMinDropPercent(
+                setMaxOdds(
                   Math.max(
-                    0,
+                    1,
                     Number(
                       event
                         .target
                         .value,
-                    ) ||
-                      0,
+                    ) || 1,
                   ),
                 )
               }
             />
+          </label>
 
-            <span>
-              %
-            </span>
-          </div>
-        </label>
-
-        <label>
-          Maxodds
-          <input
-            type="number"
-            min="1"
-            step="0.5"
-            value={
-              maxOdds
-            }
-            onChange={(
-              event,
-            ) =>
-              setMaxOdds(
-                Math.max(
-                  1,
-                  Number(
-                    event
-                      .target
-                      .value,
-                  ) ||
-                    1,
-                ),
+          <button
+            type="button"
+            className="gallop-rule-close"
+            onClick={() =>
+              setShowRuleDetails(
+                false,
               )
             }
-          />
-        </label>
-      </div>
+          >
+            Stäng
+          </button>
+        </div>
+      ) : null}
 
       {loadingCalendar ? (
         <div className="gallop-live-message">
@@ -2668,6 +3689,16 @@ export function GallopTodayPanel({
                               ? `▶ NÄSTA LOPP · ${raceUiStart}${minutesToStart !== null ? ` · ${minutesToStart} MIN` : ""}`
                               : `KOMMANDE${raceUiStart ? ` · ${raceUiStart}` : ""}`;
 
+                      const didHitBet =
+                        Boolean(
+                          isFinished &&
+                            signalIsLocked &&
+                            lockedSignal?.qualifies === true &&
+                            best?.runner
+                              .finishPosition ===
+                              1,
+                        );
+
                       const isRunnerListExpanded =
                         expandedRaceKeys[
                           signalKey
@@ -2731,6 +3762,9 @@ export function GallopTodayPanel({
                               ? "has-signal"
                               : "",
                             `is-${raceUiState}`,
+                            didHitBet
+                              ? "is-bet-hit"
+                              : "",
                           ]
                             .filter(Boolean)
                             .join(" ")}
@@ -2756,10 +3790,18 @@ export function GallopTodayPanel({
                             </span>
                           </div>
 
-                          <div
-                            className={`gallop-race-state is-${raceUiState}`}
-                          >
-                            {raceUiStatus}
+                          <div className="gallop-race-status-row">
+                            <div
+                              className={`gallop-race-state is-${raceUiState}`}
+                            >
+                              {raceUiStatus}
+                            </div>
+
+                            {didHitBet ? (
+                              <div className="gallop-win-badge">
+                                💰 SPELET SATT
+                              </div>
+                            ) : null}
                           </div>
 
                           {resultTop3.length ? (
