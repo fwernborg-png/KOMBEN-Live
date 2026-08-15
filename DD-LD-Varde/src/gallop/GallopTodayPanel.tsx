@@ -1367,10 +1367,34 @@ export function GallopTodayPanel({
                 ...current,
               };
 
+              const collectionNowMs =
+                Date.now();
+
               for (
                 const result of
                 results
               ) {
+                const resultStartMs =
+                  result.race.startTime
+                    ? new Date(
+                        result.race.startTime,
+                      ).getTime()
+                    : Number.NaN;
+
+                const collectionStartMs =
+                  Number.isFinite(
+                    resultStartMs,
+                  )
+                    ? resultStartMs -
+                      60 * 60_000
+                    : null;
+
+                const collectionNotStarted =
+                  collectionStartMs !==
+                    null &&
+                  collectionNowMs <
+                    collectionStartMs;
+
                 for (
                   const runner of
                   result.runners
@@ -1394,6 +1418,19 @@ export function GallopTodayPanel({
                         .raceNumber,
                       runner.number,
                     );
+
+                  if (
+                    collectionNotStarted
+                  ) {
+                    /*
+                     * V1 mäter bara sista
+                     * 60 minuterna.
+                     * Äldre lokal browserdata
+                     * får inte bli startodds.
+                     */
+                    delete next[key];
+                    continue;
+                  }
 
                   const previous =
                     next[key];
@@ -2474,6 +2511,38 @@ export function GallopTodayPanel({
                       const raceUiNow =
                         Date.now();
 
+                      const collectionStartMs =
+                        Number.isFinite(
+                          startMs,
+                        )
+                          ? startMs -
+                            60 *
+                              60_000
+                          : null;
+
+                      const collectionStarted =
+                        signalIsLocked ||
+                        collectionStartMs ===
+                          null ||
+                        raceUiNow >=
+                          collectionStartMs;
+
+                      const collectionStartLabel =
+                        collectionStartMs !==
+                          null
+                          ? new Date(
+                              collectionStartMs,
+                            ).toLocaleTimeString(
+                              "sv-SE",
+                              {
+                                hour:
+                                  "2-digit",
+                                minute:
+                                  "2-digit",
+                              },
+                            )
+                          : "";
+
                       const isOngoing =
                         !isFinished &&
                         Number.isFinite(
@@ -2607,7 +2676,8 @@ export function GallopTodayPanel({
                         lockedSignal
                           ? lockedSignal
                               .qualifies
-                          : Boolean(
+                          : collectionStarted &&
+                            Boolean(
                               best &&
                                 best.memory &&
                                 best
@@ -2626,6 +2696,7 @@ export function GallopTodayPanel({
                             );
 
                       const collecting =
+                        collectionStarted &&
                         Boolean(
                           best
                             ?.memory &&
@@ -2702,7 +2773,21 @@ export function GallopTodayPanel({
                             </div>
                           ) : null}
 
-                          {best ? (
+                          {!collectionStarted &&
+                          !signalIsLocked ? (
+                            <div className="gallop-collection-wait">
+                              <strong>
+                                ⏳ ODDSINSAMLING STARTAR{" "}
+                                {collectionStartLabel}
+                              </strong>
+
+                              <span>
+                                Mest sänkta häst utses
+                                först när sista
+                                60 minuterna börjar.
+                              </span>
+                            </div>
+                          ) : best ? (
                             <>
                               <div
                                 className={
@@ -2837,8 +2922,9 @@ export function GallopTodayPanel({
                                   </strong>
 
                                   <span>
-                                    Rankade efter
-                                    oddssänkning
+                                    {collectionStarted
+                                      ? "Rankade efter oddssänkning"
+                                      : `Oddsanalys startar ${collectionStartLabel}`}
                                   </span>
                                 </div>
 
@@ -2871,7 +2957,11 @@ export function GallopTodayPanel({
                               </div>
 
                               <div className="gallop-runner-table-head">
-                                <span>Rank</span>
+                                <span>
+                                  {collectionStarted
+                                    ? "Rank"
+                                    : "–"}
+                                </span>
                                 <span>Häst</span>
                                 <span>↓ %</span>
                                 <span>Start</span>
@@ -2892,7 +2982,9 @@ export function GallopTodayPanel({
                                     }
                                   >
                                     <span className="gallop-drop-rank">
-                                      {index + 1}
+                                      {collectionStarted
+                                        ? index + 1
+                                        : "–"}
                                     </span>
 
                                     <strong>
