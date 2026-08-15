@@ -759,3 +759,45 @@
 .gallop-sport-switch button:hover {
   filter: brightness(1.08);
 }
+
+/* FINISHED RACES CLEAR RED V1 */
+
+.gallop-race-card.is-finished {
+  opacity: 1 !important;
+  border: 2px solid #ef4444 !important;
+  box-shadow:
+    0 0 0 1px rgba(239, 68, 68, 0.18),
+    0 0 18px rgba(239, 68, 68, 0.10);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(127, 29, 29, 0.16),
+      rgba(17, 24, 39, 1)
+    ) !important;
+}
+
+.gallop-race-state.is-finished {
+  border: 1px solid rgba(239, 68, 68, 0.75) !important;
+  background: rgba(127, 29, 29, 0.28) !important;
+  color: #fecaca !important;
+}
+
+.gallop-race-card.is-finished .gallop-result-box {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.gallop-race-card.is-finished .gallop-candidate,
+.gallop-race-card.is-finished .gallop-race-card-head strong,
+.gallop-race-card.is-finished .gallop-race-card-head span {
+  opacity: 1 !important;
+}
+
+.gallop-race-card.is-finished:hover {
+  opacity: 1 !important;
+}
+
+@media (max-width: 700px) {
+  .gallop-race-card.is-finished {
+    opacity: 1 !important;
+  }
+}
