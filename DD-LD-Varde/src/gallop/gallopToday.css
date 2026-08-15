@@ -1,0 +1,647 @@
+.gallop-sport-switch {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.gallop-sport-switch button {
+  min-width: 112px;
+  min-height: 42px;
+  padding: 8px 16px;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: #111827;
+  color: #cbd5e1;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.gallop-sport-switch button.is-active {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.14);
+  color: #f8fafc;
+}
+
+.gallop-live-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.gallop-live-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px;
+  border: 1px solid #263449;
+  border-radius: 18px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(16, 185, 129, 0.14),
+      transparent 38%
+    ),
+    #101827;
+}
+
+.gallop-live-hero h2 {
+  margin: 3px 0 8px;
+  font-size: clamp(25px, 4vw, 36px);
+}
+
+.gallop-live-hero p {
+  max-width: 690px;
+  margin: 0;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.gallop-live-kicker {
+  color: #34d399 !important;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.gallop-live-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(82px, 1fr));
+  gap: 8px;
+  min-width: 280px;
+}
+
+.gallop-live-summary div {
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  padding: 12px;
+  border: 1px solid #293548;
+  border-radius: 13px;
+  background: rgba(15, 23, 42, 0.72);
+  text-align: center;
+}
+
+.gallop-live-summary span {
+  color: #94a3b8;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.gallop-live-summary strong {
+  font-size: 22px;
+}
+
+.gallop-rule-card {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 150px 150px;
+  gap: 14px;
+  align-items: end;
+  padding: 18px;
+  border: 1px solid #166534;
+  border-radius: 16px;
+  background: rgba(22, 101, 52, 0.12);
+}
+
+.gallop-rule-card small {
+  display: block;
+  margin-bottom: 4px;
+  color: #4ade80;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.gallop-rule-card p {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.gallop-rule-card label {
+  display: grid;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.gallop-rule-card label div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.gallop-rule-card input {
+  width: 100%;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid #475569;
+  border-radius: 9px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 16px;
+}
+
+.gallop-track-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.gallop-track-card {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid #293548;
+  border-radius: 14px;
+  background: #111827;
+  color: #f8fafc;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gallop-track-card:hover {
+  border-color: #475569;
+}
+
+.gallop-track-card.is-active {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.35);
+  background: rgba(22, 101, 52, 0.15);
+}
+
+.gallop-track-card strong {
+  font-size: 16px;
+}
+
+.gallop-track-card span,
+.gallop-track-card small {
+  color: #94a3b8;
+}
+
+.gallop-track-country {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.gallop-selected-track {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid #293548;
+  border-radius: 18px;
+  background: #0d1524;
+}
+
+.gallop-selected-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+}
+
+.gallop-selected-head h3 {
+  margin: 3px 0;
+  font-size: 24px;
+}
+
+.gallop-selected-head small,
+.gallop-selected-head span {
+  color: #94a3b8;
+}
+
+.gallop-live-state {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.gallop-live-state strong {
+  color: #4ade80;
+  font-size: 12px;
+}
+
+.gallop-race-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.gallop-race-card {
+  display: grid;
+  gap: 10px;
+  padding: 15px;
+  border: 1px solid #293548;
+  border-radius: 14px;
+  background: #111827;
+}
+
+.gallop-race-card.has-signal {
+  border-color: #22c55e;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(22, 101, 52, 0.19),
+      rgba(17, 24, 39, 1)
+    );
+}
+
+.gallop-race-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.gallop-race-card-head span {
+  color: #94a3b8;
+}
+
+.gallop-rule-status {
+  width: fit-content;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.gallop-rule-status.is-signal {
+  background: #166534;
+  color: #dcfce7;
+}
+
+.gallop-candidate {
+  font-size: 17px;
+}
+
+.gallop-race-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.gallop-race-metrics div {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 9px;
+  background: #0f172a;
+}
+
+.gallop-race-metrics span {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.gallop-race-metrics strong {
+  font-size: 13px;
+}
+
+.gallop-race-metrics div:first-child strong {
+  color: #4ade80;
+}
+
+.gallop-samples,
+.gallop-no-data,
+.gallop-v1-note {
+  color: #94a3b8;
+}
+
+.gallop-no-data {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.gallop-live-message,
+.gallop-live-error {
+  padding: 18px;
+  border-radius: 14px;
+  background: #111827;
+}
+
+.gallop-live-error {
+  border: 1px solid #7f1d1d;
+  color: #fecaca;
+}
+
+.gallop-v1-note {
+  margin: 0;
+  padding: 12px 4px 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 760px) {
+  .gallop-live-hero {
+    display: grid;
+  }
+
+  .gallop-live-summary {
+    min-width: 0;
+  }
+
+  .gallop-rule-card {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .gallop-rule-card > div:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .gallop-selected-head {
+    align-items: flex-start;
+  }
+
+  .gallop-live-state {
+    justify-items: end;
+    text-align: right;
+  }
+}
+
+@media (max-width: 520px) {
+  .gallop-sport-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .gallop-sport-switch button {
+    min-width: 0;
+  }
+
+  .gallop-live-hero,
+  .gallop-selected-track {
+    padding: 14px;
+  }
+
+  .gallop-live-summary {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .gallop-rule-card {
+    grid-template-columns: 1fr;
+  }
+
+  .gallop-rule-card > div:first-child {
+    grid-column: auto;
+  }
+
+  .gallop-track-grid,
+  .gallop-race-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gallop-rule-status.is-candidate {
+  padding: 6px 10px;
+  border: 1px solid rgba(74, 222, 128, 0.5);
+  background: rgba(22, 101, 52, 0.18);
+  color: #86efac;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.09em;
+}
+
+.gallop-result-box {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #475569;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.gallop-result-box > span {
+  margin-bottom: 2px;
+  color: #facc15;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.gallop-result-box > strong {
+  font-size: 12px;
+}
+
+.gallop-result-box > small {
+  margin-top: 3px;
+  color: #94a3b8;
+}
+
+.gallop-all-runners {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #293548;
+}
+
+.gallop-all-runners-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.gallop-all-runners-title strong {
+  color: #cbd5e1;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.gallop-all-runners-title span {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.gallop-runner-table-head,
+.gallop-runner-row {
+  display: grid;
+  grid-template-columns: 34px minmax(110px, 1fr) 55px 52px 52px;
+  gap: 6px;
+  align-items: center;
+}
+
+.gallop-runner-table-head {
+  padding: 4px 6px;
+  color: #64748b;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.gallop-runner-row {
+  min-height: 34px;
+  padding: 5px 6px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.62);
+  font-size: 11px;
+}
+
+.gallop-runner-row.is-leader {
+  border: 1px solid rgba(74, 222, 128, 0.55);
+  background: rgba(22, 101, 52, 0.18);
+}
+
+.gallop-runner-row.is-leader .gallop-drop-rank {
+  color: #4ade80;
+  font-weight: 950;
+}
+
+.gallop-runner-row .is-dropping {
+  color: #4ade80;
+  font-weight: 900;
+}
+
+.gallop-finish-badge {
+  color: #facc15;
+  font-size: 9px;
+}
+
+@media (max-width: 520px) {
+  .gallop-runner-table-head,
+  .gallop-runner-row {
+    grid-template-columns: 27px minmax(100px, 1fr) 48px 45px 45px;
+    gap: 4px;
+  }
+
+  .gallop-runner-row {
+    font-size: 10px;
+  }
+}
+
+.gallop-rule-status.is-candidate.is-locked {
+  border-color: #60a5fa;
+  background: rgba(30, 64, 175, 0.2);
+  color: #bfdbfe;
+}
+
+.gallop-rule-status.is-lock-missing {
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  background: rgba(161, 98, 7, 0.16);
+  color: #fde68a;
+}
+
+
+/* GALLOP RACE PRIORITY V1 */
+
+.gallop-race-card {
+  transition:
+    opacity 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.gallop-race-card.is-next {
+  border: 2px solid #22c55e;
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.18),
+    0 0 28px rgba(34, 197, 94, 0.12);
+}
+
+.gallop-race-card.is-ongoing {
+  border: 2px solid #f59e0b;
+}
+
+.gallop-race-card.is-finished {
+  opacity: 0.55;
+}
+
+.gallop-race-state {
+  width: fit-content;
+  margin: 4px 0 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.gallop-race-state.is-next {
+  border: 1px solid rgba(34, 197, 94, 0.75);
+  background: rgba(22, 101, 52, 0.30);
+  color: #86efac;
+}
+
+.gallop-race-state.is-ongoing {
+  border: 1px solid rgba(245, 158, 11, 0.70);
+  background: rgba(146, 64, 14, 0.22);
+  color: #fde68a;
+}
+
+.gallop-race-state.is-finished {
+  border: 1px solid rgba(100, 116, 139, 0.45);
+  background: rgba(51, 65, 85, 0.24);
+  color: #94a3b8;
+}
+
+.gallop-race-state.is-upcoming {
+  border: 1px solid rgba(59, 130, 246, 0.30);
+  background: rgba(30, 64, 175, 0.12);
+  color: #93c5fd;
+}
+
+.gallop-all-runners-title > div {
+  display: grid;
+  gap: 2px;
+}
+
+.gallop-all-runners-title > div > span {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.gallop-runners-toggle {
+  display: none;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid #334155;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.8);
+  color: #cbd5e1;
+  font-size: 9px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .gallop-race-card {
+    width: 100%;
+  }
+
+  .gallop-race-card.is-next {
+    border-width: 2px;
+    box-shadow:
+      0 0 0 1px rgba(34, 197, 94, 0.22),
+      0 0 24px rgba(34, 197, 94, 0.16);
+  }
+
+  .gallop-race-card.is-finished {
+    opacity: 0.50;
+  }
+
+  .gallop-race-state {
+    font-size: 10px;
+  }
+
+  .gallop-runners-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .gallop-all-runners.is-collapsed-mobile
+    .gallop-runner-table-head,
+  .gallop-all-runners.is-collapsed-mobile
+    .gallop-runner-row {
+    display: none;
+  }
+
+  .gallop-all-runners-title {
+    min-height: 34px;
+  }
+}

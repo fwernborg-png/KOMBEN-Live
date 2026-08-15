@@ -52,6 +52,7 @@ import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 import { DailyResultPeek } from "./winPlaceModel/DailyResultPeek";
 import { loadWinPlaceBetsByDate } from "./winPlaceModel/repository";
 import { ResearchHistoryHub } from "./researchHistory/ResearchHistoryHub";
+import { GallopTodayPanel } from "./gallop/GallopTodayPanel";
 import { loadLiveLockStrength } from "./liveLockRepository";
 import { isStrongStarProfile } from "./strongStar";
 import { SpeedAnalysisPanel } from "./speedAnalysis/SpeedAnalysisPanel";
@@ -2185,6 +2186,7 @@ export default function App() {
   testConnection();
 }, []);
   const [activeTab, setActiveTab] = useState<AppTab>("race");
+  const [sportMode, setSportMode] = useState<"TROT" | "GALLOP">("TROT");
   const [date, setDate] = useState(() =>
     /^\d{4}-\d{2}-\d{2}$/.test(initialLinkDate)
       ? initialLinkDate
@@ -8074,6 +8076,63 @@ export default function App() {
     );
   }
 
+  if (ACTIVE_PLACE_UI_ONLY && sportMode === "GALLOP") {
+    return (
+      <main className="place-app-page" style={s.page}>
+        <section
+          className="place-app-card"
+          style={{ ...s.card, maxWidth: 1480, padding: 18 }}
+        >
+          <div className="top-nav-shell">
+            <div className="app-headline">
+              <div>
+                <p style={s.kicker}>PLATSJÄGAREN</p>
+                <h1 className="app-title-compact">Platsjägaren · Galopp</h1>
+              </div>
+              <span className="live-pill">GALOPP V1</span>
+            </div>
+
+            <div className="gallop-sport-switch" aria-label="Välj sport">
+              <button
+                type="button"
+                onClick={() => setSportMode("TROT")}
+              >
+                🐎 Trav
+              </button>
+              <button
+                type="button"
+                className="is-active"
+                onClick={() => setSportMode("GALLOP")}
+              >
+                🏇 Galopp
+              </button>
+            </div>
+
+            <div className="top-toolbar-row">
+              <div className="top-toolbar-controls">
+                <label className="toolbar-field">
+                  <span>Datum</span>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(event) => setDate(event.target.value)}
+                    style={s.input}
+                  />
+                </label>
+              </div>
+
+              <div className="toolbar-health">
+                Galopp V1 · experimentläge
+              </div>
+            </div>
+          </div>
+
+          <GallopTodayPanel date={date} />
+        </section>
+      </main>
+    );
+  }
+
   if (ACTIVE_PLACE_UI_ONLY) {
     return (
       <main className="place-app-page" style={s.page}>
@@ -8131,6 +8190,22 @@ export default function App() {
                       : "Serverhistorik väntar"}
               </span>
               </div>
+            </div>
+
+            <div className="gallop-sport-switch" aria-label="Välj sport">
+              <button
+                type="button"
+                className="is-active"
+                onClick={() => setSportMode("TROT")}
+              >
+                🐎 Trav
+              </button>
+              <button
+                type="button"
+                onClick={() => setSportMode("GALLOP")}
+              >
+                🏇 Galopp
+              </button>
             </div>
 
             <div className="top-toolbar-row">
