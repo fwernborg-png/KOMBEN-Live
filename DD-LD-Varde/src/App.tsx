@@ -3656,6 +3656,10 @@ export default function App() {
   }, [date]);
 
   useEffect(() => {
+    if (activeTab !== "stats") {
+      return;
+    }
+
     let cancelled = false;
 
     async function loadModelStats() {
@@ -3680,15 +3684,10 @@ export default function App() {
 
     void loadModelStats();
 
-    const timer = window.setInterval(() => {
-      void loadModelStats();
-    }, 30_000);
-
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
     };
-  }, []);
+  }, [activeTab]);
 
   useEffect(() => {
     try {
