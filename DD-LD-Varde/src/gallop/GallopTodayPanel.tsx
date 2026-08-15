@@ -987,14 +987,21 @@ export function GallopTodayPanel({
 
   useEffect(
     () => {
-      window.localStorage
-        .setItem(
-          SETTINGS_KEY,
-          JSON.stringify({
-            minDropPercent,
-            maxOdds,
-          }),
+      try {
+        window.localStorage
+          .setItem(
+            SETTINGS_KEY,
+            JSON.stringify({
+              minDropPercent,
+              maxOdds,
+            }),
+          );
+      } catch (storageError) {
+        console.warn(
+          "Kunde inte spara Gallop-inställningar lokalt",
+          storageError,
         );
+      }
     },
     [
       minDropPercent,
@@ -1013,13 +1020,20 @@ export function GallopTodayPanel({
 
   useEffect(
     () => {
-      window.localStorage
-        .setItem(
-          LOCKED_SIGNALS_KEY,
-          JSON.stringify(
-            lockedSignals,
-          ),
+      try {
+        window.localStorage
+          .setItem(
+            LOCKED_SIGNALS_KEY,
+            JSON.stringify(
+              lockedSignals,
+            ),
+          );
+      } catch (storageError) {
+        console.warn(
+          "Kunde inte spara Gallop-låsningar lokalt",
+          storageError,
         );
+      }
     },
     [lockedSignals],
   );
