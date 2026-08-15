@@ -282,6 +282,7 @@ function currencyCodeForCountry(
     DK: "DKK",
     FR: "EUR",
     IE: "EUR",
+    IT: "EUR",
     DE: "EUR",
     GB: "GBP",
     ZA: "ZAR",

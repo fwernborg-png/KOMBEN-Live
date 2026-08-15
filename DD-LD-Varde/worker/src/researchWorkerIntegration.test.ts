@@ -162,6 +162,33 @@ describe("researchWorkerIntegration", () => {
     expect(input.runners[0].startLane).toBe(1);
   });
 
+  it("sparar Tyskland och Italien med EUR", () => {
+    for (
+      const [countryCode, name] of [
+        ["DE", "Berlin"],
+        ["IT", "Milano"],
+      ] as const
+    ) {
+      const input =
+        buildResearchArchiveRaceInput({
+          raceDate: "2026-08-15",
+          track: {
+            ...buildTrack(),
+            countryCode,
+            name,
+          },
+          race: buildRace(),
+        });
+
+      expect(input.countryCode).toBe(
+        countryCode,
+      );
+      expect(input.currencyCode).toBe(
+        "EUR",
+      );
+    }
+  });
+
   it("stoppar lopp som saknar starttid", () => {
     const race = buildRace();
     race.startTime = undefined;

@@ -63,6 +63,20 @@ describe(
             sport: "gallop",
           }),
         ).toBe(true);
+
+        expect(
+          shouldIncludeResearchTrack({
+            countryCode: "DE",
+            sport: "gallop",
+          }),
+        ).toBe(true);
+
+        expect(
+          shouldIncludeResearchTrack({
+            countryCode: "IT",
+            sport: "gallop",
+          }),
+        ).toBe(true);
       },
     );
 
@@ -86,6 +100,20 @@ describe(
         expect(
           shouldIncludeResearchTrack({
             countryCode: "NO",
+            sport: "trot",
+          }),
+        ).toBe(true);
+
+        expect(
+          shouldIncludeResearchTrack({
+            countryCode: "DE",
+            sport: "trot",
+          }),
+        ).toBe(true);
+
+        expect(
+          shouldIncludeResearchTrack({
+            countryCode: "IT",
             sport: "trot",
           }),
         ).toBe(true);
