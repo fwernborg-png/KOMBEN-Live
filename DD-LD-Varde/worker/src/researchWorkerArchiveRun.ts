@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   WIN_PLACE_RULE_CONFIG_V1,
-  isInWinPlaceFinalSignalWindow,
+  getWinPlacePlannedLockTimeMs,
 } from "../../src/winPlaceModel/config";
 import {
   buildResearchLockArchiveRows,
@@ -227,13 +227,42 @@ export async function archiveResearchRacesAtLock(
       race,
     } = item;
 
-    if (
-      !race.startTime ||
-      !isInWinPlaceFinalSignalWindow(
+    if (!race.startTime) {
+      continue;
+    }
+
+    const targetLockTimeMs =
+      getWinPlacePlannedLockTimeMs(
         race.startTime,
-        args.nowMs,
         WIN_PLACE_RULE_CONFIG_V1,
-      )
+      );
+
+    /*
+     * T−90 är den enda giltiga låstidpunkten.
+     *
+     * Cronen får fortfarande köras i toleransfönstret
+     * T−120..T−60, men forskningsloppet får inte
+     * arkiveras före T−90.
+     */
+    const plannedStartTimeMs =
+      Date.parse(race.startTime);
+
+    /*
+     * Själva datalåset är ALLTID exakt T−90.
+     *
+     * Cronen får utföra arkiveringen efter T−90
+     * (även om nästa minutkörning råkar bli T−40
+     * eller strax efter start), men oddsen läses
+     * aldrig längre än exakt T−90.
+     */
+    const archiveDeadlineMs =
+      plannedStartTimeMs + 90_000;
+
+    if (
+      !Number.isFinite(targetLockTimeMs) ||
+      !Number.isFinite(plannedStartTimeMs) ||
+      args.nowMs < targetLockTimeMs ||
+      args.nowMs > archiveDeadlineMs
     ) {
       continue;
     }
@@ -297,7 +326,7 @@ export async function archiveResearchRacesAtLock(
 
           lockTimeIso:
             new Date(
-              args.nowMs,
+              targetLockTimeMs,
             ).toISOString(),
         });
 
@@ -312,7 +341,8 @@ export async function archiveResearchRacesAtLock(
         mapResearchArchiveOddsRows({
           rows: rawOddsRows,
           race,
-          actualLockTimeMs: args.nowMs,
+          actualLockTimeMs:
+            targetLockTimeMs,
         });
 
       const archiveRows =
@@ -321,7 +351,7 @@ export async function archiveResearchRacesAtLock(
           odds: archiveOdds,
 
           actualLockTimeMs:
-            args.nowMs,
+            targetLockTimeMs,
 
           targetLockSecondsBeforeStart:
             WIN_PLACE_RULE_CONFIG_V1

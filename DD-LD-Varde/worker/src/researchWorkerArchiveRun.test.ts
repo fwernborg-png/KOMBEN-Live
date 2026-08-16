@@ -549,6 +549,88 @@ describe("researchWorkerArchiveRun", () => {
     );
   });
 
+  it(
+    "väntar till T−90 och använder exakt T−90 som låstid",
+    async () => {
+      const item = buildRaceItem();
+
+      let oddsReadBeforeTarget = false;
+
+      const beforeAdapter:
+        ResearchArchivePersistenceAdapter = {
+          async loadExistingLockStates() {
+            return new Map();
+          },
+
+          async loadOddsRows() {
+            oddsReadBeforeTarget = true;
+            return [];
+          },
+
+          async persistRows() {
+            throw new Error("Ska inte nås före T−90");
+          },
+        };
+
+      const beforeSummary =
+        await archiveResearchRacesAtLock({
+          enabled: true,
+          raceDate: "2026-07-29",
+          nowMs: START_MS - 110_000,
+          races: [item],
+          adapter: beforeAdapter,
+        });
+
+      expect(beforeSummary.eligibleRaces).toBe(0);
+      expect(beforeSummary.archivedRaces).toBe(0);
+      expect(oddsReadBeforeTarget).toBe(false);
+
+      let usedLockTimeIso = "";
+
+      const afterAdapter:
+        ResearchArchivePersistenceAdapter = {
+          async loadExistingLockStates() {
+            return new Map();
+          },
+
+          async loadOddsRows({
+            lockTimeIso,
+          }) {
+            usedLockTimeIso = lockTimeIso;
+            return buildOddsRows(item);
+          },
+
+          async persistRows(rows) {
+            return {
+              raceKey: rows.raceKey,
+              snapshotKey: rows.snapshotKey,
+              runners: rows.runnerSnapshotRows.length,
+              indicators: rows.indicatorRows.length,
+              permanentOddsPoints: rows.oddsPointRows.length,
+              metrics: rows.metricRows.length,
+              products: rows.productRows.length,
+              snapshotComplete: rows.snapshotComplete,
+            };
+          },
+        };
+
+      const afterSummary =
+        await archiveResearchRacesAtLock({
+          enabled: true,
+          raceDate: "2026-07-29",
+          nowMs: START_MS - 40_000,
+          races: [item],
+          adapter: afterAdapter,
+        });
+
+      expect(afterSummary.eligibleRaces).toBe(1);
+      expect(afterSummary.archivedRaces).toBe(1);
+      expect(usedLockTimeIso).toBe(
+        new Date(LOCK_MS).toISOString(),
+      );
+    },
+  );
+
   it("ignorerar lopp utanför låsfönstret", async () => {
     let databaseRead = false;
 
