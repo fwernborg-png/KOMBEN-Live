@@ -10,11 +10,16 @@ import {
   ResearchGallopPanel,
 } from "./ResearchGallopPanel";
 
+import {
+  ResearchCollectionStatusPanel,
+} from "./ResearchCollectionStatusPanel";
+
 import "./researchHistory.css";
 
 type ResearchHistoryMode =
   | "TROT"
-  | "GALLOP";
+  | "GALLOP"
+  | "STATUS";
 
 export function ResearchHistoryHub() {
   const [
@@ -65,12 +70,32 @@ export function ResearchHistoryHub() {
 
           Galopp
         </button>
+
+        <button
+          type="button"
+          className={
+            mode === "STATUS"
+              ? "is-active"
+              : ""
+          }
+          onClick={() =>
+            setMode("STATUS")
+          }
+        >
+          <span aria-hidden="true">
+            📡
+          </span>
+
+          Insamlingsstatus
+        </button>
       </nav>
 
       {mode === "TROT" ? (
         <ResearchHistoryPanel />
-      ) : (
+      ) : mode === "GALLOP" ? (
         <ResearchGallopPanel />
+      ) : (
+        <ResearchCollectionStatusPanel />
       )}
     </div>
   );

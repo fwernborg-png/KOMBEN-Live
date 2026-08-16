@@ -140,6 +140,14 @@ const COUNTRY_FILTER_OPTIONS = [
     code: "FR",
     label: "Frankrike",
   },
+  {
+    code: "DE",
+    label: "Tyskland",
+  },
+  {
+    code: "IT",
+    label: "Italien",
+  },
 ] as const;
 
 function countryFilterLabel(
@@ -2108,13 +2116,15 @@ export function ResearchHistoryPanel() {
                   Alla länder
                 </option>
 
-                {COUNTRY_FILTER_OPTIONS.map(
-                  (country) => (
+                {options.countries.map(
+                  (countryCode) => (
                     <option
-                      key={country.code}
-                      value={country.code}
+                      key={countryCode}
+                      value={countryCode}
                     >
-                      {country.label}
+                      {countryFilterLabel(
+                        countryCode,
+                      )}
                     </option>
                   ),
                 )}

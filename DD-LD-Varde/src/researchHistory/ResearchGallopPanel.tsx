@@ -274,6 +274,7 @@ function countryLabel(
       HK: "🇭🇰 Hongkong",
       AE: "🇦🇪 Förenade Arabemiraten",
       DE: "🇩🇪 Tyskland",
+      IT: "🇮🇹 Italien",
     };
 
   return (

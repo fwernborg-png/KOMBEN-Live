@@ -8091,6 +8091,7 @@ export default function App() {
               <span className="live-pill">GALOPP V1</span>
             </div>
 
+            {activeTab !== "history" ? (
             <div className="gallop-sport-switch" aria-label="Välj sport">
               <button
                 type="button"
@@ -8106,6 +8107,7 @@ export default function App() {
                 🏇 Galopp
               </button>
             </div>
+            ) : null}
 
             <div className="top-toolbar-row">
               <div className="top-toolbar-controls">
@@ -8191,6 +8193,7 @@ export default function App() {
               </div>
             </div>
 
+            {activeTab !== "history" ? (
             <div className="gallop-sport-switch" aria-label="Välj sport">
               <button
                 type="button"
@@ -8206,6 +8209,7 @@ export default function App() {
                 🏇 Galopp
               </button>
             </div>
+            ) : null}
 
             <div className="top-toolbar-row">
               <div className="top-toolbar-controls">

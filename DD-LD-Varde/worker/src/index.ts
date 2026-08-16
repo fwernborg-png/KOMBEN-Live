@@ -6520,6 +6520,7 @@ async function runCron(env: Env) {
 
 const ATG_PROXY_PREFIX = "/atg";
 const PLACE_HISTORY_PATH = "/api/place-live/history";
+const RESEARCH_STATUS_PATH = "/api/research/status";
 const PUSH_PUBLIC_KEY_PATH = "/api/push/public-key";
 const PUSH_SUBSCRIBE_PATH = "/api/push/subscribe";
 const ATG_PROXY_BASE_URL = "https://www.atg.se/services/racinginfo/v1/api";
@@ -6584,6 +6585,478 @@ function jsonWithCors(payload: unknown, status = 200) {
     }),
   });
 }
+
+async function getResearchCollectionStatus(
+  request: Request,
+  url: URL,
+  env: Env,
+): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: withCors(),
+    });
+  }
+
+  if (
+    request.method !== "GET" &&
+    request.method !== "HEAD"
+  ) {
+    return jsonWithCors(
+      {
+        ok: false,
+        error: "Method not allowed",
+      },
+      405,
+    );
+  }
+
+  const nowMs = Date.now();
+
+  const raceDate =
+    url.searchParams.get("date")?.trim() ||
+    getRaceDateInStockholm(nowMs);
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(
+      raceDate,
+    )
+  ) {
+    return jsonWithCors(
+      {
+        ok: false,
+        error: "date must be YYYY-MM-DD",
+      },
+      400,
+    );
+  }
+
+  try {
+    const apiBaseUrl =
+      env.ATG_API_BASE_URL ??
+      ATG_PROXY_BASE_URL;
+
+    const supabase =
+      createSupabaseClient(env);
+
+    const [
+      calendar,
+      archiveResult,
+      workerRunResult,
+    ] = await Promise.all([
+      loadTracksAndMeetings({
+        apiBaseUrl,
+        raceDate,
+      }),
+
+      supabase
+        .from("research_races")
+        .select(
+          [
+            "race_key",
+            "country_code",
+            "sport_type",
+            "track_id",
+            "track_name",
+            "race_number",
+            "planned_start_time",
+            "archive_status",
+            "archived_odds_point_count",
+            "missing_fields",
+            "updated_at",
+          ].join(","),
+        )
+        .eq("race_date", raceDate),
+
+      supabase
+        .from("place_live_worker_runs")
+        .select(
+          "started_at,finished_at,status,error_text,summary_json",
+        )
+        .order("started_at", {
+          ascending: false,
+        })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    if (archiveResult.error) {
+      throw new Error(
+        `Kunde inte läsa research_races: ${archiveResult.error.message}`,
+      );
+    }
+
+    if (workerRunResult.error) {
+      throw new Error(
+        `Kunde inte läsa workerstatus: ${workerRunResult.error.message}`,
+      );
+    }
+
+    type ArchiveRow = {
+      race_key: string;
+      country_code: string;
+      sport_type: string | null;
+      track_id: number;
+      track_name: string;
+      race_number: number;
+      planned_start_time: string | null;
+      archive_status: string;
+      archived_odds_point_count: number | null;
+      missing_fields: string[] | null;
+      updated_at: string | null;
+    };
+
+    type WorkerRunRow = {
+      started_at: string | null;
+      finished_at: string | null;
+      status: string | null;
+      error_text: string | null;
+      summary_json: unknown;
+    };
+
+    const archiveRows =
+      (archiveResult.data ?? []) as
+        ArchiveRow[];
+
+    const archiveByRace =
+      new Map<
+        string,
+        ArchiveRow
+      >();
+
+    for (const row of archiveRows) {
+      archiveByRace.set(
+        `${row.track_id}:${row.race_number}`,
+        row,
+      );
+    }
+
+    const races: Array<{
+      countryCode: string;
+      trackId: number;
+      trackName: string;
+      sport: string | null;
+      raceNumber: number;
+      plannedStartTime: string;
+      collectionStartTime: string;
+      lockTargetTime: string;
+      status:
+        | "WAITING"
+        | "COLLECTING"
+        | "LOCKING"
+        | "LOCKED"
+        | "WAITING_RESULT"
+        | "COMPLETE"
+        | "MISSING_LOCK"
+        | "ERROR";
+      archiveStatus: string | null;
+      archivedOddsPointCount: number;
+      missingFields: string[];
+    }> = [];
+
+    for (
+      const track
+      of calendar.researchTracks
+    ) {
+      const refs =
+        calendar.meetingRefs.get(
+          track.id,
+        ) ?? [];
+
+      for (const ref of refs) {
+        if (!ref.startTime) {
+          continue;
+        }
+
+        const startMs =
+          Date.parse(
+            ref.startTime,
+          );
+
+        if (
+          !Number.isFinite(
+            startMs,
+          )
+        ) {
+          continue;
+        }
+
+        const archive =
+          archiveByRace.get(
+            `${track.id}:${ref.raceNumber}`,
+          ) ?? null;
+
+        const collectionStartMs =
+          startMs -
+          60 * 60_000;
+
+        const lockTargetMs =
+          startMs -
+          90_000;
+
+        let status:
+          | "WAITING"
+          | "COLLECTING"
+          | "LOCKING"
+          | "LOCKED"
+          | "WAITING_RESULT"
+          | "COMPLETE"
+          | "MISSING_LOCK"
+          | "ERROR";
+
+        if (
+          archive?.archive_status ===
+          "COMPLETE"
+        ) {
+          status = "COMPLETE";
+        } else if (
+          archive?.archive_status ===
+            "FAILED" ||
+          archive?.archive_status ===
+            "INCOMPLETE"
+        ) {
+          status = "ERROR";
+        } else if (archive) {
+          status =
+            nowMs >= startMs
+              ? "WAITING_RESULT"
+              : "LOCKED";
+        } else if (
+          nowMs <
+          collectionStartMs
+        ) {
+          status = "WAITING";
+        } else if (
+          nowMs <
+          startMs - 120_000
+        ) {
+          status = "COLLECTING";
+        } else if (
+          nowMs <=
+          startMs - 60_000
+        ) {
+          status = "LOCKING";
+        } else {
+          status = "MISSING_LOCK";
+        }
+
+        races.push({
+          countryCode:
+            track.countryCode,
+          trackId:
+            track.id,
+          trackName:
+            track.name,
+          sport:
+            track.sport,
+          raceNumber:
+            ref.raceNumber,
+          plannedStartTime:
+            ref.startTime,
+          collectionStartTime:
+            new Date(
+              collectionStartMs,
+            ).toISOString(),
+          lockTargetTime:
+            new Date(
+              lockTargetMs,
+            ).toISOString(),
+          status,
+          archiveStatus:
+            archive?.archive_status ??
+            null,
+          archivedOddsPointCount:
+            Number(
+              archive
+                ?.archived_odds_point_count ??
+              0,
+            ),
+          missingFields:
+            archive?.missing_fields ??
+            [],
+        });
+      }
+    }
+
+    races.sort(
+      (a, b) =>
+        Date.parse(
+          a.plannedStartTime,
+        ) -
+        Date.parse(
+          b.plannedStartTime,
+        ),
+    );
+
+    const latestRun =
+      workerRunResult.data as
+        WorkerRunRow | null;
+
+    const latestRunMs =
+      Date.parse(
+        latestRun?.finished_at ??
+        latestRun?.started_at ??
+        "",
+      );
+
+    const ageMs =
+      Number.isFinite(
+        latestRunMs,
+      )
+        ? nowMs -
+          latestRunMs
+        : Number.POSITIVE_INFINITY;
+
+    const workerHealth:
+      | "OK"
+      | "RUNNING"
+      | "STALE"
+      | "ERROR"
+      | "UNKNOWN" =
+        !latestRun
+          ? "UNKNOWN"
+          : latestRun.status ===
+              "FAILED"
+            ? "ERROR"
+            : latestRun.status ===
+                "RUNNING" &&
+              ageMs <=
+                2 * 60_000
+              ? "RUNNING"
+              : latestRun.status ===
+                  "SUCCESS" &&
+                ageMs <=
+                  3 * 60_000
+                ? "OK"
+                : "STALE";
+
+    const countryCodes =
+      new Set(
+        races.map(
+          (race) =>
+            race.countryCode,
+        ),
+      );
+
+    const trackKeys =
+      new Set(
+        races.map(
+          (race) =>
+            `${race.countryCode}:${race.trackId}`,
+        ),
+      );
+
+    const collecting =
+      races.filter(
+        (race) =>
+          race.status ===
+            "COLLECTING" ||
+          race.status ===
+            "LOCKING",
+      ).length;
+
+    const locked =
+      races.filter(
+        (race) =>
+          race.status ===
+            "LOCKED" ||
+          race.status ===
+            "WAITING_RESULT" ||
+          race.status ===
+            "COMPLETE",
+      ).length;
+
+    const complete =
+      races.filter(
+        (race) =>
+          race.status ===
+          "COMPLETE",
+      ).length;
+
+    const problems =
+      races.filter(
+        (race) =>
+          race.status ===
+            "MISSING_LOCK" ||
+          race.status ===
+            "ERROR",
+      ).length;
+
+    const payload = {
+      ok: true,
+      date:
+        raceDate,
+      generatedAt:
+        new Date(
+          nowMs,
+        ).toISOString(),
+
+      worker: {
+        health:
+          workerHealth,
+        status:
+          latestRun?.status ??
+          null,
+        startedAt:
+          latestRun?.started_at ??
+          null,
+        finishedAt:
+          latestRun?.finished_at ??
+          null,
+        error:
+          latestRun?.error_text ??
+          null,
+      },
+
+      summary: {
+        countries:
+          countryCodes.size,
+        tracks:
+          trackKeys.size,
+        races:
+          races.length,
+        collecting,
+        locked,
+        complete,
+        problems,
+      },
+
+      races,
+    };
+
+    if (
+      request.method === "HEAD"
+    ) {
+      return new Response(
+        null,
+        {
+          status: 200,
+          headers:
+            withCors({
+              "Cache-Control":
+                "no-store",
+            }),
+        },
+      );
+    }
+
+    return jsonWithCors(
+      payload,
+    );
+  } catch (error) {
+    return jsonWithCors(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unknown error",
+      },
+      500,
+    );
+  }
+}
+
 
 async function getPushPublicKey(
   request: Request,
@@ -6871,6 +7344,14 @@ export default {
       url.pathname.startsWith(`${ATG_PROXY_PREFIX}/`)
     ) {
       return proxyAtgRequest(request, url);
+    }
+
+    if (url.pathname === RESEARCH_STATUS_PATH) {
+      return getResearchCollectionStatus(
+        request,
+        url,
+        env,
+      );
     }
 
     if (url.pathname === PUSH_PUBLIC_KEY_PATH) {

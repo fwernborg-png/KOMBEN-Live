@@ -62,10 +62,91 @@ function mergedHeaders(
   return headers;
 }
 
+async function getFreshAccessToken(
+  forceRefresh = false,
+) {
+  if (forceRefresh) {
+    const {
+      data,
+      error,
+    } =
+      await supabase.auth
+        .refreshSession();
+
+    if (
+      error ||
+      !data.session
+    ) {
+      return null;
+    }
+
+    return (
+      data.session
+        .access_token ??
+      null
+    );
+  }
+
+  const {
+    data,
+  } =
+    await supabase.auth
+      .getSession();
+
+  const session =
+    data.session;
+
+  if (!session) {
+    return null;
+  }
+
+  const expiresAtMs =
+    session.expires_at
+      ? session.expires_at *
+        1_000
+      : null;
+
+  /*
+   * Förnya redan innan token faktiskt
+   * går ut. Då slipper vi att ett anrop
+   * hamnar precis över gränsen.
+   */
+  if (
+    expiresAtMs !== null &&
+    expiresAtMs -
+      Date.now() <
+      60_000
+  ) {
+    const {
+      data: refreshed,
+      error,
+    } =
+      await supabase.auth
+        .refreshSession();
+
+    if (
+      !error &&
+      refreshed.session
+    ) {
+      return (
+        refreshed.session
+          .access_token ??
+        null
+      );
+    }
+  }
+
+  return (
+    session.access_token ??
+    null
+  );
+}
+
 export function installAuthenticatedWorkerFetch() {
   if (
     installed ||
-    typeof window === "undefined"
+    typeof window ===
+      "undefined"
   ) {
     return;
   }
@@ -73,7 +154,9 @@ export function installAuthenticatedWorkerFetch() {
   installed = true;
 
   const originalFetch =
-    window.fetch.bind(window);
+    window.fetch.bind(
+      window,
+    );
 
   const authenticatedFetch:
     typeof window.fetch =
@@ -97,55 +180,93 @@ export function installAuthenticatedWorkerFetch() {
           );
         }
 
-        const {
-          data,
-        } =
-          await supabase.auth
-            .getSession();
+        const performRequest =
+          async (
+            token:
+              string | null,
+          ) => {
+            const headers =
+              mergedHeaders(
+                input,
+                init,
+              );
 
-        const token =
-          data.session
-            ?.access_token;
+            if (token) {
+              headers.set(
+                "Authorization",
+                `Bearer ${token}`,
+              );
+            }
 
-        if (!token) {
-          return originalFetch(
-            input,
-            init,
-          );
-        }
+            if (
+              input instanceof
+              Request
+            ) {
+              return originalFetch(
+                new Request(
+                  input.clone(),
+                  {
+                    ...init,
+                    headers,
+                  },
+                ),
+              );
+            }
 
-        const headers =
-          mergedHeaders(
-            input,
-            init,
-          );
-
-        headers.set(
-          "Authorization",
-          `Bearer ${token}`,
-        );
-
-        if (
-          input instanceof Request
-        ) {
-          return originalFetch(
-            new Request(
+            return originalFetch(
               input,
               {
                 ...init,
                 headers,
               },
-            ),
+            );
+          };
+
+        let token =
+          await getFreshAccessToken();
+
+        let response =
+          await performRequest(
+            token,
           );
+
+        /*
+         * Om workern ändå säger 401:
+         * tvinga fram en ny Supabase-token
+         * och försök exakt en gång till.
+         */
+        if (
+          response.status ===
+          401
+        ) {
+          const refreshedToken =
+            await getFreshAccessToken(
+              true,
+            );
+
+          if (
+            refreshedToken
+          ) {
+            token =
+              refreshedToken;
+
+            response =
+              await performRequest(
+                token,
+              );
+          } else {
+            /*
+             * Refresh-tokenen är också
+             * ogiltig. AuthGate får då
+             * visa login igen i stället
+             * för att appen fastnar.
+             */
+            await supabase.auth
+              .signOut();
+          }
         }
 
-        return originalFetch(
-          input,
-          {
-            ...init,
-            headers,
-          },
-        );
+        return response;
       };
 
   window.fetch =
