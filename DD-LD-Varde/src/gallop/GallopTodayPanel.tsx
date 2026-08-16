@@ -25,9 +25,6 @@ const PLACE_HISTORY_API =
 const SETTINGS_KEY =
   "platsjagaren-gallop-v1-settings";
 
-const LOCKED_SIGNALS_KEY =
-  "platsjagaren-gallop-v1-locked-signals";
-
 type UnknownRecord =
   Record<string, unknown>;
 
@@ -1526,35 +1523,7 @@ export function GallopTodayPanel({
     setLockedSignals,
   ] = useState<
     GallopLockedSignals
-  >(() => {
-    try {
-      const raw =
-        window.localStorage
-          .getItem(
-            LOCKED_SIGNALS_KEY,
-          );
-
-      if (!raw) {
-        return {};
-      }
-
-      const parsed =
-        JSON.parse(raw);
-
-      return (
-        parsed &&
-        typeof parsed ===
-          "object" &&
-        !Array.isArray(
-          parsed,
-        )
-      )
-        ? parsed as GallopLockedSignals
-        : {};
-    } catch {
-      return {};
-    }
-  });
+  >({});
 
   const [
     loadingCalendar,
@@ -1853,26 +1822,6 @@ export function GallopTodayPanel({
         oddsMemory;
     },
     [oddsMemory],
-  );
-
-  useEffect(
-    () => {
-      try {
-        window.localStorage
-          .setItem(
-            LOCKED_SIGNALS_KEY,
-            JSON.stringify(
-              lockedSignals,
-            ),
-          );
-      } catch (storageError) {
-        console.warn(
-          "Kunde inte spara Gallop-låsningar lokalt",
-          storageError,
-        );
-      }
-    },
-    [lockedSignals],
   );
 
   useEffect(
@@ -2286,13 +2235,53 @@ export function GallopTodayPanel({
                   const previous =
                     next[key];
 
+                  const runnerLockMs =
+                    Number.isFinite(
+                      resultStartMs,
+                    )
+                      ? resultStartMs -
+                        90_000
+                      : null;
+
+                  const runnerLockPassed =
+                    runnerLockMs !==
+                      null &&
+                    collectionNowMs >=
+                      runnerLockMs;
+
                   const serverPoints =
                     result
                       .serverWinPoints
                       .filter(
-                        (point) =>
-                          point.runnerNumber ===
-                          runner.number,
+                        (point) => {
+                          if (
+                            point.runnerNumber !==
+                            runner.number
+                          ) {
+                            return false;
+                          }
+
+                          if (
+                            !runnerLockPassed ||
+                            runnerLockMs ===
+                              null
+                          ) {
+                            return true;
+                          }
+
+                          const pointMs =
+                            Date.parse(
+                              point.pointTs,
+                            );
+
+                          return (
+                            Number.isFinite(
+                              pointMs,
+                            ) &&
+                            pointMs <=
+                              runnerLockMs
+                          );
+                        },
                       );
 
                   const firstServerPoint =
@@ -2319,12 +2308,20 @@ export function GallopTodayPanel({
                         ),
 
                       currentOddsRaw:
-                        runner.oddsRaw ??
-                        Math.round(
-                          lastServerPoint
-                            .oddsDecimal *
-                            100,
-                        ),
+                        runnerLockPassed
+                          ? Math.round(
+                              lastServerPoint
+                                .oddsDecimal *
+                                100,
+                            )
+                          : (
+                              runner.oddsRaw ??
+                              Math.round(
+                                lastServerPoint
+                                  .oddsDecimal *
+                                  100,
+                              )
+                            ),
 
                       samples:
                         Math.max(
@@ -2416,19 +2413,6 @@ export function GallopTodayPanel({
                     result.race
                       .raceNumber,
                   );
-
-                /*
-                 * Har loppet redan låsts
-                 * får signalen ALDRIG
-                 * skrivas över.
-                 */
-                if (
-                  next[
-                    signalKey
-                  ]
-                ) {
-                  continue;
-                }
 
                 const windowStartMs =
                   startMs -
@@ -2548,70 +2532,7 @@ export function GallopTodayPanel({
                           };
                         }
 
-                        /*
-                         * Fallback endast
-                         * från data som redan
-                         * fanns i browsern
-                         * före denna hämtning.
-                         *
-                         * Det gör att vi inte
-                         * råkar använda ett
-                         * nytt post-T90-odds.
-                         */
-                        const local =
-                          oddsMemoryRef
-                            .current[
-                              runnerKey(
-                                date,
-                                track.id,
-                                result
-                                  .race
-                                  .raceNumber,
-                                runner.number,
-                              )
-                            ];
-
-                        if (
-                          !local ||
-                          local.samples <
-                            1 ||
-                          local
-                            .firstOddsRaw <=
-                            0 ||
-                          local
-                            .currentOddsRaw <=
-                            0
-                        ) {
-                          return null;
-                        }
-
-                        return {
-                          runner,
-
-                          firstOddsRaw:
-                            local
-                              .firstOddsRaw,
-
-                          lockOddsRaw:
-                            local
-                              .currentOddsRaw,
-
-                          samples:
-                            local.samples,
-
-                          dropPercent:
-                            (
-                              (
-                                local
-                                  .firstOddsRaw -
-                                local
-                                  .currentOddsRaw
-                              ) /
-                              local
-                                .firstOddsRaw
-                            ) *
-                            100,
-                        };
+                        return null;
                       },
                     )
                     .filter(
@@ -2633,7 +2554,11 @@ export function GallopTodayPanel({
                         b,
                       ) =>
                         b.dropPercent -
-                        a.dropPercent,
+                          a.dropPercent ||
+                        a.lockOddsRaw -
+                          b.lockOddsRaw ||
+                        a.runner.number -
+                          b.runner.number,
                     );
 
                 const winner =
@@ -3429,7 +3354,9 @@ export function GallopTodayPanel({
                                 lockedSignal
                                   .dropPercent,
                             }
-                          : liveBest;
+                          : lockPassed
+                            ? null
+                            : liveBest;
 
                       const signalIsLocked =
                         Boolean(
@@ -3953,10 +3880,9 @@ export function GallopTodayPanel({
                             </>
                           ) : (
                             <p className="gallop-no-data">
-                              Startlistan eller
-                              vinnaroddsen är
-                              ännu inte
-                              tillgängliga.
+                              {lockPassed
+                                ? "🔒 T−90 passerad · väntar på centralt lås."
+                                : "Startlistan eller vinnaroddsen är ännu inte tillgängliga."}
                             </p>
                           )}
 
