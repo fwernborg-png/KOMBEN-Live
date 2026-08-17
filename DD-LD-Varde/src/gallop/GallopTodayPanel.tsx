@@ -2307,21 +2307,21 @@ export function GallopTodayPanel({
                             100,
                         ),
 
+                      /*
+                       * Samma centrala oddsström ska styra
+                       * både livekandidaten och det slutliga
+                       * T-90-låset.
+                       *
+                       * Annars kan användaren se en häst
+                       * precis före T-90 och få en annan
+                       * registrerad som låst.
+                       */
                       currentOddsRaw:
-                        runnerLockPassed
-                          ? Math.round(
-                              lastServerPoint
-                                .oddsDecimal *
-                                100,
-                            )
-                          : (
-                              runner.oddsRaw ??
-                              Math.round(
-                                lastServerPoint
-                                  .oddsDecimal *
-                                  100,
-                              )
-                            ),
+                        Math.round(
+                          lastServerPoint
+                            .oddsDecimal *
+                            100,
+                        ),
 
                       samples:
                         Math.max(
