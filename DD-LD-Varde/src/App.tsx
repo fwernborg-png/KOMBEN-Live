@@ -89,6 +89,14 @@ import {
 const DIAMANTEN_RULE_VERSION =
   "DIAMANTEN_V1.0";
 
+const DIAMANTEN_DISTANCE_METERS = 2140;
+const DIAMANTEN_MIN_ACTIVE_STARTERS = 7;
+const DIAMANTEN_MAX_ACTIVE_STARTERS = 10;
+const DIAMANTEN_MIN_LOCK_ODDS_RAW = 600;
+const DIAMANTEN_MAX_LOCK_ODDS_RAW = 2500;
+const DIAMANTEN_REQUIRED_STRENGTH = 3;
+const DIAMANTEN_MIN_VALID_ODDS_POINTS = 5;
+
 type Track = {
   id: number;
   name: string;
@@ -6500,6 +6508,99 @@ export default function App() {
       lockedJupiterRunner ??
       potentialJupiterRunner;
 
+    const lockedDiamantenNumbers =
+      selectedRace
+        ? lockedDiamantenByRace[
+            selectedRace.id
+          ] ?? []
+        : [];
+
+    const lockedDiamantenRunners =
+      lockedDiamantenNumbers
+        .map(
+          (number) =>
+            trendRunners.find(
+              (runner) =>
+                runner.number === number,
+            ) ?? null,
+        )
+        .filter(
+          (
+            runner,
+          ): runner is TrendRunner =>
+            runner !== null,
+        );
+
+    const diamantenHasLocked =
+      lockedDiamantenRunners.length > 0;
+
+    const diamantenLockTimeMs =
+      selectedRace?.startTime
+        ? new Date(
+            selectedRace.startTime,
+          ).getTime() -
+          90 * 1000
+        : null;
+
+    const diamantenLockPassed =
+      diamantenLockTimeMs !== null &&
+      Number.isFinite(
+        diamantenLockTimeMs,
+      ) &&
+      nowMs >= diamantenLockTimeMs;
+
+    const diamantenActiveStarters =
+      selectedRace
+        ? selectedRace.runners.filter(
+            (runner) =>
+              !runner.scratched,
+          ).length
+        : 0;
+
+    const diamantenEligibilityReason =
+      !selectedRace
+        ? "Välj lopp."
+        : selectedRace.isMonte
+          ? "Monté ingår inte."
+          : selectedRace.startMethod !==
+              "AUTO"
+            ? "Kräver autostart."
+            : selectedRace
+                  .distanceMeters !==
+                DIAMANTEN_DISTANCE_METERS
+              ? "Kräver 2140 meter."
+              : diamantenActiveStarters <
+                    DIAMANTEN_MIN_ACTIVE_STARTERS ||
+                  diamantenActiveStarters >
+                    DIAMANTEN_MAX_ACTIVE_STARTERS
+                ? `Kräver 7–10 startande · nu ${diamantenActiveStarters}`
+                : null;
+
+    const potentialDiamantenRunners =
+      !diamantenHasLocked &&
+      !diamantenLockPassed &&
+      diamantenEligibilityReason ===
+        null
+        ? trendRunners.filter(
+            (runner) =>
+              !runner.scratched &&
+              runner.samples >=
+                DIAMANTEN_MIN_VALID_ODDS_POINTS &&
+              runnerStrength(runner) ===
+                DIAMANTEN_REQUIRED_STRENGTH &&
+              runner.odds !== null &&
+              runner.odds >=
+                DIAMANTEN_MIN_LOCK_ODDS_RAW &&
+              runner.odds <=
+                DIAMANTEN_MAX_LOCK_ODDS_RAW,
+          )
+        : [];
+
+    const diamantenRunners =
+      diamantenHasLocked
+        ? lockedDiamantenRunners
+        : potentialDiamantenRunners;
+
     const lockedSmallkaramellNumber = selectedRace
       ? lockedSmallkaramellByRace[selectedRace.id] ?? null
       : null;
@@ -7501,6 +7602,90 @@ export default function App() {
                                     : raceInsights.smoothest.dropPercent < 0
                                       ? "Jämnastes odds har stigit."
                                       : "Väntar på T−90."}
+                        </div>
+                      )}
+                    </section>
+
+                    <section
+                      className={`side-card strategy-selection-card diamanten-card ${
+                        diamantenHasLocked
+                          ? "is-locked"
+                          : ""
+                      }`}
+                    >
+                      <div className="strategy-card-heading">
+                        <span
+                          className="strategy-card-icon"
+                          aria-hidden="true"
+                        >
+                          💎
+                        </span>
+
+                        <div>
+                          <div className="side-card-title">
+                            Diamanten
+                          </div>
+
+                          <small>
+                            {diamantenHasLocked
+                              ? "Låst T−90 · VINNARE 100 kr"
+                              : "AUTO · 2140 m · 7–10 hästar · styrka 3/6 · odds 6–25"}
+                          </small>
+                        </div>
+                      </div>
+
+                      {diamantenRunners.length ? (
+                        <div className="diamanten-runner-list">
+                          {diamantenRunners.map(
+                            (runner) => (
+                              <button
+                                key={`diamanten-${selectedRace.id}-${runner.number}`}
+                                type="button"
+                                className="strategy-horse-button diamanten-horse-button"
+                                onClick={() =>
+                                  setExpandedRunnerKey(
+                                    `${selectedRace.id}-${runner.number}`,
+                                  )
+                                }
+                                aria-label={`Diamanten: nummer ${runner.number}, ${runner.name}`}
+                              >
+                                <span className="strategy-number diamanten-number">
+                                  {runner.number}
+                                </span>
+
+                                <span className="strategy-horse-copy">
+                                  <strong>
+                                    {runner.name}
+                                  </strong>
+
+                                  <span className="strategy-odds-line">
+                                    Odds{" "}
+                                    {formatOdds(
+                                      runner.odds,
+                                    )}
+                                  </span>
+
+                                  <span className="strategy-strength-line">
+                                    {diamantenHasLocked
+                                      ? "Låst · "
+                                      : "Potentiell · "}
+                                    Styrka{" "}
+                                    {runnerStrength(
+                                      runner,
+                                    )}
+                                    /6
+                                  </span>
+                                </span>
+                              </button>
+                            ),
+                          )}
+                        </div>
+                      ) : (
+                        <div className="strategy-empty-state">
+                          {diamantenEligibilityReason ??
+                            (diamantenLockPassed
+                              ? "Ingen låst Diamanten-signal."
+                              : "Ingen kandidat just nu.")}
                         </div>
                       )}
                     </section>

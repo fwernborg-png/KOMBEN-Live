@@ -3556,3 +3556,108 @@ body,
     white-space: nowrap;
   }
 }
+
+/* COMPACT STRATEGY STACK V1 */
+.race-side-panel {
+  gap: 7px;
+}
+
+.race-side-panel .strategy-selection-card {
+  padding: 8px 9px;
+  border-radius: 12px;
+}
+
+.race-side-panel .strategy-card-heading {
+  gap: 7px;
+  margin-bottom: 4px;
+  align-items: center;
+}
+
+.race-side-panel .strategy-card-icon {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  font-size: 16px;
+}
+
+.race-side-panel .strategy-card-heading .side-card-title {
+  font-size: 11px;
+  line-height: 1.05;
+}
+
+.race-side-panel .strategy-card-heading small {
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.race-side-panel .strategy-horse-button {
+  padding: 6px;
+  gap: 6px;
+  min-height: 0;
+}
+
+.race-side-panel .strategy-number {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  font-size: 14px;
+}
+
+.race-side-panel .strategy-horse-copy {
+  gap: 1px;
+}
+
+.race-side-panel .strategy-horse-copy strong {
+  font-size: 13px;
+  line-height: 1.05;
+}
+
+.race-side-panel .strategy-odds-line,
+.race-side-panel .strategy-strength-line {
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.race-side-panel .strategy-change {
+  font-size: 12px;
+}
+
+.race-side-panel .strategy-empty-state {
+  padding: 4px 2px;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.strategy-selection-card.diamanten-card {
+  border-color: rgba(96, 165, 250, 0.62);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(45, 78, 145, 0.34),
+      rgba(8, 20, 16, 0.97) 60%
+    );
+}
+
+.strategy-selection-card.diamanten-card::before {
+  background: #7dd3fc;
+}
+
+.strategy-selection-card.diamanten-card.is-locked {
+  border-color: rgba(125, 211, 252, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(125, 211, 252, 0.16),
+    0 0 14px rgba(56, 189, 248, 0.08);
+}
+
+.diamanten-runner-list {
+  display: grid;
+  gap: 4px;
+}
+
+.diamanten-horse-button {
+  width: 100%;
+}
+
+.diamanten-number {
+  border-color: rgba(125, 211, 252, 0.72);
+}

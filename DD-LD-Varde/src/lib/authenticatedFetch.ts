@@ -256,13 +256,14 @@ export function installAuthenticatedWorkerFetch() {
               );
           } else {
             /*
-             * Refresh-tokenen är också
-             * ogiltig. AuthGate får då
-             * visa login igen i stället
-             * för att appen fastnar.
+             * Ett tillfälligt 401/refresh-fel får
+             * aldrig logga ut användaren automatiskt.
+             * AuthGate/Supabase avgör sessionens
+             * verkliga status separat.
              */
-            await supabase.auth
-              .signOut();
+            console.warn(
+              "Kunde inte förnya Worker-token. Behåller befintlig session.",
+            );
           }
         }
 

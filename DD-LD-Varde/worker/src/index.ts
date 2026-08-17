@@ -3426,6 +3426,9 @@ async function runCron(env: Env) {
             isMonte:
               race.isMonte,
 
+            startMethod:
+              race.startMethod,
+
             distanceMeters:
               race.distanceMeters,
 
@@ -3491,6 +3494,9 @@ async function runCron(env: Env) {
 
           distanceMeters:
             2140,
+
+          requiredStartMethod:
+            "AUTO",
 
           minActiveStartersInclusive:
             DIAMANTEN_MIN_ACTIVE_STARTERS,
@@ -3596,6 +3602,14 @@ async function runCron(env: Env) {
                     diamantenEvaluation
                       .excludedReason !==
                       "Inte giltigt travlopp",
+                },
+
+                {
+                  key:
+                    "AUTOSTART_ONLY",
+                  passed:
+                    race.startMethod ===
+                    "AUTO",
                 },
 
                 {

@@ -117,6 +117,7 @@ function evaluate(args?: {
   raceDate?: string;
   distanceMeters?: number;
   isMonte?: boolean;
+  startMethod?: string;
   trackName?: string;
   meetingName?: string | null;
   raceCategory?: string | null;
@@ -145,6 +146,10 @@ function evaluate(args?: {
     isMonte:
       args?.isMonte ??
       false,
+
+    startMethod:
+      args?.startMethod ??
+      "AUTO",
 
     distanceMeters:
       args?.distanceMeters ??
@@ -396,6 +401,32 @@ describe(
             runners: eleven,
           }).active,
         ).toBe(false);
+      },
+    );
+
+    it(
+      "kräver autostart och avvisar voltstart",
+      () => {
+        expect(
+          evaluate({
+            startMethod: "AUTO",
+          }).active,
+        ).toBe(true);
+
+        const volt =
+          evaluate({
+            startMethod: "VOLT",
+          });
+
+        expect(
+          volt.active,
+        ).toBe(false);
+
+        expect(
+          volt.excludedReason,
+        ).toBe(
+          "Startmetoden är inte autostart",
+        );
       },
     );
 

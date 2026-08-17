@@ -245,6 +245,9 @@ export function evaluateDiamanten(args: {
 
   isMonte: boolean;
 
+  startMethod:
+    string | null | undefined;
+
   distanceMeters:
     number | null;
 
@@ -258,6 +261,7 @@ export function evaluateDiamanten(args: {
     raceCategory,
     raceStatus,
     isMonte,
+    startMethod,
     distanceMeters,
     runners,
   } = args;
@@ -298,6 +302,20 @@ export function evaluateDiamanten(args: {
       activeStarters,
       excludedReason:
         "Inte giltigt travlopp",
+    };
+  }
+
+  if (
+    (startMethod ?? "")
+      .trim()
+      .toUpperCase() !== "AUTO"
+  ) {
+    return {
+      active: false,
+      candidates: [],
+      activeStarters,
+      excludedReason:
+        "Startmetoden är inte autostart",
     };
   }
 

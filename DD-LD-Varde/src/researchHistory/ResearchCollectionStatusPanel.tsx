@@ -280,7 +280,7 @@ export function ResearchCollectionStatusPanel() {
           () => {
             void load();
           },
-          30_000,
+          5 * 60_000,
         );
 
       return () => {
@@ -442,7 +442,7 @@ export function ResearchCollectionStatusPanel() {
               <span>
                 Uppdatering
                 <strong>
-                  var 30:e sek
+                  var 5:e min
                 </strong>
               </span>
             </div>
