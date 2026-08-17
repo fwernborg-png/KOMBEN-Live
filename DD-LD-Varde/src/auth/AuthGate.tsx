@@ -90,18 +90,35 @@ export function AuthGate({
     } =
       supabase.auth.onAuthStateChange(
         (
-          _event,
+          event,
           nextSession,
         ) => {
           if (!active) {
             return;
           }
 
-          setSession(
-            nextSession,
-          );
+          /*
+           * Nollställ endast sessionen vid ett
+           * riktigt SIGNED_OUT-event.
+           *
+           * Vid hård browser-refresh kan ett
+           * INITIAL_SESSION-event tillfälligt
+           * sakna session medan getSession()
+           * fortfarande läser lagringen.
+           */
+          if (event === "SIGNED_OUT") {
+            setSession(null);
+            setLoading(false);
+            return;
+          }
 
-          setLoading(false);
+          if (nextSession) {
+            setSession(
+              nextSession,
+            );
+
+            setLoading(false);
+          }
         },
       );
 
