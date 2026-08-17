@@ -572,9 +572,7 @@ export function WinPlaceJournalPanel({
 }: Props) {
   const [periodMode, setPeriodMode] =
     useState<PeriodMode>(
-      mode === "stats"
-        ? "ALL_COLLECTION"
-        : "DAY",
+      "DAY",
     );
 
   const [bets, setBets] =
@@ -607,9 +605,7 @@ export function WinPlaceJournalPanel({
 
   useEffect(() => {
     setPeriodMode(
-      mode === "stats"
-        ? "ALL_COLLECTION"
-        : "DAY",
+      "DAY",
     );
   }, [mode]);
 
@@ -1078,7 +1074,7 @@ export function WinPlaceJournalPanel({
                 setPeriodMode("DAY")
               }
             >
-              Valt datum
+              Idag
             </button>
 
             <button

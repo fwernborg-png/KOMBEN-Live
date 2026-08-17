@@ -445,9 +445,7 @@ const FETCH_RETRY_ATTEMPTS = 1;
 const TARGET_PRODUCTS = ["V4", "V64", "V65", "V85", "V86"] as const;
 
 const APP_TABS: Array<{ id: AppTab; label: string }> = [
-  { id: "overview", label: "Översikt" },
   { id: "race", label: "Lopp" },
-  { id: "journal", label: "Journal" },
   { id: "stats", label: "Statistik" },
   { id: "speed", label: "Speedanalysen" },
   { id: "history", label: "Historik" },
