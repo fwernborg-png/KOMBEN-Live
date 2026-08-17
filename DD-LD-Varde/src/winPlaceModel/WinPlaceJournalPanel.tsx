@@ -7,6 +7,7 @@ import {
 
 import {
   BIG_B_MONSTER_RULE_CONFIG_V1,
+  MODEL_MIN_WIN_ODDS_INCLUSIVE,
   SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
 } from "./config";
@@ -48,11 +49,6 @@ type PeriodMode = "DAY" | "TEST_PERIOD" | "ALL_COLLECTION";
 const TEST_START_DATE = "2026-08-03";
 const TEST_END_DATE = "2026-08-16";
 const REFRESH_INTERVAL_MS = 60_000;
-
-const MODEL_STATS_RESET_AT =
-  "2026-08-17T13:50:39Z";
-const MODEL_STATS_RESET_AT_MS =
-  Date.parse(MODEL_STATS_RESET_AT);
 
 const SNIGEL_KOMMER_RULE_VERSION =
   "SNIGEL_KOMMER_V1.0";
@@ -729,8 +725,9 @@ export function WinPlaceJournalPanel({
           mode === "stats"
             ? rows.filter(
                 (row) =>
-                  Date.parse(row.createdAt) >=
-                  MODEL_STATS_RESET_AT_MS,
+                  row.market !== "WIN" ||
+                  row.lockedWinOdds + Number.EPSILON >=
+                    MODEL_MIN_WIN_ODDS_INCLUSIVE,
               )
             : rows,
         );
@@ -858,11 +855,22 @@ export function WinPlaceJournalPanel({
 
   const strongStarBets =
     useMemo(
-      () =>
-        buildStrongStarBetRecords(
-          strongStarRows,
-        ),
-      [strongStarRows],
+      () => {
+        const records =
+          buildStrongStarBetRecords(
+            strongStarRows,
+          );
+
+        return mode === "stats"
+          ? records.filter(
+              (bet) =>
+                bet.market !== "WIN" ||
+                bet.lockedWinOdds + Number.EPSILON >=
+                  MODEL_MIN_WIN_ODDS_INCLUSIVE,
+            )
+          : records;
+      },
+      [strongStarRows, mode],
     );
 
   const strategyGroups = useMemo(
