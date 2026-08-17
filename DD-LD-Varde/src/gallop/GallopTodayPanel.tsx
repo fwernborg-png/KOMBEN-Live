@@ -3607,13 +3607,18 @@ export function GallopTodayPanel({
                             )
                           : null;
 
+                      const raceUiUrgent =
+                        isNext &&
+                        minutesToStart !== null &&
+                        minutesToStart <= 3;
+
                       const raceUiStatus =
                         isFinished
                           ? "✓ KÖRT · RESULTAT KLART"
                           : isOngoing
                             ? "● PÅGÅR · VÄNTAR RESULTAT"
                             : isNext
-                              ? `▶ NÄSTA LOPP · START ${raceUiStart}${minutesToStart !== null ? ` · ${minutesToStart} MIN KVAR` : ""}`
+                              ? `▶ NÄSTA LOPP`
                               : `KOMMANDE${raceUiStart ? ` · ${raceUiStart}` : ""}`;
 
                       const didHitBet =
@@ -3721,7 +3726,30 @@ export function GallopTodayPanel({
                             <div
                               className={`gallop-race-state is-${raceUiState}`}
                             >
-                              {raceUiStatus}
+                              {isNext ? (
+                                <>
+                                  <span>
+                                    ▶ NÄSTA LOPP · START{" "}
+                                  </span>
+                                  <strong
+                                    className={[
+                                      "gallop-start-countdown",
+                                      raceUiUrgent
+                                        ? "is-urgent"
+                                        : "",
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" ")}
+                                  >
+                                    {raceUiStart}
+                                    {minutesToStart !== null
+                                      ? ` · ${minutesToStart} MIN KVAR`
+                                      : ""}
+                                  </strong>
+                                </>
+                              ) : (
+                                raceUiStatus
+                              )}
                             </div>
 
                             {didHitBet ? (

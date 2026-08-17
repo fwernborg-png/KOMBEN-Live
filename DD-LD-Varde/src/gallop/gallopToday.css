@@ -1621,3 +1621,15 @@
     font-weight: 900;
   }
 }
+
+
+/* GALLOP COUNTDOWN COLORS V1 */
+
+.gallop-start-countdown {
+  color: #facc15;
+  font-weight: 950;
+}
+
+.gallop-start-countdown.is-urgent {
+  color: #f87171;
+}
