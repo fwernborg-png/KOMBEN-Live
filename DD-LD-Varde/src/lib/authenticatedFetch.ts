@@ -62,82 +62,23 @@ function mergedHeaders(
   return headers;
 }
 
-async function getFreshAccessToken(
-  forceRefresh = false,
-) {
-  if (forceRefresh) {
-    const {
-      data,
-      error,
-    } =
-      await supabase.auth
-        .refreshSession();
-
-    if (
-      error ||
-      !data.session
-    ) {
-      return null;
-    }
-
-    return (
-      data.session
-        .access_token ??
-      null
-    );
-  }
-
+async function getFreshAccessToken() {
   const {
     data,
+    error,
   } =
     await supabase.auth
       .getSession();
 
-  const session =
-    data.session;
-
-  if (!session) {
+  if (
+    error ||
+    !data.session
+  ) {
     return null;
   }
 
-  const expiresAtMs =
-    session.expires_at
-      ? session.expires_at *
-        1_000
-      : null;
-
-  /*
-   * Förnya redan innan token faktiskt
-   * går ut. Då slipper vi att ett anrop
-   * hamnar precis över gränsen.
-   */
-  if (
-    expiresAtMs !== null &&
-    expiresAtMs -
-      Date.now() <
-      60_000
-  ) {
-    const {
-      data: refreshed,
-      error,
-    } =
-      await supabase.auth
-        .refreshSession();
-
-    if (
-      !error &&
-      refreshed.session
-    ) {
-      return (
-        refreshed.session
-          .access_token ??
-        null
-      );
-    }
-  }
-
   return (
-    session.access_token ??
+    data.session.access_token ??
     null
   );
 }
@@ -231,40 +172,17 @@ export function installAuthenticatedWorkerFetch() {
           );
 
         /*
-         * Om workern ändå säger 401:
-         * tvinga fram en ny Supabase-token
-         * och försök exakt en gång till.
+         * Worker-401 får aldrig försöka rotera eller
+         * ändra användarens Supabase-session.
+         * Supabase sköter token-refresh själv.
          */
         if (
           response.status ===
           401
         ) {
-          const refreshedToken =
-            await getFreshAccessToken(
-              true,
-            );
-
-          if (
-            refreshedToken
-          ) {
-            token =
-              refreshedToken;
-
-            response =
-              await performRequest(
-                token,
-              );
-          } else {
-            /*
-             * Ett tillfälligt 401/refresh-fel får
-             * aldrig logga ut användaren automatiskt.
-             * AuthGate/Supabase avgör sessionens
-             * verkliga status separat.
-             */
-            console.warn(
-              "Kunde inte förnya Worker-token. Behåller befintlig session.",
-            );
-          }
+          console.warn(
+            "Worker svarade 401. Befintlig Supabase-session lämnas orörd.",
+          );
         }
 
         return response;
