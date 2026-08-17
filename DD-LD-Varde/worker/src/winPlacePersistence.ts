@@ -62,30 +62,39 @@ export function buildWinPlaceBetRows(args: {
     updated_at: nowIso,
   };
 
-  return [
-    {
-      ...base,
-      bet_id: [
-        evaluation.raceId,
-        evaluation.ruleVersion,
-        "WIN",
-        "LIVE",
-      ].join(":"),
-      market: "WIN" satisfies WinPlaceMarket,
-      stake_oren:
-        evaluation.configSnapshot.defaultWinStakeSEK * 100,
-    },
-    {
-      ...base,
-      bet_id: [
-        evaluation.raceId,
-        evaluation.ruleVersion,
-        "PLACE",
-        "LIVE",
-      ].join(":"),
-      market: "PLACE" satisfies WinPlaceMarket,
-      stake_oren:
-        evaluation.configSnapshot.defaultPlaceStakeSEK * 100,
-    },
-  ];
+  const placeRow = {
+    ...base,
+    bet_id: [
+      evaluation.raceId,
+      evaluation.ruleVersion,
+      "PLACE",
+      "LIVE",
+    ].join(":"),
+    market: "PLACE" satisfies WinPlaceMarket,
+    stake_oren:
+      evaluation.configSnapshot.defaultPlaceStakeSEK * 100,
+  };
+
+  const winEligible =
+    candidate.currentWinOdds + Number.EPSILON >=
+    evaluation.configSnapshot.minWinBetOddsInclusive;
+
+  if (!winEligible) {
+    return [placeRow];
+  }
+
+  const winRow = {
+    ...base,
+    bet_id: [
+      evaluation.raceId,
+      evaluation.ruleVersion,
+      "WIN",
+      "LIVE",
+    ].join(":"),
+    market: "WIN" satisfies WinPlaceMarket,
+    stake_oren:
+      evaluation.configSnapshot.defaultWinStakeSEK * 100,
+  };
+
+  return [winRow, placeRow];
 }

@@ -1,3 +1,5 @@
+export const MODEL_MIN_WIN_ODDS_INCLUSIVE = 3.5;
+
 export type WinPlaceRuleConfig = {
   ruleVersion: string;
   strategyCode: string;
@@ -8,6 +10,7 @@ export type WinPlaceRuleConfig = {
   lockWindowOpensSecondsBeforeRace: number;
   lockWindowClosesSecondsBeforeRace: number;
   minOddsDropPercentInclusive: number | null;
+  minWinBetOddsInclusive: number;
   maxCurrentWinOddsInclusive: number;
   minValidOddsPoints: number;
   excludeMonte: boolean;
@@ -30,6 +33,7 @@ export const WIN_PLACE_RULE_CONFIG_V1: WinPlaceRuleConfig = {
   lockWindowOpensSecondsBeforeRace: 120,
   lockWindowClosesSecondsBeforeRace: 60,
   minOddsDropPercentInclusive: 30,
+  minWinBetOddsInclusive: MODEL_MIN_WIN_ODDS_INCLUSIVE,
   maxCurrentWinOddsInclusive: 6,
   minValidOddsPoints: 5,
   excludeMonte: true,
@@ -48,6 +52,7 @@ export const SMALLKARAMELL_RULE_CONFIG_V1: WinPlaceRuleConfig = {
   lockWindowOpensSecondsBeforeRace: 120,
   lockWindowClosesSecondsBeforeRace: 60,
   minOddsDropPercentInclusive: null,
+  minWinBetOddsInclusive: MODEL_MIN_WIN_ODDS_INCLUSIVE,
   maxCurrentWinOddsInclusive: 7,
   minValidOddsPoints: 5,
   excludeMonte: true,
@@ -74,6 +79,7 @@ export const BIG_B_MONSTER_RULE_CONFIG_V1: WinPlaceRuleConfig = {
   lockWindowClosesSecondsBeforeRace: 60,
 
   minOddsDropPercentInclusive: null,
+  minWinBetOddsInclusive: MODEL_MIN_WIN_ODDS_INCLUSIVE,
   maxCurrentWinOddsInclusive: 200,
 
   minValidOddsPoints: 2,

@@ -3,6 +3,10 @@ import type {
   WinPlaceRunnerInput,
 } from "../../src/winPlaceModel/types";
 
+import {
+  MODEL_MIN_WIN_ODDS_INCLUSIVE,
+} from "../../src/winPlaceModel/config";
+
 export const SNIGEL_KOMMER_RULE_VERSION =
   "SNIGEL_KOMMER_V1.0";
 
@@ -364,6 +368,19 @@ export function evaluateSnigelKommer(
       activeStarters,
       excludedReason:
         "Ingen jämnaste häst",
+    };
+  }
+
+  if (
+    smoothest.currentWinOdds + Number.EPSILON <
+    MODEL_MIN_WIN_ODDS_INCLUSIVE
+  ) {
+    return {
+      active: true,
+      candidate: null,
+      activeStarters,
+      excludedReason:
+        `Vinnarodds under ${MODEL_MIN_WIN_ODDS_INCLUSIVE.toFixed(2)}`,
     };
   }
 

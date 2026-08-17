@@ -118,6 +118,32 @@ describe(
     );
 
     it(
+      "ger inget Snigel under 3,50 i vinnarodds",
+      () => {
+        const runners =
+          nineRunners();
+
+        runners[0] =
+          runner(
+            1,
+            [3.20, 3.25, 3.30, 3.35, 3.40],
+            4,
+          );
+
+        const result =
+          evaluateSnigelKommer({
+            trackName: "Solvalla",
+            isMonte: false,
+            runners,
+          });
+
+        expect(
+          result.candidate,
+        ).toBeNull();
+      },
+    );
+
+    it(
       "ger ingen signal med 8 startande",
       () => {
         const result =

@@ -74,6 +74,28 @@ describe("win-place persistence", () => {
     expect(rows[0].bet_id).not.toBe(rows[1].bet_id);
   });
 
+  it("skapar bara plats när vinnaroddset är under 3,50", () => {
+    const evaluation = makeEvaluation("PLAY");
+    const candidate = evaluation.mostShortened;
+
+    if (!candidate) {
+      throw new Error("Testkandidat saknas");
+    }
+
+    evaluation.mostShortened = {
+      ...candidate,
+      currentWinOdds: 3.49,
+    };
+
+    const rows = buildWinPlaceBetRows({
+      evaluation,
+      nowIso: "2026-07-29T17:58:30.000Z",
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].market).toBe("PLACE");
+  });
+
   it("skapar inga spel när regeln inte ger PLAY", () => {
     const rows = buildWinPlaceBetRows({
       evaluation: makeEvaluation("NO_PLAY"),
