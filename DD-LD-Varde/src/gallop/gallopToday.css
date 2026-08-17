@@ -1594,3 +1594,30 @@
     font-size: 11px !important;
   }
 }
+
+
+/* MOBILE START TIME EMPHASIS V1 */
+
+@media (max-width: 520px) {
+  .gallop-race-card.is-next .gallop-race-state {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 6px 0 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    line-height: 1.25;
+    text-align: center;
+    white-space: normal;
+    letter-spacing: 0.03em;
+  }
+
+  .gallop-race-card.is-next .gallop-race-card-head strong {
+    font-size: 17px;
+  }
+
+  .gallop-race-card.is-next .gallop-race-card-head span {
+    color: #f8fafc;
+    font-size: 17px;
+    font-weight: 900;
+  }
+}

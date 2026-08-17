@@ -3613,7 +3613,7 @@ export function GallopTodayPanel({
                           : isOngoing
                             ? "● PÅGÅR · VÄNTAR RESULTAT"
                             : isNext
-                              ? `▶ NÄSTA LOPP · ${raceUiStart}${minutesToStart !== null ? ` · ${minutesToStart} MIN` : ""}`
+                              ? `▶ NÄSTA LOPP · START ${raceUiStart}${minutesToStart !== null ? ` · ${minutesToStart} MIN KVAR` : ""}`
                               : `KOMMANDE${raceUiStart ? ` · ${raceUiStart}` : ""}`;
 
                       const didHitBet =
