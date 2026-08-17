@@ -852,10 +852,43 @@ export function WinPlaceJournalPanel({
   const strongStarBets =
     useMemo(
       () => {
-        const records =
+        const liveRecords =
+          bets.filter(
+            (bet) =>
+              bet.ruleVersion ===
+              STRONG_STAR_RULE_VERSION,
+          );
+
+        const liveKeys =
+          new Set(
+            liveRecords.map(
+              (bet) =>
+                [
+                  bet.raceId,
+                  bet.horseNumber,
+                  bet.market,
+                ].join(":"),
+            ),
+          );
+
+        const historicalRecords =
           buildStrongStarBetRecords(
             strongStarRows,
+          ).filter(
+            (bet) =>
+              !liveKeys.has(
+                [
+                  bet.raceId,
+                  bet.horseNumber,
+                  bet.market,
+                ].join(":"),
+              ),
           );
+
+        const records = [
+          ...liveRecords,
+          ...historicalRecords,
+        ];
 
         return mode === "stats"
           ? records.filter(
@@ -866,7 +899,22 @@ export function WinPlaceJournalPanel({
             )
           : records;
       },
-      [strongStarRows, mode],
+      [
+        bets,
+        strongStarRows,
+        mode,
+      ],
+    );
+
+  const regularBets =
+    useMemo(
+      () =>
+        bets.filter(
+          (bet) =>
+            bet.ruleVersion !==
+            STRONG_STAR_RULE_VERSION,
+        ),
+      [bets],
     );
 
   const strategyGroups = useMemo(
@@ -875,7 +923,7 @@ export function WinPlaceJournalPanel({
         strategyDefinitions.map(
           (definition) => {
             const strategyBets =
-              bets.filter(
+              regularBets.filter(
                 (bet) =>
                   bet.ruleVersion ===
                   definition.ruleVersion,
@@ -913,8 +961,7 @@ export function WinPlaceJournalPanel({
 
         description:
           "3/6 · KR topp 4 · ODD topp 4 · " +
-          "SP inte topp 4 · vinnare + plats · " +
-          "historiskt omräknad",
+          "SP inte topp 4 · låses T-90 · vinnare + plats",
 
         className: "is-diamanten",
 
@@ -958,10 +1005,10 @@ export function WinPlaceJournalPanel({
       computeWinPlaceStats(
         mode === "stats"
           ? [
-              ...bets,
+              ...regularBets,
               ...strongStarBets,
             ]
-          : bets,
+          : regularBets,
       ),
     [
       bets,
@@ -979,7 +1026,7 @@ export function WinPlaceJournalPanel({
       }
     >();
 
-    for (const bet of bets) {
+    for (const bet of regularBets) {
       const key = [
         bet.raceId,
         bet.ruleVersion,
@@ -1030,12 +1077,27 @@ export function WinPlaceJournalPanel({
               firstB.raceNumber;
       },
     );
-  }, [bets]);
+  }, [regularBets]);
+
+  const strongStarSignalCount =
+    useMemo(
+      () =>
+        new Set(
+          strongStarBets.map(
+            (bet) =>
+              [
+                bet.raceId,
+                bet.horseNumber,
+              ].join(":"),
+          ),
+        ).size,
+      [strongStarBets],
+    );
 
   const overallSignalCount =
     mode === "stats"
       ? raceGroups.length +
-        strongStarRows.length
+        strongStarSignalCount
       : raceGroups.length;
 
   return (

@@ -86,6 +86,7 @@ import type {
 import {
   BIG_B_MONSTER_PROSPECTIVE_START_DATE,
   BIG_B_MONSTER_RULE_CONFIG_V1,
+  MODEL_MIN_WIN_ODDS_INCLUSIVE,
   SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
   getWinPlacePlannedLockTimeMs,
@@ -98,6 +99,7 @@ import type {
   WinPlaceRunnerInput,
 } from "../../src/winPlaceModel/types";
 import { buildWinPlaceBetRows } from "./winPlacePersistence";
+import { isStrongStarProfile } from "../../src/strongStar";
 import {
   settleWinPlaceBet,
   type WinPlacePendingBetRow,
@@ -375,6 +377,16 @@ const STAT_DEFINITIONS: StatDefinition[] = [
   { key: "G", shortLabel: "G", best: "low" },
   { key: "ODD", shortLabel: "ODD", best: "high" },
 ];
+
+const STRONG_STAR_RULE_VERSION =
+  "STRONG_STAR_V1.0";
+
+const STRONG_STAR_STRATEGY_CODE =
+  "STRONG_STAR";
+
+const STRONG_STAR_STAKE_SEK = 100;
+
+const STRONG_STAR_LOCK_TARGET_SECONDS = 90;
 
 const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
 const DEFAULT_SUPABASE_TIMEOUT_MS = 15_000;
@@ -2809,6 +2821,7 @@ async function runCron(env: Env) {
         ENSAMVARGEN_RULE_VERSION,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
         DIAMANTEN_RULE_VERSION,
+        STRONG_STAR_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
@@ -2872,6 +2885,11 @@ async function runCron(env: Env) {
       const diamantenRaceKey = raceRuleKey(
         race.id,
         DIAMANTEN_RULE_VERSION,
+      );
+
+      const strongStarRaceKey = raceRuleKey(
+        race.id,
+        STRONG_STAR_RULE_VERSION,
       );
 
       const needsWinPlaceEvaluation =
@@ -2956,6 +2974,16 @@ async function runCron(env: Env) {
           diamantenRaceKey,
         );
 
+      const needsStrongStarEvaluation =
+        isInWinPlaceFinalSignalWindow(
+          plannedStartTime,
+          startMs,
+          WIN_PLACE_RULE_CONFIG_V1,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          strongStarRaceKey,
+        );
+
       if (
         !needsWinPlaceEvaluation &&
         !needsSmallkaramellEvaluation &&
@@ -2964,7 +2992,8 @@ async function runCron(env: Env) {
         !needsGrodanEvaluation &&
         !needsEnsamvargenEvaluation &&
         !needsBigBMonsterEvaluation &&
-        !needsDiamantenEvaluation
+        !needsDiamantenEvaluation &&
+        !needsStrongStarEvaluation
       ) {
         continue;
       }
@@ -3052,6 +3081,511 @@ async function runCron(env: Env) {
 
       const hasCompleteOddsHistory =
         incompleteOddsHistoryRunnerNumbers.length === 0;
+
+      /*
+       * STJÄRNHÄSTAR V1.0
+       *
+       * Samma profil som stjärnan i livevyn:
+       * - exakt 3/6
+       * - KR topp 4
+       * - ODD topp 4
+       * - SP INTE topp 4
+       * - låses T-90
+       * - PLACE 100 kr
+       * - WIN 100 kr om vinnarodds >= 3,50
+       */
+      if (needsStrongStarEvaluation) {
+        const plannedLockTimeMs =
+          Date.parse(plannedStartTime) -
+          STRONG_STAR_LOCK_TARGET_SECONDS * 1_000;
+
+        const hasFreshCurrentOddsPoint =
+          latestPointMs !== null &&
+          Math.abs(
+            plannedLockTimeMs -
+              latestPointMs,
+          ) <= lockGraceMs;
+
+        const activeStrongStarRace =
+          race.sport !== "GALLOP" &&
+          !race.isMonte &&
+          hasFreshCurrentOddsPoint;
+
+        const strongStarCandidates =
+          activeStrongStarRace
+            ? winPlaceRunners.filter(
+                (runner) =>
+                  !runner.scratched &&
+                  runner.currentWinOddsDecimal !== null &&
+                  isStrongStarProfile({
+                    strengthTotal:
+                      runner.strength,
+
+                    krTopFour:
+                      runner.indicatorsGreen.includes(
+                        "KR",
+                      ),
+
+                    spTopFour:
+                      runner.indicatorsGreen.includes(
+                        "SP",
+                      ),
+
+                    oddsIndicatorTopFour:
+                      runner.indicatorsGreen.includes(
+                        "ODD",
+                      ),
+                  }),
+              )
+            : [];
+
+        const plannedStartMs =
+          Date.parse(plannedStartTime);
+
+        const secondsBeforeStart =
+          Number.isFinite(plannedStartMs)
+            ? Math.max(
+                0,
+                (
+                  plannedStartMs -
+                  startMs
+                ) / 1_000,
+              )
+            : 0;
+
+        const configSnapshot = {
+          ruleVersion:
+            STRONG_STAR_RULE_VERSION,
+
+          strategyCode:
+            STRONG_STAR_STRATEGY_CODE,
+
+          strategyLabel:
+            "Stjärnhästar – vinnare + plats",
+
+          lockTargetSecondsBeforeRace:
+            STRONG_STAR_LOCK_TARGET_SECONDS,
+
+          requiredStrengthExact: 3,
+
+          requiredKrTopFour: true,
+          requiredOddsTopFour: true,
+          requiredSpTopFour: false,
+
+          defaultWinStakeSEK:
+            STRONG_STAR_STAKE_SEK,
+
+          defaultPlaceStakeSEK:
+            STRONG_STAR_STAKE_SEK,
+
+          minWinBetOddsInclusive:
+            MODEL_MIN_WIN_ODDS_INCLUSIVE,
+
+          excludeMonte: true,
+          excludeGallop: true,
+        };
+
+        const {
+          error: strongStarEvaluationError,
+        } = await supabase
+          .from(
+            "win_place_race_evaluations",
+          )
+          .upsert(
+            {
+              race_id:
+                race.id,
+
+              rule_version:
+                STRONG_STAR_RULE_VERSION,
+
+              strategy_code:
+                STRONG_STAR_STRATEGY_CODE,
+
+              decision:
+                strongStarCandidates.length
+                  ? "PLAY"
+                  : activeStrongStarRace
+                    ? "NO_PLAY"
+                    : "EXCLUDED",
+
+              reasons:
+                strongStarCandidates.length
+                  ? []
+                  : [
+                      !hasFreshCurrentOddsPoint
+                        ? "Aktuell T-90-oddspunkt saknas"
+                        : race.isMonte
+                          ? "Montélopp"
+                          : race.sport === "GALLOP"
+                            ? "Inte trav"
+                            : "Ingen Stjärnhäst",
+                    ],
+
+              race_json:
+                raceInput,
+
+              planned_lock_time_ms:
+                plannedLockTimeMs,
+
+              actual_lock_time_ms:
+                startMs,
+
+              locked_at:
+                nowIso,
+
+              seconds_before_start:
+                secondsBeforeStart,
+
+              config_snapshot:
+                configSnapshot,
+
+              checks_json: [
+                {
+                  key:
+                    "T90_ODDS_AVAILABLE",
+                  passed:
+                    hasFreshCurrentOddsPoint,
+                },
+                {
+                  key:
+                    "NOT_MONTE",
+                  passed:
+                    !race.isMonte,
+                },
+                {
+                  key:
+                    "TROT_ONLY",
+                  passed:
+                    race.sport !== "GALLOP",
+                },
+                {
+                  key:
+                    "STRONG_STAR_CANDIDATE",
+                  passed:
+                    strongStarCandidates.length > 0,
+                },
+              ],
+
+              candidate_json:
+                strongStarCandidates[0] ??
+                null,
+
+              most_shortened_json:
+                null,
+
+              snapshot_json: {
+                candidates:
+                  strongStarCandidates,
+
+                candidateCount:
+                  strongStarCandidates.length,
+              },
+
+              signal_phase:
+                "LIVE",
+
+              created_at:
+                nowIso,
+
+              updated_at:
+                nowIso,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (strongStarEvaluationError) {
+          throw new Error(
+            `Could not upsert Strong Star evaluation ${race.id}: ${strongStarEvaluationError.message}`,
+          );
+        }
+
+        const strongStarBetRows:
+          Array<Record<string, unknown>> = [];
+
+        for (
+          const candidate of
+          strongStarCandidates
+        ) {
+          const history =
+            candidate.oddsHistory;
+
+          const firstOdds =
+            history[0]?.odds ??
+            candidate.currentWinOddsDecimal ??
+            0;
+
+          const lockOdds =
+            candidate.currentWinOddsDecimal ??
+            0;
+
+          const oddsDropPercent =
+            firstOdds > 0
+              ? (
+                  (
+                    firstOdds -
+                    lockOdds
+                  ) /
+                  firstOdds
+                ) * 100
+              : 0;
+
+          const oddsValues =
+            history
+              .map(
+                (point) =>
+                  point.odds,
+              )
+              .filter(
+                (value) =>
+                  Number.isFinite(value) &&
+                  value > 0,
+              );
+
+          const mean =
+            oddsValues.length
+              ? oddsValues.reduce(
+                  (
+                    sum,
+                    value,
+                  ) =>
+                    sum + value,
+                  0,
+                ) /
+                oddsValues.length
+              : 0;
+
+          const variance =
+            oddsValues.length && mean > 0
+              ? oddsValues.reduce(
+                  (
+                    sum,
+                    value,
+                  ) =>
+                    sum +
+                    (
+                      value -
+                      mean
+                    ) ** 2,
+                  0,
+                ) /
+                oddsValues.length
+              : 0;
+
+          const cv =
+            mean > 0
+              ? (
+                  Math.sqrt(
+                    variance,
+                  ) /
+                  mean
+                ) * 100
+              : null;
+
+          const base = {
+            race_id:
+              race.id,
+
+            rule_version:
+              STRONG_STAR_RULE_VERSION,
+
+            signal_phase:
+              "LIVE",
+
+            config_snapshot:
+              configSnapshot,
+
+            date:
+              raceDate,
+
+            track_id:
+              track.id,
+
+            track_name:
+              track.name,
+
+            race_number:
+              race.raceNumber,
+
+            planned_start_time:
+              plannedStartTime,
+
+            lock_time:
+              nowIso,
+
+            seconds_before_start:
+              secondsBeforeStart,
+
+            horse_number:
+              candidate.number,
+
+            horse_name:
+              candidate.name,
+
+            horse_id:
+              candidate.horseId,
+
+            start_lane:
+              candidate.startLane,
+
+            start_method:
+              race.startMethod,
+
+            distance_meters:
+              race.distanceMeters,
+
+            starters:
+              raceInput.starters,
+
+            start_odds:
+              firstOdds,
+
+            locked_win_odds:
+              lockOdds,
+
+            odds_drop_percent:
+              oddsDropPercent,
+
+            cv_raw:
+              cv,
+
+            cv_display:
+              cv,
+
+            strength:
+              candidate.strength,
+
+            indicators_green:
+              candidate.indicatorsGreen,
+
+            valid_odds_points:
+              history.length,
+
+            result_outcome:
+              "PENDING",
+
+            result_status:
+              "PENDING",
+
+            finish_position_official:
+              null,
+
+            official_win_odds_decimal:
+              null,
+
+            place_odds_decimal:
+              null,
+
+            return_oren:
+              null,
+
+            net_oren:
+              null,
+
+            roi_pct:
+              null,
+
+            automatic_model_bet:
+              true,
+
+            user_actually_played:
+              false,
+
+            result_source:
+              null,
+
+            result_updated_at:
+              null,
+
+            created_at:
+              nowIso,
+
+            updated_at:
+              nowIso,
+          };
+
+          strongStarBetRows.push({
+            ...base,
+
+            bet_id: [
+              race.id,
+              STRONG_STAR_RULE_VERSION,
+              "PLACE",
+              "LIVE",
+              candidate.number,
+            ].join(":"),
+
+            market:
+              "PLACE",
+
+            stake_oren:
+              STRONG_STAR_STAKE_SEK *
+              100,
+          });
+
+          if (
+            lockOdds +
+              Number.EPSILON >=
+            MODEL_MIN_WIN_ODDS_INCLUSIVE
+          ) {
+            strongStarBetRows.push({
+              ...base,
+
+              bet_id: [
+                race.id,
+                STRONG_STAR_RULE_VERSION,
+                "WIN",
+                "LIVE",
+                candidate.number,
+              ].join(":"),
+
+              market:
+                "WIN",
+
+              stake_oren:
+                STRONG_STAR_STAKE_SEK *
+                100,
+            });
+          }
+        }
+
+        if (strongStarBetRows.length) {
+          const {
+            error: strongStarBetError,
+          } = await supabase
+            .from(
+              "win_place_model_bets",
+            )
+            .upsert(
+              strongStarBetRows,
+              {
+                onConflict:
+                  "race_id,rule_version,market,signal_phase,horse_number",
+              },
+            );
+
+          if (strongStarBetError) {
+            throw new Error(
+              `Could not upsert Strong Star bets ${race.id}: ${strongStarBetError.message}`,
+            );
+          }
+
+          summary.winPlaceBetsCreated +=
+            strongStarBetRows.length;
+        }
+
+        summary
+          .winPlaceEvaluationsCreated +=
+          1;
+
+        existingWinPlaceEvalKeys.add(
+          strongStarRaceKey,
+        );
+      }
+
 
       const evaluateAndPersist = async (args: {
         config: typeof WIN_PLACE_RULE_CONFIG_V1;
@@ -6214,6 +6748,7 @@ async function runCron(env: Env) {
         ENSAMVARGEN_RULE_VERSION,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
         DIAMANTEN_RULE_VERSION,
+        STRONG_STAR_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .or(
@@ -6336,8 +6871,13 @@ async function runCron(env: Env) {
                 ? activeStartersAtResult >= 7
                   ? 3
                   : 2
-                : WIN_PLACE_RULE_CONFIG_V1
-                    .placeHitMaxOfficialFinishPosition;
+                : bet.rule_version ===
+                    STRONG_STAR_RULE_VERSION
+                  ? activeStartersAtResult >= 7
+                    ? 3
+                    : 2
+                  : WIN_PLACE_RULE_CONFIG_V1
+                      .placeHitMaxOfficialFinishPosition;
 
         const settled = settleWinPlaceBet({
           market: bet.market,
