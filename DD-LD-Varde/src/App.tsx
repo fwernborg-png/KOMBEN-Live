@@ -2734,21 +2734,6 @@ export default function App() {
     races,
   ]);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        LOCKED_STRENGTH_STORAGE_KEY,
-        JSON.stringify(
-          lockedStrengthByRunner,
-        ),
-      );
-    } catch (storageError) {
-      console.warn(
-        "Kunde inte spara fryst LOCK-styrka",
-        storageError,
-      );
-    }
-  }, [lockedStrengthByRunner]);
 
   const activatePushNotifications = useCallback(async () => {
     if (
@@ -3404,16 +3389,6 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        ODDS_STORAGE_KEY,
-        JSON.stringify(oddsHistory),
-      );
-    } catch (error) {
-      console.error("Kunde inte spara oddshistorik", error);
-    }
-  }, [oddsHistory]);
 
     useEffect(() => {
       gallopCacheRef.current = gallopCacheByHorseId;
@@ -3459,21 +3434,14 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-      try {
-        const normalized = markStaleGallopEntries({
-          current: gallopCacheByHorseId,
-          nowMs,
-          ttlMs: GALLOP_CACHE_TTL_MS,
-        });
+      const normalized = markStaleGallopEntries({
+        current: gallopCacheByHorseId,
+        nowMs,
+        ttlMs: GALLOP_CACHE_TTL_MS,
+      });
 
-        if (normalized !== gallopCacheByHorseId) {
-          setGallopCacheByHorseId(normalized);
-          return;
-        }
-
-        window.localStorage.setItem(GALLOP_CACHE_STORAGE_KEY, JSON.stringify(normalized));
-      } catch (error) {
-        console.error("Kunde inte spara gallop-cache", error);
+      if (normalized !== gallopCacheByHorseId) {
+        setGallopCacheByHorseId(normalized);
       }
     }, [gallopCacheByHorseId, nowMs]);
 
@@ -3697,21 +3665,7 @@ export default function App() {
     };
   }, [activeTab]);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PLACE_EVALUATIONS_CACHE_KEY, JSON.stringify(placeEvaluations));
-    } catch (error) {
-      console.error("Kunde inte skriva cache for lopputvarderingar", error);
-    }
-  }, [placeEvaluations]);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PLACE_BETS_CACHE_KEY, JSON.stringify(placeBets));
-    } catch (error) {
-      console.error("Kunde inte skriva cache for platsspel", error);
-    }
-  }, [placeBets]);
 
   useEffect(() => {
     try {
