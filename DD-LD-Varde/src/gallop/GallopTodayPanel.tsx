@@ -25,6 +25,15 @@ const PLACE_HISTORY_API =
 const SETTINGS_KEY =
   "platsjagaren-gallop-v1-settings";
 
+const T90_SWEDEN_START_DATE =
+  "2026-08-18";
+
+const T90_SWEDEN_MIN_DROP_PERCENT =
+  25;
+
+const T90_SWEDEN_MAX_DROP_PERCENT =
+  40;
+
 type UnknownRecord =
   Record<string, unknown>;
 
@@ -993,7 +1002,9 @@ function summarizeGallopPerformanceWithLiveDate({
   raceRunners,
   lockedSignals,
   minDropPercent,
+  maxDropPercent,
   maxOdds,
+  countryCode,
 }: {
   rows: GallopHistoryRow[];
   liveDate: string;
@@ -1003,7 +1014,9 @@ function summarizeGallopPerformanceWithLiveDate({
   raceRunners: RaceRunners;
   lockedSignals: GallopLockedSignals;
   minDropPercent: number;
+  maxDropPercent?: number;
   maxOdds: number;
+  countryCode?: string;
 }): GallopPerformanceStats {
   const inRange = (
     raceDate: string,
@@ -1027,10 +1040,42 @@ function summarizeGallopPerformanceWithLiveDate({
 
   const historyRows =
     rows.filter(
-      (row) =>
-        inRange(
-          row.raceDate,
-        ),
+      (row) => {
+        if (
+          !inRange(
+            row.raceDate,
+          )
+        ) {
+          return false;
+        }
+
+        if (
+          countryCode &&
+          row.countryCode
+            .toUpperCase() !==
+            countryCode
+              .toUpperCase()
+        ) {
+          return false;
+        }
+
+        if (
+          maxDropPercent !==
+            undefined &&
+          (
+            row
+              .oddsDropToLockPercent ===
+              null ||
+            row
+              .oddsDropToLockPercent >=
+              maxDropPercent
+          )
+        ) {
+          return false;
+        }
+
+        return true;
+      },
     );
 
   const historyByRace =
@@ -1076,6 +1121,16 @@ function summarizeGallopPerformanceWithLiveDate({
     for (
       const track of tracks
     ) {
+      if (
+        countryCode &&
+        track.countryCode
+          .toUpperCase() !==
+          countryCode
+            .toUpperCase()
+      ) {
+        continue;
+      }
+
       for (
         const race of
         track.races
@@ -1150,6 +1205,12 @@ function summarizeGallopPerformanceWithLiveDate({
           signal.samples >= 2 &&
           signal.dropPercent >=
             minDropPercent &&
+          (
+            maxDropPercent ===
+              undefined ||
+            signal.dropPercent <
+              maxDropPercent
+          ) &&
           lockOdds !== null &&
           lockOdds <=
             maxOdds;
@@ -1639,6 +1700,23 @@ export function GallopTodayPanel({
   ] = useState(false);
 
   const [
+    t90SwedenRows,
+    setT90SwedenRows,
+  ] = useState<
+    GallopHistoryRow[]
+  >([]);
+
+  const [
+    t90SwedenLoading,
+    setT90SwedenLoading,
+  ] = useState(true);
+
+  const [
+    t90SwedenError,
+    setT90SwedenError,
+  ] = useState(false);
+
+  const [
     showRuleDetails,
     setShowRuleDetails,
   ] = useState(false);
@@ -1789,6 +1867,169 @@ export function GallopTodayPanel({
       minDropPercent,
       maxOdds,
     ],
+  );
+
+
+  useEffect(
+    () => {
+      let cancelled =
+        false;
+
+      if (
+        date <
+        T90_SWEDEN_START_DATE
+      ) {
+        setT90SwedenRows([]);
+        setT90SwedenLoading(false);
+        setT90SwedenError(false);
+
+        return () => {
+          cancelled = true;
+        };
+      }
+
+      const timer =
+        window.setTimeout(
+          () => {
+            async function loadT90Sweden() {
+              setT90SwedenLoading(
+                true,
+              );
+
+              setT90SwedenError(
+                false,
+              );
+
+              try {
+                const rows =
+                  await loadGallopHistoryRows(
+                    {
+                      dateFrom:
+                        T90_SWEDEN_START_DATE,
+
+                      dateTo:
+                        date,
+
+                      selection:
+                        "S1",
+
+                      countryCode:
+                        "SE",
+
+                      trackName:
+                        "",
+
+                      surface:
+                        "",
+
+                      distanceMeters:
+                        null,
+
+                      minStarters:
+                        null,
+
+                      maxStarters:
+                        null,
+
+                      minHandicapRating:
+                        null,
+
+                      maxHandicapRating:
+                        null,
+
+                      handicapRank:
+                        "",
+
+                      minCarriedWeightKg:
+                        null,
+
+                      maxCarriedWeightKg:
+                        null,
+
+                      weightRank:
+                        "",
+
+                      minDropPercent:
+                        T90_SWEDEN_MIN_DROP_PERCENT,
+
+                      /*
+                       * RPC-filtret är inkluderande.
+                       * Vi hämtar därför upp till 40
+                       * och gör <40 exakt härunder.
+                       */
+                      maxDropPercent:
+                        T90_SWEDEN_MAX_DROP_PERCENT,
+
+                      minLockOdds:
+                        null,
+
+                      maxLockOdds:
+                        null,
+
+                      limit:
+                        10000,
+                    },
+                  );
+
+                if (cancelled) {
+                  return;
+                }
+
+                setT90SwedenRows(
+                  rows.filter(
+                    (row) =>
+                      row.raceDate >=
+                        T90_SWEDEN_START_DATE &&
+                      row.countryCode ===
+                        "SE" &&
+                      row
+                        .oddsDropToLockPercent !==
+                        null &&
+                      row
+                        .oddsDropToLockPercent >=
+                        T90_SWEDEN_MIN_DROP_PERCENT &&
+                      row
+                        .oddsDropToLockPercent <
+                        T90_SWEDEN_MAX_DROP_PERCENT,
+                  ),
+                );
+              } catch (
+                challengeError
+              ) {
+                if (cancelled) {
+                  return;
+                }
+
+                console.error(
+                  "Kunde inte läsa T90 Sverige 25-40",
+                  challengeError,
+                );
+
+                setT90SwedenRows([]);
+                setT90SwedenError(true);
+              } finally {
+                if (!cancelled) {
+                  setT90SwedenLoading(
+                    false,
+                  );
+                }
+              }
+            }
+
+            void loadT90Sweden();
+          },
+          350,
+        );
+
+      return () => {
+        cancelled = true;
+
+        window.clearTimeout(
+          timer,
+        );
+      };
+    },
+    [date],
   );
 
   useEffect(
@@ -2792,6 +3033,146 @@ export function GallopTodayPanel({
       ],
     );
 
+
+  const t90SwedenSevenDayFrom =
+    shiftIsoDate(
+      date,
+      -6,
+    ) <
+    T90_SWEDEN_START_DATE
+      ? T90_SWEDEN_START_DATE
+      : shiftIsoDate(
+          date,
+          -6,
+        );
+
+  const t90SwedenTodayPerformance =
+    useMemo(
+      () =>
+        summarizeGallopPerformanceWithLiveDate({
+          rows:
+            t90SwedenRows,
+
+          liveDate:
+            date,
+
+          dateFrom:
+            date <
+            T90_SWEDEN_START_DATE
+              ? T90_SWEDEN_START_DATE
+              : date,
+
+          dateTo:
+            date,
+
+          tracks,
+          raceRunners,
+          lockedSignals,
+
+          minDropPercent:
+            T90_SWEDEN_MIN_DROP_PERCENT,
+
+          maxDropPercent:
+            T90_SWEDEN_MAX_DROP_PERCENT,
+
+          maxOdds:
+            Number.POSITIVE_INFINITY,
+
+          countryCode:
+            "SE",
+        }),
+      [
+        t90SwedenRows,
+        date,
+        tracks,
+        raceRunners,
+        lockedSignals,
+      ],
+    );
+
+  const t90SwedenSevenDayPerformance =
+    useMemo(
+      () =>
+        summarizeGallopPerformanceWithLiveDate({
+          rows:
+            t90SwedenRows,
+
+          liveDate:
+            date,
+
+          dateFrom:
+            t90SwedenSevenDayFrom,
+
+          dateTo:
+            date,
+
+          tracks,
+          raceRunners,
+          lockedSignals,
+
+          minDropPercent:
+            T90_SWEDEN_MIN_DROP_PERCENT,
+
+          maxDropPercent:
+            T90_SWEDEN_MAX_DROP_PERCENT,
+
+          maxOdds:
+            Number.POSITIVE_INFINITY,
+
+          countryCode:
+            "SE",
+        }),
+      [
+        t90SwedenRows,
+        date,
+        t90SwedenSevenDayFrom,
+        tracks,
+        raceRunners,
+        lockedSignals,
+      ],
+    );
+
+  const t90SwedenAllTimePerformance =
+    useMemo(
+      () =>
+        summarizeGallopPerformanceWithLiveDate({
+          rows:
+            t90SwedenRows,
+
+          liveDate:
+            date,
+
+          dateFrom:
+            T90_SWEDEN_START_DATE,
+
+          dateTo:
+            date,
+
+          tracks,
+          raceRunners,
+          lockedSignals,
+
+          minDropPercent:
+            T90_SWEDEN_MIN_DROP_PERCENT,
+
+          maxDropPercent:
+            T90_SWEDEN_MAX_DROP_PERCENT,
+
+          maxOdds:
+            Number.POSITIVE_INFINITY,
+
+          countryCode:
+            "SE",
+        }),
+      [
+        t90SwedenRows,
+        date,
+        tracks,
+        raceRunners,
+        lockedSignals,
+      ],
+    );
+
   return (
     <section className="gallop-live-shell">
       <div className="gallop-live-hero">
@@ -2912,6 +3293,63 @@ export function GallopTodayPanel({
             }
             error={
               performanceError
+            }
+            className="gallop-stat-all"
+          />
+        </div>
+      </section>
+
+
+      <section className="gallop-performance-section">
+        <div className="gallop-performance-heading">
+          <span>
+            🎯 T90 SVERIGE 25–40
+          </span>
+
+          <small>
+            Fryst regel · 100 kr vinnare · prospektivt från 18 aug
+          </small>
+        </div>
+
+        <div className="gallop-performance-grid">
+          <GallopPerformanceCard
+            label="Idag"
+            stats={
+              t90SwedenTodayPerformance
+            }
+            loading={
+              t90SwedenLoading
+            }
+            error={
+              t90SwedenError
+            }
+            className="gallop-stat-today"
+          />
+
+          <GallopPerformanceCard
+            label="7 dagar"
+            stats={
+              t90SwedenSevenDayPerformance
+            }
+            loading={
+              t90SwedenLoading
+            }
+            error={
+              t90SwedenError
+            }
+            className="gallop-stat-week"
+          />
+
+          <GallopPerformanceCard
+            label="Från 18 aug"
+            stats={
+              t90SwedenAllTimePerformance
+            }
+            loading={
+              t90SwedenLoading
+            }
+            error={
+              t90SwedenError
             }
             className="gallop-stat-all"
           />
@@ -3672,6 +4110,50 @@ export function GallopTodayPanel({
                                   maxOdds,
                             );
 
+
+                      const t90SwedenEligible =
+                        date >=
+                          T90_SWEDEN_START_DATE &&
+                        selectedTrack
+                          .countryCode ===
+                          "SE";
+
+                      const t90SwedenLiveCandidate =
+                        t90SwedenEligible &&
+                        !signalIsLocked &&
+                        collectionStarted &&
+                        Boolean(
+                          best &&
+                            best.memory &&
+                            best.memory.samples >=
+                              2 &&
+                            (
+                              best.drop ??
+                              Number.NEGATIVE_INFINITY
+                            ) >=
+                              T90_SWEDEN_MIN_DROP_PERCENT &&
+                            (
+                              best.drop ??
+                              Number.POSITIVE_INFINITY
+                            ) <
+                              T90_SWEDEN_MAX_DROP_PERCENT,
+                        );
+
+                      const t90SwedenBet =
+                        t90SwedenEligible &&
+                        signalIsLocked &&
+                        Boolean(
+                          lockedSignal &&
+                            lockedSignal.samples >=
+                              2 &&
+                            lockedSignal
+                              .dropPercent >=
+                              T90_SWEDEN_MIN_DROP_PERCENT &&
+                            lockedSignal
+                              .dropPercent <
+                              T90_SWEDEN_MAX_DROP_PERCENT,
+                        );
+
                       const collecting =
                         collectionStarted &&
                         Boolean(
@@ -3892,6 +4374,17 @@ export function GallopTodayPanel({
                                     ? "SAMLAR DATA"
                                     : "UNDER REGELGRÄNS"}
                               </div>
+
+
+                              {t90SwedenBet ? (
+                                <div className="gallop-rule-status is-signal">
+                                  🎯 T90 SVERIGE 25–40 · SPEL 100 KR VINNARE
+                                </div>
+                              ) : t90SwedenLiveCandidate ? (
+                                <div className="gallop-rule-status is-candidate">
+                                  🎯 T90 SVERIGE 25–40 · LIVEKANDIDAT
+                                </div>
+                              ) : null}
 
                               <small className="gallop-samples">
                                 {

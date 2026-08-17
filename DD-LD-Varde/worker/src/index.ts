@@ -128,6 +128,7 @@ import {
   createSupabaseResearchArchiveAdapter,
 } from "./researchWorkerArchiveRun";
 import {
+  buildResearchRaceKey,
   RESEARCH_PARSER_VERSION,
 } from "./researchArchive";
 import {
@@ -387,6 +388,25 @@ const STRONG_STAR_STRATEGY_CODE =
 const STRONG_STAR_STAKE_SEK = 100;
 
 const STRONG_STAR_LOCK_TARGET_SECONDS = 90;
+
+const T90_SWEDEN_GALLOP_RULE_VERSION =
+  "T90_SWEDEN_25_40_V1.0";
+
+const T90_SWEDEN_GALLOP_STRATEGY_CODE =
+  "T90_SWEDEN_25_40";
+
+const T90_SWEDEN_GALLOP_STAKE_SEK = 100;
+
+const T90_SWEDEN_GALLOP_LOCK_TARGET_SECONDS = 90;
+
+const T90_SWEDEN_GALLOP_PROSPECTIVE_START_DATE =
+  "2026-08-18";
+
+const T90_SWEDEN_GALLOP_MIN_DROP_PERCENT_INCLUSIVE =
+  25;
+
+const T90_SWEDEN_GALLOP_MAX_DROP_PERCENT_EXCLUSIVE =
+  40;
 
 const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
 const DEFAULT_SUPABASE_TIMEOUT_MS = 15_000;
@@ -2822,6 +2842,7 @@ async function runCron(env: Env) {
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
         DIAMANTEN_RULE_VERSION,
         STRONG_STAR_RULE_VERSION,
+        T90_SWEDEN_GALLOP_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
@@ -2890,6 +2911,11 @@ async function runCron(env: Env) {
       const strongStarRaceKey = raceRuleKey(
         race.id,
         STRONG_STAR_RULE_VERSION,
+      );
+
+      const t90SwedenGallopRaceKey = raceRuleKey(
+        race.id,
+        T90_SWEDEN_GALLOP_RULE_VERSION,
       );
 
       const needsWinPlaceEvaluation =
@@ -2984,6 +3010,35 @@ async function runCron(env: Env) {
           strongStarRaceKey,
         );
 
+      const t90SwedenGallopPlannedStartMs =
+        Date.parse(
+          plannedStartTime,
+        );
+
+      const t90SwedenGallopTargetLockMs =
+        t90SwedenGallopPlannedStartMs -
+        T90_SWEDEN_GALLOP_LOCK_TARGET_SECONDS *
+          1_000;
+
+      const needsT90SwedenGallopEvaluation =
+        raceDate >=
+          T90_SWEDEN_GALLOP_PROSPECTIVE_START_DATE &&
+        track.countryCode
+          .toUpperCase() ===
+          "SE" &&
+        race.sport ===
+          "GALLOP" &&
+        Number.isFinite(
+          t90SwedenGallopPlannedStartMs,
+        ) &&
+        startMs >=
+          t90SwedenGallopTargetLockMs &&
+        startMs <
+          t90SwedenGallopPlannedStartMs &&
+        !existingWinPlaceEvalKeys.has(
+          t90SwedenGallopRaceKey,
+        );
+
       if (
         !needsWinPlaceEvaluation &&
         !needsSmallkaramellEvaluation &&
@@ -2993,7 +3048,8 @@ async function runCron(env: Env) {
         !needsEnsamvargenEvaluation &&
         !needsBigBMonsterEvaluation &&
         !needsDiamantenEvaluation &&
-        !needsStrongStarEvaluation
+        !needsStrongStarEvaluation &&
+        !needsT90SwedenGallopEvaluation
       ) {
         continue;
       }
@@ -3081,6 +3137,734 @@ async function runCron(env: Env) {
 
       const hasCompleteOddsHistory =
         incompleteOddsHistoryRunnerNumbers.length === 0;
+
+      /*
+       * T90 SVERIGE 25–40 V1.0
+       *
+       * Prospektiv regel från 2026-08-18:
+       * - endast svensk galopp
+       * - S1 = största oddssänkningen
+       * - första centrala oddset inom T-60m
+       * - sista centrala oddset <= exakt T-90
+       * - minst 25,0 % och under 40,0 %
+       * - 100 kr WIN
+       * - inga andra filter
+       */
+      if (needsT90SwedenGallopEvaluation) {
+        const plannedStartMs =
+          Date.parse(plannedStartTime);
+
+        const plannedLockTimeMs =
+          plannedStartMs -
+          T90_SWEDEN_GALLOP_LOCK_TARGET_SECONDS *
+            1_000;
+
+        const collectionStartMs =
+          plannedStartMs -
+          60 * 60_000;
+
+        const canonicalResearchRaceKey =
+          buildResearchRaceKey({
+            raceDate,
+            trackId:
+              track.id,
+            raceNumber:
+              race.raceNumber,
+            sourceRaceId:
+              race.id,
+          });
+
+        const {
+          data:
+            canonicalT90LockRows,
+          error:
+            canonicalT90LockError,
+        } = await supabase
+          .from(
+            "research_race_snapshots",
+          )
+          .select(
+            "snapshot_key,actual_seconds_before_start,snapshot_complete,actual_snapshot_time",
+          )
+          .eq(
+            "race_key",
+            canonicalResearchRaceKey,
+          )
+          .eq(
+            "signal_phase",
+            "LIVE",
+          )
+          .eq(
+            "capture_type",
+            "LOCK",
+          )
+          .gte(
+            "actual_seconds_before_start",
+            89,
+          )
+          .lte(
+            "actual_seconds_before_start",
+            91,
+          )
+          .eq(
+            "snapshot_complete",
+            true,
+          )
+          .order(
+            "actual_snapshot_time",
+            {
+              ascending:
+                false,
+            },
+          )
+          .limit(1);
+
+        if (
+          canonicalT90LockError
+        ) {
+          throw new Error(
+            `Could not load canonical T90 lock ${race.id}: ${canonicalT90LockError.message}`,
+          );
+        }
+
+        const canonicalT90Lock =
+          canonicalT90LockRows?.[0] ??
+          null;
+
+        const hasCanonicalT90Lock =
+          canonicalT90Lock !==
+          null;
+
+        type T90SwedenGallopRow = {
+          runner: WinPlaceRunnerInput;
+          firstOdds: number;
+          lockOdds: number;
+          dropPercent: number;
+          samples: number;
+          lockPointMs: number;
+          history: OddsPoint[];
+        };
+
+        const t90Rows:
+          T90SwedenGallopRow[] = [];
+
+        for (
+          const runner of
+          winPlaceRunners
+        ) {
+          if (runner.scratched) {
+            continue;
+          }
+
+          const history =
+            (
+              byRunner.get(
+                runner.number,
+              ) ?? []
+            )
+              .filter(
+                (point) =>
+                  point.timestamp >=
+                    collectionStartMs &&
+                  point.timestamp <=
+                    plannedLockTimeMs &&
+                  Number.isFinite(
+                    point.odds,
+                  ) &&
+                  point.odds > 0,
+              )
+              .sort(
+                (a, b) =>
+                  a.timestamp -
+                  b.timestamp,
+              );
+
+          if (history.length < 2) {
+            continue;
+          }
+
+          const first =
+            history[0];
+
+          const last =
+            history[
+              history.length - 1
+            ];
+
+          const firstOdds =
+            first.odds;
+
+          const lockOdds =
+            last.odds;
+
+          if (
+            firstOdds <= 0 ||
+            lockOdds <= 0
+          ) {
+            continue;
+          }
+
+          const dropPercent =
+            (
+              (
+                firstOdds -
+                lockOdds
+              ) /
+              firstOdds
+            ) * 100;
+
+          t90Rows.push({
+            runner,
+            firstOdds,
+            lockOdds,
+            dropPercent,
+            samples:
+              history.length,
+            lockPointMs:
+              last.timestamp,
+            history,
+          });
+        }
+
+        t90Rows.sort(
+          (a, b) =>
+            b.dropPercent -
+              a.dropPercent ||
+            a.lockOdds -
+              b.lockOdds ||
+            a.runner.number -
+              b.runner.number,
+        );
+
+        const candidate =
+          t90Rows[0] ??
+          null;
+
+        const qualifies =
+          candidate !== null &&
+          hasCanonicalT90Lock &&
+          candidate.dropPercent >=
+            T90_SWEDEN_GALLOP_MIN_DROP_PERCENT_INCLUSIVE &&
+          candidate.dropPercent <
+            T90_SWEDEN_GALLOP_MAX_DROP_PERCENT_EXCLUSIVE;
+
+        const secondsBeforeStart =
+          Number.isFinite(
+            plannedStartMs,
+          )
+            ? Math.max(
+                0,
+                (
+                  plannedStartMs -
+                  startMs
+                ) / 1_000,
+              )
+            : 0;
+
+        const configSnapshot = {
+          ruleVersion:
+            T90_SWEDEN_GALLOP_RULE_VERSION,
+
+          strategyCode:
+            T90_SWEDEN_GALLOP_STRATEGY_CODE,
+
+          strategyLabel:
+            "T90 Sverige 25–40",
+
+          prospectiveStartDate:
+            T90_SWEDEN_GALLOP_PROSPECTIVE_START_DATE,
+
+          countryCode:
+            "SE",
+
+          sport:
+            "GALLOP",
+
+          selection:
+            "S1",
+
+          lockTargetSecondsBeforeRace:
+            T90_SWEDEN_GALLOP_LOCK_TARGET_SECONDS,
+
+          collectionWindowMinutes:
+            60,
+
+          minDropPercentInclusive:
+            T90_SWEDEN_GALLOP_MIN_DROP_PERCENT_INCLUSIVE,
+
+          maxDropPercentExclusive:
+            T90_SWEDEN_GALLOP_MAX_DROP_PERCENT_EXCLUSIVE,
+
+          market:
+            "WIN",
+
+          defaultWinStakeSEK:
+            T90_SWEDEN_GALLOP_STAKE_SEK,
+
+          extraFilters:
+            [],
+        };
+
+        const candidateJson =
+          candidate
+            ? {
+                runnerNumber:
+                  candidate
+                    .runner
+                    .number,
+
+                horseName:
+                  candidate
+                    .runner
+                    .name,
+
+                firstOdds:
+                  candidate
+                    .firstOdds,
+
+                lockOdds:
+                  candidate
+                    .lockOdds,
+
+                dropPercent:
+                  candidate
+                    .dropPercent,
+
+                validOddsPoints:
+                  candidate
+                    .samples,
+
+                lockPointMs:
+                  candidate
+                    .lockPointMs,
+              }
+            : null;
+
+        const {
+          error:
+            t90SwedenEvaluationError,
+        } = await supabase
+          .from(
+            "win_place_race_evaluations",
+          )
+          .upsert(
+            {
+              race_id:
+                race.id,
+
+              rule_version:
+                T90_SWEDEN_GALLOP_RULE_VERSION,
+
+              strategy_code:
+                T90_SWEDEN_GALLOP_STRATEGY_CODE,
+
+              decision:
+                qualifies
+                  ? "PLAY"
+                  : "NO_PLAY",
+
+              reasons:
+                qualifies
+                  ? []
+                  : [
+                      !hasCanonicalT90Lock
+                        ? "Kanoniskt komplett T-90-lås saknas"
+                        : !candidate
+                          ? "S1 kunde inte beräknas"
+                          : candidate
+                                .dropPercent <
+                              T90_SWEDEN_GALLOP_MIN_DROP_PERCENT_INCLUSIVE
+                            ? "Sänkning under 25 %"
+                            : candidate
+                                  .dropPercent >=
+                                T90_SWEDEN_GALLOP_MAX_DROP_PERCENT_EXCLUSIVE
+                              ? "Sänkning 40 % eller högre"
+                              : "Ingen signal",
+                    ],
+
+              race_json: {
+                ...raceInput,
+                countryCode:
+                  track.countryCode,
+                sport:
+                  race.sport,
+              },
+
+              planned_lock_time_ms:
+                plannedLockTimeMs,
+
+              actual_lock_time_ms:
+                startMs,
+
+              locked_at:
+                nowIso,
+
+              seconds_before_start:
+                secondsBeforeStart,
+
+              config_snapshot:
+                configSnapshot,
+
+              checks_json: [
+                {
+                  key:
+                    "SWEDEN_ONLY",
+                  passed:
+                    track.countryCode
+                      .toUpperCase() ===
+                      "SE",
+                },
+                {
+                  key:
+                    "GALLOP_ONLY",
+                  passed:
+                    race.sport ===
+                    "GALLOP",
+                },
+                {
+                  key:
+                    "CANONICAL_T90_LOCK",
+                  passed:
+                    hasCanonicalT90Lock,
+                },
+                {
+                  key:
+                    "DROP_MIN_25",
+                  passed:
+                    candidate !==
+                      null &&
+                    candidate
+                      .dropPercent >=
+                      T90_SWEDEN_GALLOP_MIN_DROP_PERCENT_INCLUSIVE,
+                },
+                {
+                  key:
+                    "DROP_UNDER_40",
+                  passed:
+                    candidate !==
+                      null &&
+                    candidate
+                      .dropPercent <
+                      T90_SWEDEN_GALLOP_MAX_DROP_PERCENT_EXCLUSIVE,
+                },
+              ],
+
+              candidate_json:
+                candidateJson,
+
+              most_shortened_json:
+                candidateJson,
+
+              snapshot_json: {
+                candidate:
+                  candidateJson,
+
+                canonicalResearchRaceKey,
+
+                canonicalSnapshotKey:
+                  canonicalT90Lock
+                    ?.snapshot_key ??
+                  null,
+
+                canonicalActualSecondsBeforeStart:
+                  canonicalT90Lock
+                    ?.actual_seconds_before_start ??
+                  null,
+
+                runners:
+                  t90Rows.map(
+                    (row) => ({
+                      runnerNumber:
+                        row.runner
+                          .number,
+
+                      horseName:
+                        row.runner
+                          .name,
+
+                      firstOdds:
+                        row.firstOdds,
+
+                      lockOdds:
+                        row.lockOdds,
+
+                      dropPercent:
+                        row.dropPercent,
+
+                      validOddsPoints:
+                        row.samples,
+
+                      lockPointMs:
+                        row.lockPointMs,
+                    }),
+                  ),
+              },
+
+              signal_phase:
+                "LIVE",
+
+              created_at:
+                nowIso,
+
+              updated_at:
+                nowIso,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (
+          t90SwedenEvaluationError
+        ) {
+          throw new Error(
+            `Could not upsert T90 Sweden evaluation ${race.id}: ${t90SwedenEvaluationError.message}`,
+          );
+        }
+
+        if (
+          qualifies &&
+          candidate
+        ) {
+          const oddsValues =
+            candidate.history.map(
+              (point) =>
+                point.odds,
+            );
+
+          const mean =
+            oddsValues.reduce(
+              (
+                sum,
+                value,
+              ) =>
+                sum + value,
+              0,
+            ) /
+            oddsValues.length;
+
+          const variance =
+            mean > 0
+              ? oddsValues.reduce(
+                  (
+                    sum,
+                    value,
+                  ) =>
+                    sum +
+                    (
+                      value -
+                      mean
+                    ) ** 2,
+                  0,
+                ) /
+                oddsValues.length
+              : 0;
+
+          const cv =
+            mean > 0
+              ? (
+                  Math.sqrt(
+                    variance,
+                  ) /
+                  mean
+                ) * 100
+              : null;
+
+          const betRow = {
+            bet_id: [
+              race.id,
+              T90_SWEDEN_GALLOP_RULE_VERSION,
+              "WIN",
+              "LIVE",
+              candidate
+                .runner
+                .number,
+            ].join(":"),
+
+            race_id:
+              race.id,
+
+            rule_version:
+              T90_SWEDEN_GALLOP_RULE_VERSION,
+
+            market:
+              "WIN",
+
+            signal_phase:
+              "LIVE",
+
+            config_snapshot:
+              configSnapshot,
+
+            date:
+              raceDate,
+
+            track_id:
+              track.id,
+
+            track_name:
+              track.name,
+
+            race_number:
+              race.raceNumber,
+
+            planned_start_time:
+              plannedStartTime,
+
+            lock_time:
+              new Date(
+                plannedLockTimeMs,
+              ).toISOString(),
+
+            seconds_before_start:
+              secondsBeforeStart,
+
+            horse_number:
+              candidate
+                .runner
+                .number,
+
+            horse_name:
+              candidate
+                .runner
+                .name,
+
+            horse_id:
+              candidate
+                .runner
+                .horseId,
+
+            start_lane:
+              candidate
+                .runner
+                .startLane,
+
+            start_method:
+              race.startMethod,
+
+            distance_meters:
+              race.distanceMeters,
+
+            starters:
+              raceInput.starters,
+
+            start_odds:
+              candidate
+                .firstOdds,
+
+            locked_win_odds:
+              candidate
+                .lockOdds,
+
+            odds_drop_percent:
+              candidate
+                .dropPercent,
+
+            cv_raw:
+              cv,
+
+            cv_display:
+              cv,
+
+            strength:
+              candidate
+                .runner
+                .strength,
+
+            indicators_green:
+              candidate
+                .runner
+                .indicatorsGreen,
+
+            valid_odds_points:
+              candidate
+                .samples,
+
+            stake_oren:
+              T90_SWEDEN_GALLOP_STAKE_SEK *
+              100,
+
+            result_outcome:
+              "PENDING",
+
+            result_status:
+              "PENDING",
+
+            finish_position_official:
+              null,
+
+            official_win_odds_decimal:
+              null,
+
+            place_odds_decimal:
+              null,
+
+            return_oren:
+              null,
+
+            net_oren:
+              null,
+
+            roi_pct:
+              null,
+
+            automatic_model_bet:
+              true,
+
+            user_actually_played:
+              false,
+
+            result_source:
+              null,
+
+            result_updated_at:
+              null,
+
+            created_at:
+              nowIso,
+
+            updated_at:
+              nowIso,
+          };
+
+          const {
+            error:
+              t90SwedenBetError,
+          } = await supabase
+            .from(
+              "win_place_model_bets",
+            )
+            .upsert(
+              [betRow],
+              {
+                onConflict:
+                  "race_id,rule_version,market,signal_phase,horse_number",
+              },
+            );
+
+          if (
+            t90SwedenBetError
+          ) {
+            throw new Error(
+              `Could not upsert T90 Sweden bet ${race.id}: ${t90SwedenBetError.message}`,
+            );
+          }
+
+          summary
+            .winPlaceBetsCreated +=
+            1;
+        }
+
+        summary
+          .winPlaceEvaluationsCreated +=
+          1;
+
+        existingWinPlaceEvalKeys.add(
+          t90SwedenGallopRaceKey,
+        );
+      }
+
 
       /*
        * STJÄRNHÄSTAR V1.0
@@ -6749,6 +7533,7 @@ async function runCron(env: Env) {
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
         DIAMANTEN_RULE_VERSION,
         STRONG_STAR_RULE_VERSION,
+        T90_SWEDEN_GALLOP_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .or(
