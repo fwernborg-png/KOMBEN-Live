@@ -16,6 +16,17 @@ export const GALLOP_T1_PREVIEW_TARGET_SECONDS =
 export const GALLOP_T1_CAPTURE_TOLERANCE_SECONDS =
   35;
 
+/*
+ * T1 får separata exakta WIN-punkter under
+ * sista tre minuterna. Ordinarie minutdata
+ * för T90 och trav ändras inte.
+ */
+export const GALLOP_T1_PRECISE_WINDOW_SECONDS =
+  180;
+
+export const GALLOP_T1_HALF_MINUTE_OFFSET_MS =
+  30_000;
+
 export const GALLOP_T1_MIN_DROP_PERCENT =
   25;
 
@@ -24,6 +35,51 @@ export const GALLOP_T1_MAX_DROP_PERCENT =
 
 export const GALLOP_T1_STAKE_SEK =
   100;
+
+/*
+ * Forskningsinsamlingen är aktiv, men inga
+ * T1-utvärderingar eller skuggspel skapas
+ * innan datan har analyserats.
+ */
+export const GALLOP_T1_LIVE_DECISIONS_ENABLED =
+  false;
+
+export function shouldUseGallopT1PreciseSampling(args: {
+  date: string;
+  countryCode: string;
+  sport?: string | null;
+  plannedStartTimeMs: number;
+  nowMs: number;
+}): boolean {
+  if (
+    !isGallopT1ShadowRace({
+      date:
+        args.date,
+      countryCode:
+        args.countryCode,
+      sport:
+        args.sport,
+    })
+  ) {
+    return false;
+  }
+
+  const secondsBeforeStart =
+    (
+      args.plannedStartTimeMs -
+      args.nowMs
+    ) /
+    1_000;
+
+  return (
+    Number.isFinite(
+      secondsBeforeStart,
+    ) &&
+    secondsBeforeStart > 0 &&
+    secondsBeforeStart <=
+      GALLOP_T1_PRECISE_WINDOW_SECONDS
+  );
+}
 
 export function isGallopT1ShadowRace(args: {
   date: string;
