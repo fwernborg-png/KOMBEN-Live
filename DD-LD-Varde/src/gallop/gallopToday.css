@@ -1633,3 +1633,316 @@
 .gallop-start-countdown.is-urgent {
   color: #f87171;
 }
+
+
+/* GALLOP DESKTOP TIMELINE V1 */
+
+.gallop-desktop-timeline {
+  display: none;
+}
+
+@media (min-width: 701px) {
+  .gallop-desktop-timeline {
+    display: grid;
+    gap: 10px;
+    padding: 15px;
+    border: 1px solid #293548;
+    border-radius: 16px;
+    background:
+      linear-gradient(
+        135deg,
+        rgba(15, 23, 42, 0.96),
+        rgba(13, 21, 36, 0.96)
+      );
+  }
+
+  .gallop-timeline-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 16px;
+  }
+
+  .gallop-timeline-head > div {
+    display: grid;
+    gap: 3px;
+  }
+
+  .gallop-timeline-head small {
+    color: #60a5fa;
+    font-size: 10px;
+    font-weight: 950;
+    letter-spacing: 0.10em;
+  }
+
+  .gallop-timeline-head strong {
+    color: #f8fafc;
+    font-size: 17px;
+  }
+
+  .gallop-timeline-head > span {
+    color: #94a3b8;
+    font-size: 11px;
+  }
+
+  .gallop-timeline-rail {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns:
+      minmax(150px, 185px);
+    gap: 8px;
+    overflow-x: auto;
+    padding: 2px 2px 8px;
+    scrollbar-color:
+      #334155 transparent;
+  }
+
+  .gallop-timeline-race {
+    display: grid;
+    gap: 5px;
+    min-height: 82px;
+    padding: 10px 11px;
+    border: 1px solid #334155;
+    border-radius: 11px;
+    background: #111827;
+    color: #f8fafc;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color 140ms ease,
+      background 140ms ease,
+      transform 140ms ease,
+      opacity 140ms ease;
+  }
+
+  .gallop-timeline-race:hover {
+    border-color: #64748b;
+    transform:
+      translateY(-1px);
+  }
+
+  .gallop-timeline-race > span {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .gallop-timeline-race time {
+    color: #e2e8f0;
+    font-size: 14px;
+    font-weight: 950;
+    font-variant-numeric:
+      tabular-nums;
+  }
+
+  .gallop-timeline-race em {
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: #166534;
+    color: #dcfce7;
+    font-size: 8px;
+    font-style: normal;
+    font-weight: 950;
+    letter-spacing: 0.06em;
+  }
+
+  .gallop-timeline-race strong {
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gallop-timeline-race small {
+    color: #94a3b8;
+    font-size: 10px;
+  }
+
+  .gallop-timeline-race.is-past {
+    opacity: 0.48;
+  }
+
+  .gallop-timeline-race.is-next {
+    border-color:
+      rgba(34, 197, 94, 0.72);
+    background:
+      rgba(22, 101, 52, 0.17);
+  }
+
+  .gallop-timeline-race.is-selected {
+    border-color: #60a5fa;
+    box-shadow:
+      0 0 0 1px
+      rgba(96, 165, 250, 0.28);
+    background:
+      rgba(30, 64, 175, 0.20);
+    opacity: 1;
+  }
+
+  /* Tidslinjen ersätter banrutorna på dator. */
+  .gallop-track-grid {
+    display: none;
+  }
+
+  /* Endast valt lopp visas som detaljkort. */
+  .gallop-race-grid {
+    display: block;
+  }
+
+  .gallop-race-card:not(
+    .is-timeline-selected
+  ) {
+    display: none;
+  }
+
+  .gallop-race-card.is-timeline-selected {
+    width: 100%;
+    max-width: 1080px;
+    margin-inline: auto;
+  }
+
+  /* Kompakt datayta – häst och odds hålls nära. */
+  .gallop-race-card.is-timeline-selected
+    .gallop-race-metrics,
+  .gallop-race-card.is-timeline-selected
+    .gallop-all-runners {
+    width: 100%;
+    max-width: 860px;
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-table-head,
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-row {
+    grid-template-columns:
+      44px
+      minmax(240px, 420px)
+      90px
+      72px
+      72px;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-table-head
+    > span:nth-child(n + 3),
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-row
+    > :nth-child(n + 3) {
+    text-align: right;
+    font-variant-numeric:
+      tabular-nums;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-row:hover {
+    background:
+      rgba(30, 64, 175, 0.18);
+  }
+}
+
+
+/* GALLOP DESKTOP COMPACT DATA V2 */
+
+@media (min-width: 701px) {
+  /* Banförklaringen följer loppkortets bredd. */
+  .gallop-selected-head {
+    width: 100%;
+    max-width: 900px;
+    margin-inline: auto;
+  }
+
+  /* Smalare och mer koncentrerat loppkort. */
+  .gallop-race-card.is-timeline-selected {
+    max-width: 900px;
+    box-sizing: border-box;
+    padding: 18px 20px;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-race-metrics,
+  .gallop-race-card.is-timeline-selected
+    .gallop-all-runners {
+    max-width: 720px;
+  }
+
+  /* Häst och odds hålls tydligt närmare varandra. */
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-table-head,
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-row {
+    grid-template-columns:
+      42px
+      minmax(230px, 300px)
+      84px
+      68px
+      68px;
+    gap: 8px;
+  }
+
+  /* Större och tydligare tabelldata. */
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-table-head {
+    padding: 6px 10px;
+    font-size: 10px;
+    font-weight: 850;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-row {
+    min-height: 42px;
+    padding: 7px 10px;
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-row
+    > strong {
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-runner-row
+    > :nth-child(n + 3) {
+    font-size: 13px;
+    font-weight: 750;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-all-runners-title
+    strong {
+    font-size: 12px;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-all-runners-title
+    span {
+    font-size: 11px;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-race-metrics
+    div {
+    padding: 10px;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-race-metrics
+    span {
+    font-size: 11px;
+  }
+
+  .gallop-race-card.is-timeline-selected
+    .gallop-race-metrics
+    strong {
+    font-size: 15px;
+  }
+}

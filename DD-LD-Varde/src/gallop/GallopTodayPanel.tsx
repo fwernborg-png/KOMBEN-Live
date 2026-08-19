@@ -63,6 +63,13 @@ type GallopTrack = {
   races: GallopRaceRef[];
 };
 
+type GallopTimelineRace = {
+  key: string;
+  track: GallopTrack;
+  race: GallopRaceRef;
+  startMs: number | null;
+};
+
 type GallopRunner = {
   number: number;
   name: string;
@@ -709,6 +716,69 @@ function raceKey(
 ): string {
   return (
     `${trackId}:${raceNumber}`
+  );
+}
+
+function preferredRaceForTrack(
+  track: GallopTrack,
+): GallopRaceRef | null {
+  const now =
+    Date.now();
+
+  const scheduled =
+    track.races
+      .map(
+        (race) => {
+          const parsedStartMs =
+            race.startTime
+              ? Date.parse(
+                  race.startTime,
+                )
+              : Number.NaN;
+
+          return {
+            race,
+
+            startMs:
+              Number.isFinite(
+                parsedStartMs,
+              )
+                ? parsedStartMs
+                : null,
+          };
+        },
+      )
+      .filter(
+        (
+          item,
+        ): item is {
+          race: GallopRaceRef;
+          startMs: number;
+        } =>
+          item.startMs !==
+          null,
+      )
+      .sort(
+        (a, b) =>
+          a.startMs -
+          b.startMs,
+      );
+
+  const next =
+    scheduled.find(
+      (item) =>
+        item.startMs >
+        now,
+    );
+
+  return (
+    next?.race ??
+    scheduled[
+      scheduled.length -
+        1
+    ]?.race ??
+    track.races[0] ??
+    null
   );
 }
 
@@ -1590,6 +1660,13 @@ export function GallopTodayPanel({
   >(null);
 
   const [
+    selectedTimelineRaceKey,
+    setSelectedTimelineRaceKey,
+  ] = useState<
+    string | null
+  >(null);
+
+  const [
     raceRunners,
     setRaceRunners,
   ] = useState<
@@ -2218,6 +2295,140 @@ export function GallopTodayPanel({
         selectedTrackId,
       ],
     );
+
+
+  const timelineRaces =
+    useMemo<
+      GallopTimelineRace[]
+    >(
+      () =>
+        tracks
+          .flatMap(
+            (track) =>
+              track.races.map(
+                (race) => {
+                  const parsedStartMs =
+                    race.startTime
+                      ? Date.parse(
+                          race.startTime,
+                        )
+                      : Number.NaN;
+
+                  return {
+                    key:
+                      raceKey(
+                        track.id,
+                        race.raceNumber,
+                      ),
+
+                    track,
+                    race,
+
+                    startMs:
+                      Number.isFinite(
+                        parsedStartMs,
+                      )
+                        ? parsedStartMs
+                        : null,
+                  };
+                },
+              ),
+          )
+          .sort(
+            (a, b) => {
+              const aStart =
+                a.startMs ??
+                Number.POSITIVE_INFINITY;
+
+              const bStart =
+                b.startMs ??
+                Number.POSITIVE_INFINITY;
+
+              return (
+                aStart -
+                  bStart ||
+                a.track.name
+                  .localeCompare(
+                    b.track.name,
+                    "sv",
+                  ) ||
+                a.race
+                  .raceNumber -
+                  b.race
+                    .raceNumber
+              );
+            },
+          ),
+      [tracks],
+    );
+
+
+  const nextTimelineRace =
+    useMemo(
+      () => {
+        const now =
+          Date.now();
+
+        return (
+          timelineRaces.find(
+            (item) =>
+              item.startMs !==
+                null &&
+              item.startMs >
+                now,
+          ) ??
+          null
+        );
+      },
+      [
+        timelineRaces,
+        updatedAt,
+      ],
+    );
+
+
+  const selectedTimelineRace =
+    useMemo(
+      () =>
+        timelineRaces.find(
+          (item) =>
+            item.key ===
+            selectedTimelineRaceKey,
+        ) ??
+        nextTimelineRace ??
+        timelineRaces[
+          timelineRaces.length -
+            1
+        ] ??
+        null,
+      [
+        timelineRaces,
+        selectedTimelineRaceKey,
+        nextTimelineRace,
+      ],
+    );
+
+
+  useEffect(
+    () => {
+      if (
+        !selectedTimelineRace
+      ) {
+        return;
+      }
+
+      setSelectedTrackId(
+        (current) =>
+          current ===
+          selectedTimelineRace
+            .track.id
+            ? current
+            : selectedTimelineRace
+                .track.id,
+      );
+    },
+    [selectedTimelineRace],
+  );
 
   useEffect(
     () => {
@@ -3510,6 +3721,125 @@ export function GallopTodayPanel({
 
       {tracks.length ? (
         <>
+          <section
+            className="gallop-desktop-timeline"
+            aria-label="Dagens galopplopp i tidsordning"
+          >
+            <div className="gallop-timeline-head">
+              <div>
+                <small>
+                  DAGENS LOPP
+                </small>
+
+                <strong>
+                  Alla banor i tidsordning
+                </strong>
+              </div>
+
+              <span>
+                {
+                  timelineRaces
+                    .length
+                }{" "}
+                lopp · klicka för data
+              </span>
+            </div>
+
+            <div className="gallop-timeline-rail">
+              {timelineRaces.map(
+                (item) => {
+                  const isSelected =
+                    selectedTimelineRace
+                      ?.key ===
+                    item.key;
+
+                  const isNext =
+                    nextTimelineRace
+                      ?.key ===
+                    item.key;
+
+                  const isPast =
+                    item.startMs !==
+                      null &&
+                    item.startMs <=
+                      Date.now();
+
+                  return (
+                    <button
+                      key={
+                        item.key
+                      }
+                      type="button"
+                      aria-pressed={
+                        isSelected
+                      }
+                      className={[
+                        "gallop-timeline-race",
+                        isSelected
+                          ? "is-selected"
+                          : "",
+                        isNext
+                          ? "is-next"
+                          : "",
+                        isPast
+                          ? "is-past"
+                          : "",
+                      ]
+                        .filter(
+                          Boolean,
+                        )
+                        .join(" ")}
+                      onClick={() => {
+                        setSelectedTimelineRaceKey(
+                          item.key,
+                        );
+
+                        setSelectedTrackId(
+                          item.track
+                            .id,
+                        );
+                      }}
+                    >
+                      <span>
+                        <time>
+                          {formatTime(
+                            item.race
+                              .startTime,
+                          )}
+                        </time>
+
+                        {isNext ? (
+                          <em>
+                            NÄSTA
+                          </em>
+                        ) : null}
+                      </span>
+
+                      <strong>
+                        {flag(
+                          item.track
+                            .countryCode,
+                        )}{" "}
+                        {
+                          item.track
+                            .name
+                        }
+                      </strong>
+
+                      <small>
+                        Lopp{" "}
+                        {
+                          item.race
+                            .raceNumber
+                        }
+                      </small>
+                    </button>
+                  );
+                },
+              )}
+            </div>
+          </section>
+
           <div className="gallop-track-grid">
             {tracks.map(
               (track) => {
@@ -3543,11 +3873,26 @@ export function GallopTodayPanel({
                         ? "gallop-track-card is-active"
                         : "gallop-track-card"
                     }
-                    onClick={() =>
+                    onClick={() => {
+                      const preferredRace =
+                        preferredRaceForTrack(
+                          track,
+                        );
+
                       setSelectedTrackId(
                         track.id,
-                      )
-                    }
+                      );
+
+                      setSelectedTimelineRaceKey(
+                        preferredRace
+                          ? raceKey(
+                              track.id,
+                              preferredRace
+                                .raceNumber,
+                            )
+                          : null,
+                      );
+                    }}
                   >
                     <span className="gallop-track-country">
                       {flag(
@@ -3653,12 +3998,20 @@ export function GallopTodayPanel({
                   .races
                   .map(
                     (race) => {
+                      const timelineKey =
+                        raceKey(
+                          selectedTrack.id,
+                          race.raceNumber,
+                        );
+
+                      const isTimelineSelected =
+                        selectedTimelineRace
+                          ?.key ===
+                        timelineKey;
+
                       const runners =
                         raceRunners[
-                          raceKey(
-                            selectedTrack.id,
-                            race.raceNumber,
-                          )
+                          timelineKey
                         ] ??
                         [];
 
@@ -4111,7 +4464,8 @@ export function GallopTodayPanel({
                         ] ??
                         (
                           isNext ||
-                          isOngoing
+                          isOngoing ||
+                          isTimelineSelected
                         );
 
                       const currentOdds =
@@ -4208,6 +4562,9 @@ export function GallopTodayPanel({
                           }
                           className={[
                             "gallop-race-card",
+                            isTimelineSelected
+                              ? "is-timeline-selected"
+                              : "",
                             qualifies
                               ? "has-signal"
                               : "",
