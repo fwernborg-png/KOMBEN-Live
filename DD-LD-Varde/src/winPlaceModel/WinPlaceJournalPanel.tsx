@@ -30,6 +30,10 @@ import {
 } from "../strongStar";
 
 import {
+  GALLOP_T1_SHADOW_RULE_VERSION,
+} from "../gallop/gallopT1ShadowConfig";
+
+import {
   loadResearchHistoryOptions,
   loadResearchHistoryRows,
 } from "../researchHistory/repository";
@@ -906,13 +910,31 @@ export function WinPlaceJournalPanel({
       ],
     );
 
+  const gallopT1ShadowBets =
+    useMemo(
+      () =>
+        bets.filter(
+          (bet) =>
+            bet.ruleVersion ===
+            GALLOP_T1_SHADOW_RULE_VERSION,
+        ),
+      [bets],
+    );
+
+  /*
+   * Skuggmodellen får inte påverka
+   * ordinarie antal signaler, insats,
+   * återbetalning eller ROI.
+   */
   const regularBets =
     useMemo(
       () =>
         bets.filter(
           (bet) =>
             bet.ruleVersion !==
-            STRONG_STAR_RULE_VERSION,
+              STRONG_STAR_RULE_VERSION &&
+            bet.ruleVersion !==
+              GALLOP_T1_SHADOW_RULE_VERSION,
         ),
       [bets],
     );
@@ -988,13 +1010,55 @@ export function WinPlaceJournalPanel({
           ),
       };
 
+      const gallopT1ShadowGroup = {
+        ruleVersion:
+          GALLOP_T1_SHADOW_RULE_VERSION,
+
+        title:
+          "🧪 T1 Sverige 25–40",
+
+        description:
+          "Skuggmodell · samma regel som T90 · låses T−1 · påverkar inte ordinarie totalsiffror",
+
+        className:
+          "is-most-shortened",
+
+        winOnly:
+          true,
+
+        placeOnly:
+          false,
+
+        bets:
+          gallopT1ShadowBets,
+
+        winStats:
+          computeWinPlaceStats(
+            gallopT1ShadowBets,
+            "WIN",
+          ),
+
+        placeStats:
+          computeWinPlaceStats(
+            gallopT1ShadowBets,
+            "PLACE",
+          ),
+
+        combinedStats:
+          computeWinPlaceStats(
+            gallopT1ShadowBets,
+          ),
+      };
+
       return [
         strongStarGroup,
+        gallopT1ShadowGroup,
         ...regularGroups,
       ];
     },
     [
       bets,
+      gallopT1ShadowBets,
       strongStarBets,
       strategyDefinitions,
     ],

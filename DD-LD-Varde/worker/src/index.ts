@@ -124,6 +124,12 @@ import {
   mergeResearchProducts,
 } from "./researchWorkerIntegration";
 import {
+  GALLOP_T1_SHADOW_RULE_VERSION,
+} from "../../src/gallop/gallopT1ShadowConfig";
+import {
+  runGallopT1ShadowModel,
+} from "./gallopT1Shadow";
+import {
   archiveResearchRacesAtLock,
   createSupabaseResearchArchiveAdapter,
 } from "./researchWorkerArchiveRun";
@@ -2416,6 +2422,50 @@ async function runCron(env: Env) {
       summary.oddsPointsInserted += rows.length;
     }
 
+    /*
+     * Separat T1-skuggmodell för svensk galopp.
+     * Den använder redan insamlade minutpunkter
+     * och påverkar inte trav eller T90-modellen.
+     */
+    for (const item of researchRaces) {
+      try {
+        const shadowResult =
+          await runGallopT1ShadowModel({
+            supabase,
+            raceDate,
+            nowMs:
+              startMs,
+            track:
+              item.track,
+            race:
+              item.race,
+          });
+
+        if (
+          shadowResult
+            .evaluationCreated
+        ) {
+          summary
+            .winPlaceEvaluationsCreated +=
+            1;
+        }
+
+        if (
+          shadowResult
+            .betCreated
+        ) {
+          summary
+            .winPlaceBetsCreated +=
+            1;
+        }
+      } catch (shadowError) {
+        console.error(
+          "T1 shadow model failed",
+          shadowError,
+        );
+      }
+    }
+
     const researchArchiveSummary =
       await archiveResearchRacesAtLock({
         enabled:
@@ -2843,6 +2893,7 @@ async function runCron(env: Env) {
         DIAMANTEN_RULE_VERSION,
         STRONG_STAR_RULE_VERSION,
         T90_SWEDEN_GALLOP_RULE_VERSION,
+        GALLOP_T1_SHADOW_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .eq("race_json->>date", raceDate);
@@ -7534,6 +7585,7 @@ async function runCron(env: Env) {
         DIAMANTEN_RULE_VERSION,
         STRONG_STAR_RULE_VERSION,
         T90_SWEDEN_GALLOP_RULE_VERSION,
+        GALLOP_T1_SHADOW_RULE_VERSION,
       ])
       .eq("signal_phase", "LIVE")
       .or(
