@@ -25,6 +25,19 @@ const PLACE_HISTORY_API =
 const SETTINGS_KEY =
   "platsjagaren-gallop-v1-settings";
 
+/*
+ * Godkända galoppmarknader:
+ * Sverige, Danmark, Norge och Sydafrika.
+ * Okänd eller saknad landkod stoppas.
+ */
+const ALLOWED_GALLOP_COUNTRY_CODES =
+  new Set([
+    "SE",
+    "DK",
+    "NO",
+    "ZA",
+  ]);
+
 const T90_SWEDEN_START_DATE =
   "2026-08-18";
 
@@ -274,6 +287,19 @@ function normalizeCountry(
     "–";
 }
 
+function isAllowedGallopCountry(
+  countryCode: string,
+): boolean {
+  return (
+    ALLOWED_GALLOP_COUNTRY_CODES
+      .has(
+        countryCode
+          .trim()
+          .toUpperCase(),
+      )
+  );
+}
+
 function parseRaceRefs(
   track: UnknownRecord,
 ): GallopRaceRef[] {
@@ -454,6 +480,19 @@ function parseGallopTracks(
           return null;
         }
 
+        const countryCode =
+          normalizeCountry(
+            track,
+          );
+
+        if (
+          !isAllowedGallopCountry(
+            countryCode,
+          )
+        ) {
+          return null;
+        }
+
         const id =
           asNumber(
             track.id,
@@ -486,10 +525,7 @@ function parseGallopTracks(
         return {
           id,
           name,
-          countryCode:
-            normalizeCountry(
-              track,
-            ),
+          countryCode,
           races:
             parseRaceRefs(
               track,

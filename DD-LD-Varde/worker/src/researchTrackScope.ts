@@ -6,6 +6,31 @@ export function normalizeCalendarSport(
     : "";
 }
 
+export const ALLOWED_GALLOP_COUNTRY_CODES =
+  new Set([
+    "SE",
+    "DK",
+    "NO",
+    "ZA",
+  ]);
+
+export function isAllowedGallopCountry(
+  countryCode: string | null,
+): boolean {
+  if (!countryCode) {
+    return false;
+  }
+
+  return (
+    ALLOWED_GALLOP_COUNTRY_CODES
+      .has(
+        countryCode
+          .trim()
+          .toUpperCase(),
+      )
+  );
+}
+
 export function shouldIncludeStrategyTrack(
   countryCode: string | null,
 ): boolean {
@@ -34,8 +59,8 @@ export function shouldIncludeResearchTrack(
   /*
    * Research:
    * - all svensk racing som tidigare
-   * - all galopp oavsett land
-   * - all trav oavsett land
+   * - galopp endast från SE, DK, NO och ZA
+   * - all trav oavsett land som tidigare
    *
    * Spelstrategierna påverkas inte.
    * De fortsätter vara Sverige-only via
@@ -46,9 +71,31 @@ export function shouldIncludeResearchTrack(
       sport,
     );
 
+  const normalizedCountryCode =
+    countryCode
+      .trim()
+      .toUpperCase();
+
+  if (
+    normalizedCountryCode ===
+    "SE"
+  ) {
+    return true;
+  }
+
+  if (
+    normalizedSport ===
+    "gallop"
+  ) {
+    return (
+      isAllowedGallopCountry(
+        normalizedCountryCode,
+      )
+    );
+  }
+
   return (
-    countryCode === "SE" ||
-    normalizedSport === "gallop" ||
-    normalizedSport === "trot"
+    normalizedSport ===
+    "trot"
   );
 }

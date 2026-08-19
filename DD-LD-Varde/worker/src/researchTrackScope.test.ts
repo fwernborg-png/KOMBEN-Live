@@ -48,35 +48,54 @@ describe(
     );
 
     it(
-      "includes foreign gallop",
+      "includes approved foreign gallop",
       () => {
-        expect(
-          shouldIncludeResearchTrack({
-            countryCode: "NO",
-            sport: "gallop",
-          }),
-        ).toBe(true);
+        for (
+          const countryCode of [
+            "DK",
+            "NO",
+            "ZA",
+          ]
+        ) {
+          expect(
+            shouldIncludeResearchTrack({
+              countryCode,
+              sport: "gallop",
+            }),
+          ).toBe(true);
+        }
+      },
+    );
+
+    it(
+      "rejects unapproved gallop markets",
+      () => {
+        for (
+          const countryCode of [
+            "GB",
+            "IE",
+            "FR",
+            "DE",
+            "IT",
+            "HK",
+            "US",
+            "CA",
+          ]
+        ) {
+          expect(
+            shouldIncludeResearchTrack({
+              countryCode,
+              sport: "gallop",
+            }),
+          ).toBe(false);
+        }
 
         expect(
           shouldIncludeResearchTrack({
-            countryCode: "ZA",
+            countryCode: null,
             sport: "gallop",
           }),
-        ).toBe(true);
-
-        expect(
-          shouldIncludeResearchTrack({
-            countryCode: "DE",
-            sport: "gallop",
-          }),
-        ).toBe(true);
-
-        expect(
-          shouldIncludeResearchTrack({
-            countryCode: "IT",
-            sport: "gallop",
-          }),
-        ).toBe(true);
+        ).toBe(false);
       },
     );
 
