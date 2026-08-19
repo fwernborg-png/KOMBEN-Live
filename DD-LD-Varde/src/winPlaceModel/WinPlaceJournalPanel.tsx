@@ -376,7 +376,7 @@ function strategyInformation(
     return {
       title: "🐌 Snigel kommer",
       description:
-        "Jämnaste · 9–10 startande vid lås · oddset steg · vinnare",
+        "Jämnaste · oddset ska ha stigit · låsodds ≥3,50 · 9–10 startande · T−90 · WIN",
       className: "is-snigel",
     };
   }
@@ -388,7 +388,7 @@ function strategyInformation(
     return {
       title: "🪐 Jupiter",
       description:
-        "Jämnaste · låsodds 3,00–3,99 · oddset har inte stigit · plats",
+        "Jämnaste · oddset får inte ha stigit · låsodds 3,00–3,99 · T−90 · PLATS",
       className: "is-jupiter",
     };
   }
@@ -400,7 +400,7 @@ function strategyInformation(
     return {
       title: "🐸 Grodan",
       description:
-        "Jämnaste · G grön · låsodds 4,00–9,99 · plats",
+        "Jämnaste · G topp 4 · låsodds 4,00–9,99 · T−90 · PLATS",
       className: "is-jupiter",
     };
   }
@@ -412,7 +412,7 @@ function strategyInformation(
     return {
       title: "🐺 Ensamvargen",
       description:
-        "Exakt en häst sänks 5,00–9,99 % · låsodds minst 6,00 · vinnare",
+        "Exakt en häst med 5–<10 % sänkning · låsodds ≥6,00 · T−90 · WIN",
       className: "is-snigel",
     };
   }
@@ -424,7 +424,7 @@ function strategyInformation(
     return {
       title: "💎 Diamanten",
       description:
-        "2140 m · 7–10 startande · låsodds 6,00–25,00 · exakt styrka 3/6 · vinnare",
+        "2140 m auto · 7–10 startande · styrka exakt 3/6 · låsodds 6,00–25,00 · T−90 · WIN",
       className: "is-diamanten",
     };
   }
@@ -436,7 +436,7 @@ function strategyInformation(
     return {
       title: "👹 Big B Monster",
       description:
-        "Mest sänkta · max 8 startande · styrka högst 3/6 · vinnare + plats",
+        "Mest sänkt, inget minimikrav · låsodds ≥3,50 · max 8 startande · styrka ≤3/6 · T−90 · WIN + PLATS",
       className: "is-most-shortened",
     };
   }
@@ -448,7 +448,7 @@ function strategyInformation(
     return {
       title: "🦞 Kräfta i buren",
       description:
-        "S2 · näst mest sänkt · vinnarodds högst 7,00",
+        "Näst mest sänkt, inget minimikrav · låsodds 3,50–7,00 · T−90 · WIN + PLATS",
       className: "is-smallkaramell",
     };
   }
@@ -456,7 +456,7 @@ function strategyInformation(
   return {
     title: "Mest sänkta",
     description:
-      "Minst 30 % sänkning · vinnarodds högst 6,00",
+      "Mest sänkt · sänkning ≥30 % · låsodds 3,50–6,00 · T−90 · WIN + PLATS",
     className: "is-most-shortened",
   };
 }
@@ -774,7 +774,7 @@ export function WinPlaceJournalPanel({
           SNIGEL_KOMMER_RULE_VERSION,
         title: "🐌 Snigel kommer",
         description:
-          "Jämnaste · 9–10 startande vid lås · oddset steg · endast vinnare",
+          "Jämnaste · oddset ska ha stigit · låsodds ≥3,50 · 9–10 startande · T−90 · WIN",
         className: "is-snigel",
         winOnly: true,
         placeOnly: false,
@@ -784,7 +784,7 @@ export function WinPlaceJournalPanel({
           JUPITER_RULE_VERSION,
         title: "🪐 Jupiter",
         description:
-          "Jämnaste · låsodds 3,00–3,99 · oddset har inte stigit · endast plats",
+          "Jämnaste · oddset får inte ha stigit · låsodds 3,00–3,99 · T−90 · PLATS",
         className: "is-jupiter",
         winOnly: false,
         placeOnly: true,
@@ -794,7 +794,7 @@ export function WinPlaceJournalPanel({
           GRODAN_RULE_VERSION,
         title: "🐸 Grodan",
         description:
-          "Jämnaste · G grön · låsodds 4,00–9,99 · endast plats",
+          "Jämnaste · G topp 4 · låsodds 4,00–9,99 · T−90 · PLATS",
         className: "is-jupiter",
         winOnly: false,
         placeOnly: true,
@@ -804,7 +804,7 @@ export function WinPlaceJournalPanel({
           ENSAMVARGEN_RULE_VERSION,
         title: "🐺 Ensamvargen",
         description:
-          "Exakt en häst sänks 5,00–9,99 % · låsodds minst 6,00 · endast vinnare",
+          "Exakt en häst med 5–<10 % sänkning · låsodds ≥6,00 · T−90 · WIN",
         className: "is-snigel",
         winOnly: true,
         placeOnly: false,
@@ -814,7 +814,7 @@ export function WinPlaceJournalPanel({
           DIAMANTEN_RULE_VERSION,
         title: "💎 Diamanten",
         description:
-          "2140 m · 7–10 startande · låsodds 6,00–25,00 · exakt styrka 3/6 · endast vinnare",
+          "2140 m auto · 7–10 startande · styrka exakt 3/6 · låsodds 6,00–25,00 · T−90 · WIN",
         className: "is-diamanten",
         winOnly: true,
         placeOnly: false,
@@ -824,7 +824,7 @@ export function WinPlaceJournalPanel({
           BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
         title: "👹 Big B Monster",
         description:
-          "Mest sänkta · max 8 startande · styrka högst 3/6 · vinnare + plats",
+          "Mest sänkt, inget minimikrav · låsodds ≥3,50 · max 8 startande · styrka ≤3/6 · T−90 · WIN + PLATS",
         className: "is-most-shortened",
         winOnly: false,
         placeOnly: false,
@@ -834,7 +834,7 @@ export function WinPlaceJournalPanel({
           SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
         title: "🦞 Kräfta i buren",
         description:
-          "S2 · näst mest sänkt · vinnarodds högst 7,00",
+          "Näst mest sänkt, inget minimikrav · låsodds 3,50–7,00 · T−90 · WIN + PLATS",
         className: "is-smallkaramell",
         winOnly: false,
         placeOnly: false,
@@ -844,7 +844,7 @@ export function WinPlaceJournalPanel({
           WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
         title: "Mest sänkta",
         description:
-          "Minst 30 % sänkning · vinnarodds högst 6,00",
+          "Mest sänkt · sänkning ≥30 % · låsodds 3,50–6,00 · T−90 · WIN + PLATS",
         className: "is-most-shortened",
         winOnly: false,
         placeOnly: false,
@@ -910,17 +910,6 @@ export function WinPlaceJournalPanel({
       ],
     );
 
-  const gallopT1ShadowBets =
-    useMemo(
-      () =>
-        bets.filter(
-          (bet) =>
-            bet.ruleVersion ===
-            GALLOP_T1_SHADOW_RULE_VERSION,
-        ),
-      [bets],
-    );
-
   /*
    * Skuggmodellen får inte påverka
    * ordinarie antal signaler, insats,
@@ -982,8 +971,8 @@ export function WinPlaceJournalPanel({
         title: "⭐ Stjärnhästar",
 
         description:
-          "3/6 · KR topp 4 · ODD topp 4 · " +
-          "SP inte topp 4 · låses T-90 · vinnare + plats",
+          "Styrka 3/6 · KR och ODD topp 4 · " +
+          "SP inte topp 4 · T−90 · WIN + PLATS",
 
         className: "is-diamanten",
 
@@ -1010,55 +999,13 @@ export function WinPlaceJournalPanel({
           ),
       };
 
-      const gallopT1ShadowGroup = {
-        ruleVersion:
-          GALLOP_T1_SHADOW_RULE_VERSION,
-
-        title:
-          "🧪 T1 Sverige 25–40",
-
-        description:
-          "Skuggmodell · samma regel som T90 · låses T−1 · påverkar inte ordinarie totalsiffror",
-
-        className:
-          "is-most-shortened",
-
-        winOnly:
-          true,
-
-        placeOnly:
-          false,
-
-        bets:
-          gallopT1ShadowBets,
-
-        winStats:
-          computeWinPlaceStats(
-            gallopT1ShadowBets,
-            "WIN",
-          ),
-
-        placeStats:
-          computeWinPlaceStats(
-            gallopT1ShadowBets,
-            "PLACE",
-          ),
-
-        combinedStats:
-          computeWinPlaceStats(
-            gallopT1ShadowBets,
-          ),
-      };
-
       return [
         strongStarGroup,
-        gallopT1ShadowGroup,
         ...regularGroups,
       ];
     },
     [
       bets,
-      gallopT1ShadowBets,
       strongStarBets,
       strategyDefinitions,
     ],
@@ -1327,6 +1274,26 @@ export function WinPlaceJournalPanel({
             combinedStats.roiPct,
           )} %`}
         />
+      </div>
+
+      <div className="test-period-note">
+        <strong>Så läses reglerna:</strong>
+        <span>
+          Låsodds avser hästens WIN-odds vid
+          T−90. Sänkning mäts från första
+          giltiga oddspunkt till låsningen.
+        </span>
+      </div>
+
+      <div className="test-period-note">
+        <strong>
+          🧪 Galopp – 30-sekundersinsamling:
+        </strong>
+        <span>
+          Svenska galopplopp · exakta WIN-odds
+          sista tre minuterna · inga spelbeslut ·
+          ingår inte i strategiernas totalsiffror.
+        </span>
       </div>
 
       <div className="test-period-note">
