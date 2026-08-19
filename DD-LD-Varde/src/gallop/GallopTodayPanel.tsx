@@ -10,6 +10,15 @@ import {
   loadGallopHistoryRows,
   type GallopHistoryRow,
 } from "../researchHistory/gallopRepository";
+import {
+  GALLOP_T1_CAPTURE_TOLERANCE_SECONDS,
+  GALLOP_T1_LOCK_TARGET_SECONDS,
+  GALLOP_T1_MAX_DROP_PERCENT,
+  GALLOP_T1_MIN_DROP_PERCENT,
+  GALLOP_T1_PREVIEW_TARGET_SECONDS,
+  GALLOP_T1_SHADOW_RULE_VERSION,
+  isGallopT1ShadowRace,
+} from "./gallopT1ShadowConfig";
 
 import "./gallopToday.css";
 
@@ -2728,7 +2737,18 @@ export function GallopTodayPanel({
                       resultStartMs,
                     )
                       ? resultStartMs -
-                        90_000
+                        (
+                          isGallopT1ShadowRace({
+                            date,
+                            countryCode:
+                              track.countryCode,
+                            sport:
+                              "GALLOP",
+                          })
+                            ? GALLOP_T1_LOCK_TARGET_SECONDS
+                            : 90
+                        ) *
+                          1_000
                       : null;
 
                   const runnerLockPassed =
@@ -2767,7 +2787,9 @@ export function GallopTodayPanel({
                               pointMs,
                             ) &&
                             pointMs <=
-                              runnerLockMs
+                              runnerLockMs +
+                                GALLOP_T1_CAPTURE_TOLERANCE_SECONDS *
+                                  1_000
                           );
                         },
                       );
@@ -4544,6 +4566,55 @@ export function GallopTodayPanel({
                               T90_SWEDEN_MAX_DROP_PERCENT,
                         );
 
+                      const t1ShadowEligible =
+                        isGallopT1ShadowRace({
+                          date,
+                          countryCode:
+                            selectedTrack
+                              .countryCode,
+                          sport:
+                            "GALLOP",
+                        });
+
+                      const t1ShadowPreviewStarted =
+                        t1ShadowEligible &&
+                        Number.isFinite(
+                          startMs,
+                        ) &&
+                        raceUiNow >=
+                          startMs -
+                            GALLOP_T1_PREVIEW_TARGET_SECONDS *
+                              1_000;
+
+                      const t1ShadowLocked =
+                        t1ShadowEligible &&
+                        Number.isFinite(
+                          startMs,
+                        ) &&
+                        raceUiNow >=
+                          startMs -
+                            GALLOP_T1_LOCK_TARGET_SECONDS *
+                              1_000;
+
+                      const t1ShadowQualifies =
+                        Boolean(
+                          liveBest &&
+                            liveBest.memory &&
+                            liveBest.memory
+                              .samples >=
+                              2 &&
+                            (
+                              liveBest.drop ??
+                              Number.NEGATIVE_INFINITY
+                            ) >=
+                              GALLOP_T1_MIN_DROP_PERCENT &&
+                            (
+                              liveBest.drop ??
+                              Number.POSITIVE_INFINITY
+                            ) <
+                              GALLOP_T1_MAX_DROP_PERCENT,
+                        );
+
                       const collecting =
                         collectionStarted &&
                         Boolean(
@@ -4776,6 +4847,56 @@ export function GallopTodayPanel({
                               ) : t90SwedenLiveCandidate ? (
                                 <div className="gallop-rule-status is-candidate">
                                   🎯 T90 SVERIGE 25–40 · LIVEKANDIDAT
+                                </div>
+                              ) : null}
+
+                              {t1ShadowPreviewStarted &&
+                              liveBest &&
+                              liveBest.memory ? (
+                                <div
+                                  className={
+                                    t1ShadowLocked &&
+                                    t1ShadowQualifies
+                                      ? "gallop-rule-status is-signal"
+                                      : "gallop-rule-status is-candidate"
+                                  }
+                                  title={
+                                    GALLOP_T1_SHADOW_RULE_VERSION
+                                  }
+                                >
+                                  {t1ShadowLocked
+                                    ? t1ShadowQualifies
+                                      ? "🧪 T1 SKUGGMODELL · LÅST SPEL"
+                                      : "🧪 T1 SKUGGMODELL · LÅST · INGET SPEL"
+                                    : "⏳ T−2 FÖRVARNING · T1-SKUGGKANDIDAT"}
+                                  {" · "}
+                                  {
+                                    liveBest
+                                      .runner
+                                      .number
+                                  }
+                                  .{" "}
+                                  {
+                                    liveBest
+                                      .runner
+                                      .name
+                                  }
+                                  {" · "}
+                                  {(
+                                    liveBest.drop ??
+                                    0
+                                  )
+                                    .toFixed(1)
+                                    .replace(
+                                      ".",
+                                      ",",
+                                    )}
+                                  {" % · "}
+                                  {formatOdds(
+                                    liveBest
+                                      .memory
+                                      .currentOddsRaw,
+                                  )}
                                 </div>
                               ) : null}
 
