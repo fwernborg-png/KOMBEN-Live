@@ -2,6 +2,7 @@ import type {
   SupabaseClient,
 } from "@supabase/supabase-js";
 import {
+  GALLOP_T1_CAPTURE_TOLERANCE_SECONDS,
   GALLOP_T1_LOCK_TARGET_SECONDS,
   GALLOP_T1_MAX_DROP_PERCENT,
   GALLOP_T1_MIN_DROP_PERCENT,
@@ -88,21 +89,33 @@ function percentDrop(
   ) * 100;
 }
 
-function latestAtOrBefore(
+function closestToTarget(
   points: GallopT1ShadowPoint[],
   timestampMs: number,
+  toleranceMs: number,
 ): GallopT1ShadowPoint | null {
   return (
     [...points]
       .filter(
         (point) =>
-          point.timestampMs <=
-          timestampMs,
+          Math.abs(
+            point.timestampMs -
+              timestampMs,
+          ) <=
+          toleranceMs,
       )
       .sort(
         (a, b) =>
-          b.timestampMs -
-          a.timestampMs,
+          Math.abs(
+            a.timestampMs -
+              timestampMs,
+          ) -
+            Math.abs(
+              b.timestampMs -
+                timestampMs,
+            ) ||
+          a.timestampMs -
+            b.timestampMs,
       )[0] ??
     null
   );
@@ -209,7 +222,9 @@ export function evaluateGallopT1Shadow(args: {
                 point.timestampMs >=
                   collectionStartMs &&
                 point.timestampMs <=
-                  t1TargetMs &&
+                  t1TargetMs +
+                    GALLOP_T1_CAPTURE_TOLERANCE_SECONDS *
+                      1_000 &&
                 Number.isFinite(
                   point.odds,
                 ) &&
@@ -230,16 +245,22 @@ export function evaluateGallopT1Shadow(args: {
           history[0] ??
           null;
 
+        const toleranceMs =
+          GALLOP_T1_CAPTURE_TOLERANCE_SECONDS *
+          1_000;
+
         const t2Point =
-          latestAtOrBefore(
+          closestToTarget(
             history,
             t2TargetMs,
+            toleranceMs,
           );
 
         const t1Point =
-          latestAtOrBefore(
+          closestToTarget(
             history,
             t1TargetMs,
+            toleranceMs,
           );
 
         const complete =
@@ -251,12 +272,14 @@ export function evaluateGallopT1Shadow(args: {
             t2Point.timestampMs -
             t2TargetMs,
           ) <=
-            75_000 &&
+            GALLOP_T1_CAPTURE_TOLERANCE_SECONDS *
+              1_000 &&
           Math.abs(
             t1Point.timestampMs -
             t1TargetMs,
           ) <=
-            35_000;
+            GALLOP_T1_CAPTURE_TOLERANCE_SECONDS *
+              1_000;
 
         if (
           !complete ||
@@ -700,6 +723,16 @@ export async function runGallopT1ShadowModel(args: {
     );
   }
 
+  const actualSecondsBeforeStart =
+    Math.max(
+      0,
+      (
+        plannedStartTimeMs -
+        candidate.lockPointMs
+      ) /
+        1_000,
+    );
+
   const nowIso =
     new Date(
       nowMs,
@@ -732,6 +765,9 @@ export async function runGallopT1ShadowModel(args: {
 
     previewTargetSecondsBeforeRace:
       GALLOP_T1_PREVIEW_TARGET_SECONDS,
+
+    captureToleranceSeconds:
+      GALLOP_T1_CAPTURE_TOLERANCE_SECONDS,
 
     collectionWindowMinutes:
       60,
@@ -861,13 +897,13 @@ export async function runGallopT1ShadowModel(args: {
             plannedLockTimeMs,
 
           actual_lock_time_ms:
-            plannedLockTimeMs,
+            candidate.lockPointMs,
 
           locked_at:
             nowIso,
 
           seconds_before_start:
-            GALLOP_T1_LOCK_TARGET_SECONDS,
+            actualSecondsBeforeStart,
 
           config_snapshot:
             configSnapshot,
@@ -1031,11 +1067,11 @@ export async function runGallopT1ShadowModel(args: {
 
     lock_time:
       new Date(
-        plannedLockTimeMs,
+        candidate.lockPointMs,
       ).toISOString(),
 
     seconds_before_start:
-      GALLOP_T1_LOCK_TARGET_SECONDS,
+      actualSecondsBeforeStart,
 
     horse_number:
       candidate

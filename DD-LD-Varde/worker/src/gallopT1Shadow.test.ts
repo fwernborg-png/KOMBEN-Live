@@ -99,6 +99,60 @@ describe(
     );
 
     it(
+      "accepterar minutpunkter strax efter planerade T2 och T1",
+      () => {
+        const result =
+          evaluateGallopT1Shadow({
+            plannedStartTimeMs:
+              START_MS,
+
+            runners: [
+              {
+                number: 1,
+                name: "Efter T1",
+                scratched: false,
+              },
+            ],
+
+            points: [
+              point(1, 3600, 10),
+              point(1, 1800, 9.5),
+              point(1, 900, 9),
+              point(1, 300, 8.5),
+              point(1, 115, 8),
+              point(1, 55, 7.4),
+            ],
+          });
+
+        expect(
+          result.dataComplete,
+        ).toBe(true);
+
+        expect(
+          result.candidate
+            ?.t2Odds,
+        ).toBe(8);
+
+        expect(
+          result.candidate
+            ?.t1Odds,
+        ).toBe(7.4);
+
+        expect(
+          result.candidate
+            ?.lockPointMs,
+        ).toBe(
+          START_MS -
+            55_000,
+        );
+
+        expect(
+          result.qualifies,
+        ).toBe(true);
+      },
+    );
+
+    it(
       "vägrar skapa jämförelse när en aktiv häst saknar säker T1-punkt",
       () => {
         const result =

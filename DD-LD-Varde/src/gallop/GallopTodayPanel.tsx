@@ -11,6 +11,7 @@ import {
   type GallopHistoryRow,
 } from "../researchHistory/gallopRepository";
 import {
+  GALLOP_T1_CAPTURE_TOLERANCE_SECONDS,
   GALLOP_T1_LOCK_TARGET_SECONDS,
   GALLOP_T1_MAX_DROP_PERCENT,
   GALLOP_T1_MIN_DROP_PERCENT,
@@ -2786,7 +2787,9 @@ export function GallopTodayPanel({
                               pointMs,
                             ) &&
                             pointMs <=
-                              runnerLockMs
+                              runnerLockMs +
+                                GALLOP_T1_CAPTURE_TOLERANCE_SECONDS *
+                                  1_000
                           );
                         },
                       );
