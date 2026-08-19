@@ -7,6 +7,10 @@ import {
   evaluateGallopT1Shadow,
   type GallopT1ShadowPoint,
 } from "./gallopT1Shadow";
+import {
+  GALLOP_T1_LIVE_DECISIONS_ENABLED,
+  shouldUseGallopT1PreciseSampling,
+} from "../../src/gallop/gallopT1ShadowConfig";
 
 const START_MS =
   Date.parse(
@@ -31,6 +35,63 @@ function point(
 describe(
   "gallop T1 shadow",
   () => {
+    it(
+      "samlar exakt endast svensk galopp under sista tre minuterna",
+      () => {
+        expect(
+          GALLOP_T1_LIVE_DECISIONS_ENABLED,
+        ).toBe(false);
+
+        expect(
+          shouldUseGallopT1PreciseSampling({
+            date:
+              "2026-08-20",
+            countryCode:
+              "SE",
+            sport:
+              "GALLOP",
+            plannedStartTimeMs:
+              START_MS,
+            nowMs:
+              START_MS -
+              180_000,
+          }),
+        ).toBe(true);
+
+        expect(
+          shouldUseGallopT1PreciseSampling({
+            date:
+              "2026-08-20",
+            countryCode:
+              "SE",
+            sport:
+              "GALLOP",
+            plannedStartTimeMs:
+              START_MS,
+            nowMs:
+              START_MS -
+              181_000,
+          }),
+        ).toBe(false);
+
+        expect(
+          shouldUseGallopT1PreciseSampling({
+            date:
+              "2026-08-20",
+            countryCode:
+              "NO",
+            sport:
+              "GALLOP",
+            plannedStartTimeMs:
+              START_MS,
+            nowMs:
+              START_MS -
+              60_000,
+          }),
+        ).toBe(false);
+      },
+    );
+
     it(
       "rankar T2, T1 och sista minuten separat",
       () => {

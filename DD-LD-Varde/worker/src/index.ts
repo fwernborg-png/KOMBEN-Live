@@ -124,7 +124,12 @@ import {
   mergeResearchProducts,
 } from "./researchWorkerIntegration";
 import {
+  GALLOP_T1_HALF_MINUTE_OFFSET_MS,
+  GALLOP_T1_LIVE_DECISIONS_ENABLED,
+  GALLOP_T1_PRECISE_WINDOW_SECONDS,
   GALLOP_T1_SHADOW_RULE_VERSION,
+  isGallopT1ShadowRace,
+  shouldUseGallopT1PreciseSampling,
 } from "../../src/gallop/gallopT1ShadowConfig";
 import {
   runGallopT1ShadowModel,
@@ -1983,7 +1988,10 @@ function buildResearchTrialRunnerInputs(
   };
 }
 
-async function runCron(env: Env) {
+async function runCron(
+  env: Env,
+  ctx: ExecutionContext,
+) {
   const startMs = Date.now();
   const nowIso = new Date(startMs).toISOString();
   const lockGraceMs = Number(env.LOCK_GRACE_SECONDS ?? "90") * 1000;
@@ -2135,6 +2143,7 @@ async function runCron(env: Env) {
       Array<{
         track: Track;
         race: Race;
+        fetchedAtMs: number;
       }> = [];
 
     for (const track of tracks) {
@@ -2154,7 +2163,12 @@ async function runCron(env: Env) {
         if (!race) continue;
 
         summary.racesFetched += 1;
-        allRaces.push({ track, race });
+        allRaces.push({
+          track,
+          race,
+          fetchedAtMs:
+            Date.now(),
+        });
 
         const starters = race.runners.filter(
           (runner) => !runner.scratched,
@@ -2198,6 +2212,7 @@ async function runCron(env: Env) {
       Array<{
         track: Track;
         race: Race;
+        fetchedAtMs: number;
       }> = [
         ...allRaces,
       ];
@@ -2268,12 +2283,327 @@ async function runCron(env: Env) {
         researchRaces.push({
           track,
           race,
+          fetchedAtMs:
+            Date.now(),
         });
       }
     }
 
     summary.researchRacesFetched =
       researchRaces.length;
+
+    /*
+     * En enda lätt mellaninsamling körs vid
+     * minutens 30-sekunderspunkt.
+     *
+     * Den startas bara när svensk galopp ligger
+     * inom T−3:30 och använder redan hämtade
+     * race-referenser. Ingen Queue, Workflow
+     * eller Durable Object behövs.
+     */
+    const halfMinuteCandidates =
+      researchRaces.filter(
+        ({ track, race }) => {
+          if (
+            !race.startTime ||
+            !isGallopT1ShadowRace({
+              date:
+                raceDate,
+              countryCode:
+                track.countryCode,
+              sport:
+                race.sport,
+            })
+          ) {
+            return false;
+          }
+
+          const plannedStartTimeMs =
+            Date.parse(
+              race.startTime,
+            );
+
+          const remainingMs =
+            plannedStartTimeMs -
+            startMs;
+
+          return (
+            Number.isFinite(
+              plannedStartTimeMs,
+            ) &&
+            remainingMs > 0 &&
+            remainingMs <=
+              (
+                GALLOP_T1_PRECISE_WINDOW_SECONDS *
+                  1_000 +
+                GALLOP_T1_HALF_MINUTE_OFFSET_MS
+              )
+          );
+        },
+      );
+
+    const halfMinuteCapturePromise =
+      (
+        async () => {
+          if (
+            halfMinuteCandidates.length ===
+            0
+          ) {
+            return;
+          }
+
+          const halfMinuteTargetMs =
+            Math.floor(
+              startMs /
+                60_000,
+            ) *
+              60_000 +
+            GALLOP_T1_HALF_MINUTE_OFFSET_MS;
+
+          const waitMs =
+            halfMinuteTargetMs -
+            Date.now();
+
+          /*
+           * Om Cronen mot förmodan startade
+           * efter sekund 30 väntar vi inte till
+           * nästa minut. Nästa Cron får sköta det.
+           */
+          if (
+            waitMs < 0 ||
+            waitMs >
+              GALLOP_T1_HALF_MINUTE_OFFSET_MS
+          ) {
+            return;
+          }
+
+          if (waitMs > 0) {
+            await new Promise<void>(
+              (resolve) => {
+                setTimeout(
+                  resolve,
+                  waitMs,
+                );
+              },
+            );
+          }
+
+          for (
+            const {
+              track,
+              race:
+                originalRace,
+            }
+            of halfMinuteCandidates
+          ) {
+            throwIfRunTimedOut(
+              startMs,
+            );
+
+            const refreshedRace =
+              await fetchRaceForTrack({
+                apiBaseUrl,
+                raceDate,
+                trackId:
+                  track.id,
+                raceNumber:
+                  originalRace
+                    .raceNumber,
+                signal:
+                  runController
+                    .signal,
+              }).catch(
+                () =>
+                  null,
+              );
+
+            if (
+              !refreshedRace ||
+              !refreshedRace.startTime
+            ) {
+              continue;
+            }
+
+            const captureMs =
+              Date.now();
+
+            const plannedStartTimeMs =
+              Date.parse(
+                refreshedRace
+                  .startTime,
+              );
+
+            if (
+              !shouldUseGallopT1PreciseSampling({
+                date:
+                  raceDate,
+                countryCode:
+                  track.countryCode,
+                sport:
+                  refreshedRace
+                    .sport,
+                plannedStartTimeMs,
+                nowMs:
+                  captureMs,
+              })
+            ) {
+              continue;
+            }
+
+            const pointTsIso =
+              new Date(
+                captureMs,
+              ).toISOString();
+
+            const rows:
+              Array<
+                Record<
+                  string,
+                  unknown
+                >
+              > =
+              [];
+
+            for (
+              const runner
+              of refreshedRace.runners
+            ) {
+              if (
+                runner.scratched
+              ) {
+                continue;
+              }
+
+              const win =
+                toDecimalOdds(
+                  runner.oddsRaw,
+                );
+
+              if (
+                win === null
+              ) {
+                continue;
+              }
+
+              rows.push({
+                race_id:
+                  refreshedRace.id,
+                race_date:
+                  raceDate,
+                track_id:
+                  track.id,
+                track_name:
+                  track.name,
+                race_number:
+                  refreshedRace
+                    .raceNumber,
+                runner_number:
+                  runner.number,
+                horse_id:
+                  runner.horseId,
+                horse_name:
+                  runner.name,
+                market:
+                  "WIN",
+                odds_decimal:
+                  win,
+                point_ts:
+                  pointTsIso,
+                planned_start_time_at_capture:
+                  refreshedRace.startTime,
+                source:
+                  "ATG_T1_HALF_MINUTE",
+              });
+            }
+
+            if (
+              rows.length ===
+              0
+            ) {
+              continue;
+            }
+
+            const {
+              error:
+                halfMinuteError,
+            } =
+              await supabase
+                .from(
+                  "gallop_t1_odds_points",
+                )
+                .upsert(
+                  rows,
+                  {
+                    onConflict:
+                      "race_id,runner_number,market,point_ts",
+                  },
+                );
+
+            if (
+              halfMinuteError
+            ) {
+              throw new Error(
+                `Could not store T1 half-minute odds: ${halfMinuteError.message}`,
+              );
+            }
+
+            if (
+              !GALLOP_T1_LIVE_DECISIONS_ENABLED
+            ) {
+              continue;
+            }
+
+            const shadowResult =
+              await runGallopT1ShadowModel({
+                supabase,
+                raceDate,
+                nowMs:
+                  captureMs,
+                track,
+                race:
+                  refreshedRace,
+              });
+
+            if (
+              shadowResult
+                .evaluationCreated
+            ) {
+              summary
+                .winPlaceEvaluationsCreated +=
+                1;
+            }
+
+            if (
+              shadowResult
+                .betCreated
+            ) {
+              summary
+                .winPlaceBetsCreated +=
+                1;
+            }
+          }
+        }
+      )().catch(
+        (error) => {
+          console.error(
+            "T1 half-minute capture failed",
+            error instanceof Error
+              ? error.message
+              : String(
+                  error,
+                ),
+          );
+        },
+      );
+
+    /*
+     * Halvminutspunkten följs separat av
+     * Cloudflare och blockerar inte ordinarie
+     * runCron eller dess 50-sekundersgräns.
+     */
+    ctx.waitUntil(
+      halfMinuteCapturePromise,
+    );
 
     // Berika forskningsloppen med galoppdata före LOCK-arkivering.
     // Samma värde följer sedan med vidare till platsmodellen.
@@ -2359,6 +2689,11 @@ async function runCron(env: Env) {
       }
     }
 
+    /*
+     * Ordinarie lagring är exakt oförändrad:
+     * samma minutbucket används för både
+     * trav och galopp.
+     */
     const pointTsIso =
       toIsoMinute(startMs);
 
@@ -2367,8 +2702,42 @@ async function runCron(env: Env) {
       of researchRaces
     ) {
       throwIfRunTimedOut(startMs);
-      const { track, race } = item;
+      const {
+        track,
+        race,
+        fetchedAtMs,
+      } = item;
       if (!shouldCollectOdds(race.startTime, startMs)) continue;
+
+      const plannedStartTimeMs =
+        race.startTime
+          ? Date.parse(
+              race.startTime,
+            )
+          : Number.NaN;
+
+      /*
+       * Exakta T1-punkter sparas parallellt
+       * i en separat tabell. Den ordinarie
+       * oddsserien ovan påverkas inte.
+       */
+      const shouldStorePreciseT1Point =
+        shouldUseGallopT1PreciseSampling({
+          date:
+            raceDate,
+          countryCode:
+            track.countryCode,
+          sport:
+            race.sport,
+          plannedStartTimeMs,
+          nowMs:
+            fetchedAtMs,
+        });
+
+      const preciseT1PointTsIso =
+        new Date(
+          fetchedAtMs,
+        ).toISOString();
 
       const rows: Array<Record<string, unknown>> = [];
       for (const runner of race.runners) {
@@ -2409,6 +2778,33 @@ async function runCron(env: Env) {
         }
       }
 
+      const preciseT1Rows:
+        Array<
+          Record<
+            string,
+            unknown
+          >
+        > =
+        shouldStorePreciseT1Point
+          ? rows
+              .filter(
+                (row) =>
+                  row.market ===
+                  "WIN",
+              )
+              .map(
+                (row) => ({
+                  ...row,
+                  point_ts:
+                    preciseT1PointTsIso,
+                  planned_start_time_at_capture:
+                    race.startTime,
+                  source:
+                    "ATG_T1_MINUTE",
+                }),
+              )
+          : [];
+
       if (!rows.length) continue;
 
       const { error: oddsError } = await supabase
@@ -2420,6 +2816,35 @@ async function runCron(env: Env) {
       }
 
       summary.oddsPointsInserted += rows.length;
+
+      if (
+        preciseT1Rows.length >
+        0
+      ) {
+        const {
+          error:
+            preciseT1Error,
+        } =
+          await supabase
+            .from(
+              "gallop_t1_odds_points",
+            )
+            .upsert(
+              preciseT1Rows,
+              {
+                onConflict:
+                  "race_id,runner_number,market,point_ts",
+              },
+            );
+
+        if (
+          preciseT1Error
+        ) {
+          throw new Error(
+            `Could not store precise T1 minute odds: ${preciseT1Error.message}`,
+          );
+        }
+      }
     }
 
     /*
@@ -2428,6 +2853,12 @@ async function runCron(env: Env) {
      * och påverkar inte trav eller T90-modellen.
      */
     for (const item of researchRaces) {
+      if (
+        !GALLOP_T1_LIVE_DECISIONS_ENABLED
+      ) {
+        continue;
+      }
+
       try {
         const shadowResult =
           await runGallopT1ShadowModel({
@@ -8680,7 +9111,10 @@ export default {
     ctx: ExecutionContext,
   ) {
     ctx.waitUntil(
-      runCron(env)
+      runCron(
+        env,
+        ctx,
+      )
         .then((result) => {
           console.log(
             "Cron summary",
