@@ -25,6 +25,15 @@ import {
   JUPITER_STRATEGY_CODE,
 } from "./jupiter";
 import {
+  evaluateFegisen,
+  isInFegisenSignalWindow,
+  FEGISEN_LOCK_TARGET_SECONDS,
+  FEGISEN_PROSPECTIVE_START_DATE,
+  FEGISEN_RULE_VERSION,
+  FEGISEN_STAKE_SEK,
+  FEGISEN_STRATEGY_CODE,
+} from "./fegisen";
+import {
   evaluateGrodan,
   getGrodanPlaceHitMaxOfficialFinishPosition,
   isGrodanProspectiveDate,
@@ -3318,6 +3327,7 @@ async function runCron(
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
+        FEGISEN_RULE_VERSION,
         GRODAN_RULE_VERSION,
         ENSAMVARGEN_RULE_VERSION,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
@@ -3368,6 +3378,11 @@ async function runCron(
       const jupiterRaceKey = raceRuleKey(
         race.id,
         JUPITER_RULE_VERSION,
+      );
+
+      const fegisenRaceKey = raceRuleKey(
+        race.id,
+        FEGISEN_RULE_VERSION,
       );
 
       const grodanRaceKey = raceRuleKey(
@@ -3432,6 +3447,17 @@ async function runCron(
         ) &&
         !existingWinPlaceEvalKeys.has(
           jupiterRaceKey,
+        );
+
+      const needsFegisenEvaluation =
+        raceDate >=
+          FEGISEN_PROSPECTIVE_START_DATE &&
+        isInFegisenSignalWindow(
+          plannedStartTime,
+          startMs,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          fegisenRaceKey,
         );
 
       const needsGrodanEvaluation =
@@ -3526,6 +3552,7 @@ async function runCron(
         !needsSmallkaramellEvaluation &&
         !needsSnigelEvaluation &&
         !needsJupiterEvaluation &&
+        !needsFegisenEvaluation &&
         !needsGrodanEvaluation &&
         !needsEnsamvargenEvaluation &&
         !needsBigBMonsterEvaluation &&
@@ -6549,6 +6576,433 @@ async function runCron(
       }
 
       /*
+       * FEGISEN V1.0
+       *
+       * Shadowmodell:
+       * - endast trav
+       * - AUTO
+       * - 10–12 hästar i startfältet
+       * - inga strykningar vid LOCK
+       * - marknadsfavoriten
+       * - låsodds 2,00–2,99
+       * - endast PLATS
+       * - 100 kr
+       * - T-90
+       * - ingen push
+       */
+      if (needsFegisenEvaluation) {
+        const plannedLockTimeMs =
+          Date.parse(plannedStartTime) -
+          FEGISEN_LOCK_TARGET_SECONDS * 1_000;
+
+        const hasFreshCurrentOddsPoint =
+          latestPointMs !== null &&
+          Math.abs(
+            plannedLockTimeMs - latestPointMs,
+          ) <= lockGraceMs;
+
+        const fegisenEvaluation =
+          evaluateFegisen({
+            startMethod: race.startMethod,
+            isMonte: race.isMonte,
+            isGallop: race.sport === "GALLOP",
+            runners: winPlaceRunners,
+            hasFreshCurrentOddsPoint,
+          });
+
+        const fegisenCandidate =
+          fegisenEvaluation.candidate;
+
+        const fegisenFavorite =
+          fegisenEvaluation.favorite;
+
+        const fegisenInsufficient =
+          fegisenEvaluation.excludedReason ===
+            "Aktuell oddspunkt saknas" ||
+          fegisenEvaluation.excludedReason ===
+            "Favorit kan inte utses säkert";
+
+        const fegisenDecision =
+          fegisenCandidate
+            ? "PLAY"
+            : !fegisenEvaluation.active
+              ? "EXCLUDED"
+              : fegisenInsufficient
+                ? "INSUFFICIENT_DATA"
+                : "NO_PLAY";
+
+        const plannedStartMs =
+          Date.parse(plannedStartTime);
+
+        const secondsBeforeStart =
+          Number.isFinite(plannedStartMs)
+            ? Math.max(
+                0,
+                (plannedStartMs - startMs) / 1_000,
+              )
+            : 0;
+
+        const fegisenConfigSnapshot = {
+          ruleVersion:
+            FEGISEN_RULE_VERSION,
+
+          strategyCode:
+            FEGISEN_STRATEGY_CODE,
+
+          strategyLabel:
+            "Fegisen – Favorit plats",
+
+          lockTargetSecondsBeforeRace:
+            FEGISEN_LOCK_TARGET_SECONDS,
+
+          lockWindowOpensSecondsBeforeRace:
+            120,
+
+          lockWindowClosesSecondsBeforeRace:
+            60,
+
+          startMethod:
+            "AUTO",
+
+          minStartersInclusive:
+            10,
+
+          maxStartersInclusive:
+            12,
+
+          requireNoScratchesAtLock:
+            true,
+
+          selection:
+            "MARKET_FAVORITE",
+
+          lockedWinOddsMinInclusive:
+            2,
+
+          lockedWinOddsMaxExclusive:
+            3,
+
+          defaultPlaceStakeSEK:
+            FEGISEN_STAKE_SEK,
+
+          market:
+            "PLACE",
+
+          excludeMonte:
+            true,
+
+          excludeGallop:
+            true,
+        };
+
+        const {
+          error: fegisenEvaluationError,
+        } = await supabase
+          .from(
+            "win_place_race_evaluations",
+          )
+          .upsert(
+            {
+              race_id:
+                race.id,
+
+              rule_version:
+                FEGISEN_RULE_VERSION,
+
+              strategy_code:
+                FEGISEN_STRATEGY_CODE,
+
+              decision:
+                fegisenDecision,
+
+              reasons:
+                fegisenCandidate
+                  ? []
+                  : [
+                      fegisenEvaluation
+                        .excludedReason ??
+                        "Ingen Fegisen-signal",
+                    ],
+
+              race_json:
+                raceInput,
+
+              planned_lock_time_ms:
+                plannedLockTimeMs,
+
+              actual_lock_time_ms:
+                startMs,
+
+              locked_at:
+                nowIso,
+
+              seconds_before_start:
+                secondsBeforeStart,
+
+              config_snapshot:
+                fegisenConfigSnapshot,
+
+              checks_json: [
+                {
+                  key: "AUTO_START",
+                  passed:
+                    /auto/i.test(
+                      race.startMethod ?? "",
+                    ),
+                },
+                {
+                  key: "STARTERS_10_12",
+                  passed:
+                    winPlaceRunners.length >= 10 &&
+                    winPlaceRunners.length <= 12,
+                },
+                {
+                  key: "NO_SCRATCHES_AT_LOCK",
+                  passed:
+                    !winPlaceRunners.some(
+                      (runner) =>
+                        runner.scratched,
+                    ),
+                },
+                {
+                  key: "CURRENT_ODDS_POINT_AVAILABLE",
+                  passed:
+                    hasFreshCurrentOddsPoint,
+                },
+                {
+                  key: "MARKET_FAVORITE_AVAILABLE",
+                  passed:
+                    fegisenFavorite !== null,
+                },
+                {
+                  key: "LOCK_WIN_ODDS_2_00_2_99",
+                  passed:
+                    fegisenFavorite !== null &&
+                    fegisenFavorite
+                      .currentWinOdds >= 2 &&
+                    fegisenFavorite
+                      .currentWinOdds < 3,
+                },
+              ],
+
+              candidate_json:
+                fegisenCandidate,
+
+              most_shortened_json:
+                null,
+
+              snapshot_json: {
+                activeStarters:
+                  fegisenEvaluation
+                    .activeStarters,
+
+                favorite:
+                  fegisenFavorite,
+
+                excludedReason:
+                  fegisenEvaluation
+                    .excludedReason,
+              },
+
+              signal_phase:
+                "LIVE",
+
+              created_at:
+                nowIso,
+
+              updated_at:
+                nowIso,
+            },
+            {
+              onConflict:
+                "race_id,rule_version,signal_phase",
+            },
+          );
+
+        if (fegisenEvaluationError) {
+          throw new Error(
+            `Could not upsert Fegisen evaluation ${race.id}: ${fegisenEvaluationError.message}`,
+          );
+        }
+
+        if (fegisenCandidate) {
+          const {
+            error: fegisenBetError,
+          } = await supabase
+            .from(
+              "win_place_model_bets",
+            )
+            .upsert(
+              {
+                bet_id: [
+                  race.id,
+                  FEGISEN_RULE_VERSION,
+                  "PLACE",
+                  "LIVE",
+                ].join(":"),
+
+                race_id:
+                  race.id,
+
+                rule_version:
+                  FEGISEN_RULE_VERSION,
+
+                market:
+                  "PLACE",
+
+                signal_phase:
+                  "LIVE",
+
+                config_snapshot:
+                  fegisenConfigSnapshot,
+
+                date:
+                  raceDate,
+
+                track_id:
+                  track.id,
+
+                track_name:
+                  track.name,
+
+                race_number:
+                  race.raceNumber,
+
+                planned_start_time:
+                  plannedStartTime,
+
+                lock_time:
+                  nowIso,
+
+                seconds_before_start:
+                  secondsBeforeStart,
+
+                horse_number:
+                  fegisenCandidate
+                    .runnerNumber,
+
+                horse_name:
+                  fegisenCandidate
+                    .runnerName,
+
+                horse_id:
+                  fegisenCandidate
+                    .horseId,
+
+                start_lane:
+                  fegisenCandidate
+                    .startLane,
+
+                start_method:
+                  race.startMethod,
+
+                distance_meters:
+                  race.distanceMeters,
+
+                starters:
+                  fegisenEvaluation
+                    .activeStarters,
+
+                start_odds:
+                  fegisenCandidate
+                    .startOdds,
+
+                locked_win_odds:
+                  fegisenCandidate
+                    .currentWinOdds,
+
+                odds_drop_percent:
+                  fegisenCandidate
+                    .oddsDropPercent,
+
+                cv_raw:
+                  fegisenCandidate
+                    .cvRaw,
+
+                cv_display:
+                  fegisenCandidate
+                    .cvDisplay,
+
+                strength:
+                  fegisenCandidate
+                    .strength,
+
+                indicators_green:
+                  fegisenCandidate
+                    .indicatorsGreen,
+
+                valid_odds_points:
+                  fegisenCandidate
+                    .validOddsPoints,
+
+                stake_oren:
+                  FEGISEN_STAKE_SEK * 100,
+
+                result_outcome:
+                  "PENDING",
+
+                result_status:
+                  "PENDING",
+
+                finish_position_official:
+                  null,
+
+                official_win_odds_decimal:
+                  null,
+
+                place_odds_decimal:
+                  null,
+
+                return_oren:
+                  null,
+
+                net_oren:
+                  null,
+
+                roi_pct:
+                  null,
+
+                automatic_model_bet:
+                  true,
+
+                user_actually_played:
+                  false,
+
+                result_source:
+                  null,
+
+                result_updated_at:
+                  null,
+
+                created_at:
+                  nowIso,
+
+                updated_at:
+                  nowIso,
+              },
+              {
+                onConflict:
+                  "race_id,rule_version,market,signal_phase,horse_number",
+              },
+            );
+
+          if (fegisenBetError) {
+            throw new Error(
+              `Could not upsert Fegisen bet ${race.id}: ${fegisenBetError.message}`,
+            );
+          }
+
+          summary.winPlaceBetsCreated += 1;
+        }
+
+        summary.winPlaceEvaluationsCreated += 1;
+
+        existingWinPlaceEvalKeys.add(
+          fegisenRaceKey,
+        );
+      }
+
+      /*
        * GRODAN V1.0
        *
        * Fryst prospektiv forskningsregel:
@@ -8010,6 +8464,7 @@ async function runCron(
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
+        FEGISEN_RULE_VERSION,
         GRODAN_RULE_VERSION,
         ENSAMVARGEN_RULE_VERSION,
         BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
@@ -8129,6 +8584,11 @@ async function runCron(
             ? getJupiterPlaceHitMaxOfficialFinishPosition(
                 activeStartersAtResult,
               )
+            : bet.rule_version ===
+                FEGISEN_RULE_VERSION
+              ? activeStartersAtResult >= 7
+                ? 3
+                : 2
             : bet.rule_version ===
                 GRODAN_RULE_VERSION
               ? getGrodanPlaceHitMaxOfficialFinishPosition(
