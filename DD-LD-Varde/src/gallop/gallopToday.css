@@ -1946,3 +1946,226 @@
     font-size: 15px;
   }
 }
+
+
+/* GALLOP DESKTOP TIMELINE RESULTS V1 */
+
+@media (min-width: 701px) {
+  .gallop-timeline-rail {
+    grid-auto-columns:
+      minmax(165px, 195px);
+  }
+
+  .gallop-timeline-race {
+    position: relative;
+    overflow: hidden;
+    min-height: 92px;
+    padding: 11px 12px;
+  }
+
+  .gallop-timeline-race
+    > strong,
+  .gallop-timeline-race
+    > small {
+    padding-right: 52px;
+  }
+
+  /*
+   * Kört enligt klockan men ännu
+   * utan officiellt resultat.
+   */
+  .gallop-timeline-race.is-past {
+    opacity: 0.48;
+  }
+
+  /*
+   * Först när resultatdata finns
+   * blir loppet riktigt avslutat.
+   */
+  .gallop-timeline-race.is-finished {
+    opacity: 1;
+    border-color:
+      rgba(127, 29, 29, 0.78);
+    background:
+      radial-gradient(
+        circle at 88% 58%,
+        rgba(185, 28, 28, 0.16),
+        transparent 43%
+      ),
+      linear-gradient(
+        145deg,
+        rgba(61, 16, 24, 0.92),
+        rgba(27, 18, 28, 0.98)
+      );
+  }
+
+  .gallop-timeline-race.is-finished:hover {
+    border-color:
+      rgba(185, 28, 28, 0.82);
+  }
+
+  .gallop-timeline-race
+    em.is-finished {
+    border: 1px solid
+      rgba(248, 113, 113, 0.20);
+    background:
+      rgba(127, 29, 29, 0.46);
+    color: #fecaca;
+  }
+
+  /*
+   * Valt avslutat lopp behåller
+   * sin röda karaktär men får blå ram.
+   */
+  .gallop-timeline-race.is-finished.is-selected {
+    border-color: #60a5fa;
+    background:
+      radial-gradient(
+        circle at 88% 58%,
+        rgba(185, 28, 28, 0.18),
+        transparent 43%
+      ),
+      linear-gradient(
+        145deg,
+        rgba(61, 16, 24, 0.94),
+        rgba(27, 18, 28, 0.99)
+      );
+    box-shadow:
+      0 0 0 1px
+        rgba(96, 165, 250, 0.26),
+      0 0 18px
+        rgba(96, 165, 250, 0.10);
+  }
+
+  .gallop-timeline-result {
+    position: absolute;
+    right: 11px;
+    bottom: 11px;
+    z-index: 2;
+    min-width: 42px;
+    text-align: right;
+    font-size: 27px;
+    font-weight: 950;
+    line-height: 1;
+    letter-spacing: -0.05em;
+    font-variant-numeric:
+      tabular-nums;
+    pointer-events: none;
+    animation:
+      gallop-timeline-result-pop
+      420ms
+      ease-out
+      both;
+  }
+
+  .gallop-timeline-result.is-place-1 {
+    color: #fde68a;
+    text-shadow:
+      0 0 4px
+        rgba(253, 224, 71, 0.90),
+      0 0 13px
+        rgba(250, 204, 21, 0.48),
+      0 0 25px
+        rgba(250, 204, 21, 0.20);
+  }
+
+  /*
+   * Bara ettan skimrar när
+   * resultatet dyker upp.
+   * Animationen kör EN gång.
+   */
+  .gallop-timeline-result.is-place-1::after {
+    content: "";
+    position: absolute;
+    inset: -8px -10px;
+    background:
+      linear-gradient(
+        110deg,
+        transparent 26%,
+        rgba(255, 255, 255, 0.05) 36%,
+        rgba(255, 255, 255, 0.92) 49%,
+        rgba(255, 255, 255, 0.08) 60%,
+        transparent 72%
+      );
+    transform:
+      translateX(-170%);
+    mix-blend-mode: screen;
+    pointer-events: none;
+    animation:
+      gallop-timeline-first-shimmer
+      1.15s
+      ease-out
+      120ms
+      1
+      both;
+  }
+
+  .gallop-timeline-result.is-place-2 {
+    color: #e2e8f0;
+    text-shadow:
+      0 0 10px
+        rgba(226, 232, 240, 0.28);
+  }
+
+  .gallop-timeline-result.is-place-3 {
+    color: #fdba74;
+    text-shadow:
+      0 0 10px
+        rgba(251, 146, 60, 0.28);
+  }
+
+  .gallop-timeline-result.is-other {
+    color: #cbd5e1;
+    font-size: 23px;
+    text-shadow:
+      0 0 8px
+        rgba(203, 213, 225, 0.12);
+  }
+
+  .gallop-timeline-result.is-scratched {
+    color: #94a3b8;
+    font-size: 16px;
+    letter-spacing: 0.04em;
+  }
+}
+
+@keyframes gallop-timeline-result-pop {
+  from {
+    opacity: 0;
+    transform:
+      translateY(5px)
+      scale(0.90);
+  }
+
+  to {
+    opacity: 1;
+    transform:
+      translateY(0)
+      scale(1);
+  }
+}
+
+@keyframes gallop-timeline-first-shimmer {
+  0% {
+    transform:
+      translateX(-170%);
+    opacity: 0;
+  }
+
+  18% {
+    opacity: 1;
+  }
+
+  100% {
+    transform:
+      translateX(170%);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallop-timeline-result,
+  .gallop-timeline-result.is-place-1::after {
+    animation: none;
+  }
+}

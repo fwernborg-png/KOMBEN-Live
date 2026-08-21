@@ -1812,6 +1812,13 @@ export function GallopTodayPanel({
   >([]);
 
   const [
+    timelineResultRows,
+    setTimelineResultRows,
+  ] = useState<
+    GallopHistoryRow[]
+  >([]);
+
+  const [
     performanceLoading,
     setPerformanceLoading,
   ] = useState(true);
@@ -1989,6 +1996,128 @@ export function GallopTodayPanel({
       minDropPercent,
       maxOdds,
     ],
+  );
+
+
+  /*
+   * Resultatrader till desktop-tidslinjen.
+   *
+   * Hämtas separat utan spel-filter så
+   * varje lopps S1-häst kan visa placering,
+   * även när loppet inte blev ett spel.
+   */
+  useEffect(
+    () => {
+      let cancelled =
+        false;
+
+      setTimelineResultRows(
+        [],
+      );
+
+      async function loadTimelineResults() {
+        try {
+          const rows =
+            await loadGallopHistoryRows(
+              {
+                dateFrom:
+                  date,
+
+                dateTo:
+                  date,
+
+                selection:
+                  "S1",
+
+                countryCode:
+                  "",
+
+                trackName:
+                  "",
+
+                surface:
+                  "",
+
+                distanceMeters:
+                  null,
+
+                minStarters:
+                  null,
+
+                maxStarters:
+                  null,
+
+                minHandicapRating:
+                  null,
+
+                maxHandicapRating:
+                  null,
+
+                handicapRank:
+                  "",
+
+                minCarriedWeightKg:
+                  null,
+
+                maxCarriedWeightKg:
+                  null,
+
+                weightRank:
+                  "",
+
+                minDropPercent:
+                  null,
+
+                maxDropPercent:
+                  null,
+
+                minLockOdds:
+                  null,
+
+                maxLockOdds:
+                  null,
+
+                limit:
+                  1000,
+              },
+            );
+
+          if (
+            !cancelled
+          ) {
+            setTimelineResultRows(
+              rows,
+            );
+          }
+        } catch (
+          timelineError
+        ) {
+          console.warn(
+            "Kunde inte läsa resultat till galopptidslinjen",
+            timelineError,
+          );
+        }
+      }
+
+      void loadTimelineResults();
+
+      const timer =
+        window.setInterval(
+          () => {
+            void loadTimelineResults();
+          },
+          60_000,
+        );
+
+      return () => {
+        cancelled = true;
+
+        window.clearInterval(
+          timer,
+        );
+      };
+    },
+    [date],
   );
 
 
@@ -2369,6 +2498,37 @@ export function GallopTodayPanel({
             },
           ),
       [tracks],
+    );
+
+
+  const timelineResultByRace =
+    useMemo(
+      () => {
+        const byRace =
+          new Map<
+            string,
+            GallopHistoryRow
+          >();
+
+        for (
+          const row of
+          timelineResultRows
+        ) {
+          byRace.set(
+            performanceRaceKey(
+              row.raceDate,
+              row.trackName,
+              row.raceNumber,
+            ),
+            row,
+          );
+        }
+
+        return byRace;
+      },
+      [
+        timelineResultRows,
+      ],
     );
 
 
@@ -3786,6 +3946,198 @@ export function GallopTodayPanel({
                     item.startMs <=
                       Date.now();
 
+                  const historyResult =
+                    timelineResultByRace.get(
+                      performanceRaceKey(
+                        date,
+                        item.track.name,
+                        item.race
+                          .raceNumber,
+                      ),
+                    ) ??
+                    null;
+
+                  /*
+                   * Live-fallback:
+                   * vald bana kan få ATG-resultatet
+                   * innan historikraden hunnit sparas.
+                   */
+                  const timelineRunners =
+                    raceRunners[
+                      item.key
+                    ] ?? [];
+
+                  const timelineSignal =
+                    lockedSignals[
+                      lockedSignalKey(
+                        date,
+                        item.track.id,
+                        item.race
+                          .raceNumber,
+                      )
+                    ] ??
+                    null;
+
+                  const liveResultRunner =
+                    timelineSignal
+                      ? (
+                          timelineRunners.find(
+                            (runner) =>
+                              runner.number ===
+                              timelineSignal
+                                .runnerNumber,
+                          ) ??
+                          null
+                        )
+                      : null;
+
+                  const activeRunnerCount =
+                    timelineRunners.filter(
+                      (runner) =>
+                        !runner.scratched,
+                    ).length;
+
+                  const liveTop3Count =
+                    timelineRunners.filter(
+                      (runner) =>
+                        typeof runner
+                          .finishPosition ===
+                          "number" &&
+                        runner
+                          .finishPosition >=
+                          1 &&
+                        runner
+                          .finishPosition <=
+                          3,
+                    ).length;
+
+                  const expectedTopResults =
+                    Math.min(
+                      3,
+                      activeRunnerCount,
+                    );
+
+                  const liveFinished =
+                    expectedTopResults >
+                      0 &&
+                    liveTop3Count >=
+                      expectedTopResults;
+
+                  const historyFinished =
+                    Boolean(
+                      historyResult &&
+                      (
+                        historyResult
+                          .finishPositionOfficial !==
+                          null ||
+                        historyResult
+                          .scratchedAfterLock ||
+                        historyResult
+                          .betVoid ||
+                        historyResult
+                          .didNotFinish ||
+                        historyResult
+                          .disqualified
+                      ),
+                    );
+
+                  const isFinished =
+                    historyFinished ||
+                    liveFinished;
+
+                  /*
+                   * Tidslinjen ska visa hur DEN LÅSTA
+                   * mest sänkta hästen presterade.
+                   *
+                   * Live-resultatet för lockedSignal
+                   * är därför förstahandskälla.
+                   * Historikraden får endast användas
+                   * om den avser samma häst.
+                   */
+                  const historyMatchesSignal =
+                    Boolean(
+                      historyResult &&
+                      timelineSignal &&
+                      historyResult
+                        .runnerNumber ===
+                        timelineSignal
+                          .runnerNumber,
+                    );
+
+                  const resultPosition =
+                    liveResultRunner
+                      ?.finishPosition ??
+                    (
+                      historyMatchesSignal
+                        ? historyResult
+                            ?.finishPositionOfficial
+                        : null
+                    ) ??
+                    (
+                      !timelineSignal
+                        ? historyResult
+                            ?.finishPositionOfficial
+                        : null
+                    ) ??
+                    null;
+
+                  const resultIsScratched =
+                    Boolean(
+                      liveResultRunner
+                        ?.scratched ||
+                      (
+                        historyMatchesSignal &&
+                        (
+                          historyResult
+                            ?.scratchedAfterLock ||
+                          historyResult
+                            ?.betVoid
+                        )
+                      )
+                    );
+
+                  const timelineResultRunnerName =
+                    timelineSignal
+                      ?.runnerName ??
+                    (
+                      !timelineSignal
+                        ? historyResult
+                            ?.horseName
+                        : null
+                    ) ??
+                    null;
+
+                  const hasResultHorse =
+                    Boolean(
+                      historyResult ||
+                      timelineSignal,
+                    );
+
+                  const resultLabel =
+                    !isFinished ||
+                    !hasResultHorse
+                      ? null
+                      : resultIsScratched
+                        ? "STR"
+                        : resultPosition !==
+                            null
+                          ? `${resultPosition}:a`
+                          : "OPL";
+
+                  const resultClass =
+                    resultIsScratched
+                      ? "is-scratched"
+                      : resultPosition ===
+                          1
+                        ? "is-place-1"
+                        : resultPosition ===
+                            2
+                          ? "is-place-2"
+                          : resultPosition ===
+                              3
+                            ? "is-place-3"
+                            : "is-other";
+
                   return (
                     <button
                       key={
@@ -3805,6 +4157,9 @@ export function GallopTodayPanel({
                           : "",
                         isPast
                           ? "is-past"
+                          : "",
+                        isFinished
+                          ? "is-finished"
                           : "",
                       ]
                         .filter(
@@ -3830,7 +4185,11 @@ export function GallopTodayPanel({
                           )}
                         </time>
 
-                        {isNext ? (
+                        {isFinished ? (
+                          <em className="is-finished">
+                            AVSLUTAD
+                          </em>
+                        ) : isNext ? (
                           <em>
                             NÄSTA
                           </em>
@@ -3855,6 +4214,31 @@ export function GallopTodayPanel({
                             .raceNumber
                         }
                       </small>
+
+                      {resultLabel ? (
+                        <div
+                          className={[
+                            "gallop-timeline-result",
+                            resultClass,
+                          ]
+                            .filter(
+                              Boolean,
+                            )
+                            .join(" ")}
+                          aria-label={
+                            timelineResultRunnerName
+                              ? `${timelineResultRunnerName}: ${resultLabel}`
+                              : resultLabel
+                          }
+                          title={
+                            timelineResultRunnerName
+                              ? `${timelineResultRunnerName}: ${resultLabel}`
+                              : resultLabel
+                          }
+                        >
+                          {resultLabel}
+                        </div>
+                      ) : null}
                     </button>
                   );
                 },
