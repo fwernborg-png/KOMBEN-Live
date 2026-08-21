@@ -3840,3 +3840,28 @@ body,
     font-size: 7px;
   }
 }
+
+
+/* Fegisen – levande prospektiv testtavla */
+.fegisen-test-score {
+  margin-left: 5px;
+  padding-left: 7px;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.fegisen-test-score.is-positive {
+  color: var(--green);
+}
+
+.fegisen-test-score.is-negative {
+  color: var(--red);
+}
+
+.fegisen-test-score.is-neutral {
+  color: var(--muted);
+}
