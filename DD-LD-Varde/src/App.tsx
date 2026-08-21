@@ -2068,6 +2068,95 @@ function lockedRunnerKey(
   ].join(":");
 }
 
+function strategyMarkerDisplay(
+  marker: LockedStrategyMarker,
+) {
+  if (
+    marker.ruleVersion ===
+    GRODAN_RULE_VERSION
+  ) {
+    return {
+      name: "GRODAN",
+      market: "PLATS",
+      tone: "is-place",
+    };
+  }
+
+  if (
+    marker.ruleVersion ===
+    ENSAMVARGEN_RULE_VERSION
+  ) {
+    return {
+      name: "VARGEN",
+      market: "VINNARE",
+      tone: "is-win",
+    };
+  }
+
+  if (
+    marker.ruleVersion ===
+    SNIGEL_KOMMER_RULE_VERSION
+  ) {
+    return {
+      name: "SNIGEL",
+      market: "VINNARE",
+      tone: "is-win",
+    };
+  }
+
+  if (
+    marker.ruleVersion ===
+    JUPITER_RULE_VERSION
+  ) {
+    return {
+      name: "JUPITER",
+      market: "PLATS",
+      tone: "is-place",
+    };
+  }
+
+  if (
+    marker.ruleVersion ===
+    DIAMANTEN_RULE_VERSION
+  ) {
+    return {
+      name: "DIAMANTEN",
+      market: "VINNARE",
+      tone: "is-win",
+    };
+  }
+
+  if (
+    marker.ruleVersion ===
+    BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion
+  ) {
+    return {
+      name: "BIG B",
+      market: "VINNARE + PLATS",
+      tone: "is-both",
+    };
+  }
+
+  if (
+    marker.ruleVersion ===
+    SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion
+  ) {
+    return {
+      name: "KRÄFTA",
+      market: "VINNARE + PLATS",
+      tone: "is-both",
+    };
+  }
+
+  return {
+    name:
+      marker.label.toUpperCase(),
+    market: "",
+    tone: "is-generic",
+  };
+}
+
+
 function strategyMarkerForRuleVersion(
   ruleVersion: string,
 ): LockedStrategyMarker | null {
@@ -7277,11 +7366,45 @@ export default function App() {
                                     (marker) => (
                                       <span
                                         key={`${rowKey}-${marker.ruleVersion}`}
-                                        className="locked-strategy-symbol"
-                                        title={`${marker.label} – låst signal`}
-                                        aria-label={`${marker.label}, låst signal`}
+                                        className={`locked-strategy-badge ${
+                                          strategyMarkerDisplay(
+                                            marker,
+                                          ).tone
+                                        }`}
+                                        title={`${marker.label} – ${
+                                          strategyMarkerDisplay(
+                                            marker,
+                                          ).market
+                                        } – låst signal`}
+                                        aria-label={`${marker.label}, ${
+                                          strategyMarkerDisplay(
+                                            marker,
+                                          ).market
+                                        }, låst signal`}
                                       >
-                                        {marker.symbol}
+                                        <span className="locked-strategy-badge-icon">
+                                          {marker.symbol}
+                                        </span>
+
+                                        <strong>
+                                          {
+                                            strategyMarkerDisplay(
+                                              marker,
+                                            ).name
+                                          }
+                                        </strong>
+
+                                        {strategyMarkerDisplay(
+                                          marker,
+                                        ).market ? (
+                                          <span className="locked-strategy-market">
+                                            {
+                                              strategyMarkerDisplay(
+                                                marker,
+                                              ).market
+                                            }
+                                          </span>
+                                        ) : null}
                                       </span>
                                     ),
                                   )}

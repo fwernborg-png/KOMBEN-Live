@@ -3661,3 +3661,182 @@ body,
 .diamanten-number {
   border-color: rgba(125, 211, 252, 0.72);
 }
+
+
+/* LOCKED STRATEGY BADGES V1 */
+
+.locked-strategy-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+
+  min-height: 25px;
+  padding: 2px 8px;
+
+  border: 1px solid
+    rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+
+  background:
+    rgba(255, 255, 255, 0.07);
+
+  color: #f8fafc;
+
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: 0.035em;
+
+  white-space: nowrap;
+  flex: 0 0 auto;
+
+  box-shadow:
+    0 0 10px
+      rgba(255, 255, 255, 0.04);
+}
+
+.locked-strategy-badge-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 16px;
+  line-height: 1;
+}
+
+.locked-strategy-badge strong {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.locked-strategy-badge small {
+  color: inherit;
+  font-size: 9px;
+  font-weight: 850;
+  opacity: 0.9;
+  letter-spacing: 0.025em;
+}
+
+/* VINNARE */
+
+.locked-strategy-badge.is-win {
+  border-color:
+    rgba(250, 204, 21, 0.55);
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(161, 98, 7, 0.30),
+      rgba(113, 63, 18, 0.20)
+    );
+
+  color: #fef3c7;
+
+  box-shadow:
+    0 0 10px
+      rgba(250, 204, 21, 0.12);
+}
+
+/* PLATS */
+
+.locked-strategy-badge.is-place {
+  border-color:
+    rgba(96, 165, 250, 0.60);
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(30, 64, 175, 0.32),
+      rgba(30, 58, 138, 0.20)
+    );
+
+  color: #dbeafe;
+
+  box-shadow:
+    0 0 10px
+      rgba(96, 165, 250, 0.13);
+}
+
+/* VINNARE + PLATS */
+
+.locked-strategy-badge.is-both {
+  border-color:
+    rgba(192, 132, 252, 0.60);
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(107, 33, 168, 0.32),
+      rgba(76, 29, 149, 0.20)
+    );
+
+  color: #f3e8ff;
+
+  box-shadow:
+    0 0 11px
+      rgba(192, 132, 252, 0.14);
+}
+
+/*
+ * Om flera signaler hamnar på samma häst
+ * får de gå ner på nästa rad i stället
+ * för att trycka sönder tabellen.
+ */
+
+.compact-row .runner-title-line {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 700px) {
+  .locked-strategy-badge {
+    min-height: 23px;
+    padding: 2px 6px;
+    gap: 3px;
+    font-size: 9px;
+  }
+
+  .locked-strategy-badge-icon {
+    font-size: 14px;
+  }
+
+  .locked-strategy-badge strong {
+    font-size: 9px;
+  }
+
+  .locked-strategy-badge small {
+    font-size: 8px;
+  }
+}
+
+
+/* STRATEGY MARKET LABEL V2 */
+
+.locked-strategy-market {
+  display: inline-flex;
+  align-items: center;
+  min-height: 17px;
+  margin-left: 2px;
+  padding-left: 6px;
+
+  border-left:
+    1px solid rgba(255, 255, 255, 0.30);
+
+  color: inherit;
+
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: 0.055em;
+  line-height: 1;
+
+  opacity: 0.92;
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .locked-strategy-market {
+    padding-left: 5px;
+    font-size: 7px;
+  }
+}
