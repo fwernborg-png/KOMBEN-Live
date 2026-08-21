@@ -60,6 +60,9 @@ const SNIGEL_KOMMER_RULE_VERSION =
 const JUPITER_RULE_VERSION =
   "JUPITER_V1.0";
 
+const FEGISEN_RULE_VERSION =
+  "FEGISEN_V1.0";
+
 const GRODAN_RULE_VERSION =
   "GRODAN_V1.0";
 
@@ -389,6 +392,18 @@ function strategyInformation(
       title: "🪐 Jupiter",
       description:
         "Jämnaste · oddset får inte ha stigit · låsodds 3,00–3,99 · T−90 · PLATS",
+      className: "is-jupiter",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    FEGISEN_RULE_VERSION
+  ) {
+    return {
+      title: "🐔 Fegisen",
+      description:
+        "Marknadsfavoriten · AUTO · 10–12 hästar · inga strykningar vid lås · vinnarodds 2,00–2,99 · T−90 · PLATS",
       className: "is-jupiter",
     };
   }
@@ -785,6 +800,16 @@ export function WinPlaceJournalPanel({
         title: "🪐 Jupiter",
         description:
           "Jämnaste · oddset får inte ha stigit · låsodds 3,00–3,99 · T−90 · PLATS",
+        className: "is-jupiter",
+        winOnly: false,
+        placeOnly: true,
+      },
+      {
+        ruleVersion:
+          FEGISEN_RULE_VERSION,
+        title: "🐔 Fegisen",
+        description:
+          "Marknadsfavoriten · AUTO · 10–12 hästar · inga strykningar vid lås · vinnarodds 2,00–2,99 · T−90 · PLATS",
         className: "is-jupiter",
         winOnly: false,
         placeOnly: true,

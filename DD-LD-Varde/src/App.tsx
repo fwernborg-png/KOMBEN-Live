@@ -265,6 +265,9 @@ const SNIGEL_KOMMER_RULE_VERSION =
 const JUPITER_RULE_VERSION =
   "JUPITER_V1.0";
 
+const FEGISEN_RULE_VERSION =
+  "FEGISEN_V1.0";
+
 const GRODAN_RULE_VERSION =
   "GRODAN_V1.0";
 
@@ -2117,6 +2120,17 @@ function strategyMarkerDisplay(
 
   if (
     marker.ruleVersion ===
+    FEGISEN_RULE_VERSION
+  ) {
+    return {
+      name: "FEGISEN",
+      market: "PLATS",
+      tone: "is-place",
+    };
+  }
+
+  if (
+    marker.ruleVersion ===
     DIAMANTEN_RULE_VERSION
   ) {
     return {
@@ -2189,6 +2203,14 @@ function strategyMarkerForRuleVersion(
       ruleVersion,
       symbol: "🪐",
       label: "Jupiter",
+    };
+  }
+
+  if (ruleVersion === FEGISEN_RULE_VERSION) {
+    return {
+      ruleVersion,
+      symbol: "🐔",
+      label: "Fegisen",
     };
   }
 
