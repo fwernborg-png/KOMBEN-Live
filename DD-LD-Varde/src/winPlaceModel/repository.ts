@@ -142,3 +142,28 @@ export async function loadWinPlaceBetsByDate(
 ) {
   return loadWinPlaceBetsByRange(date, date, signalPhase);
 }
+
+export async function loadWinPlaceBetsByRuleVersionRange(
+  ruleVersion: string,
+  dateFrom: string,
+  dateTo: string,
+  signalPhase: WinPlaceSignalPhase = "LIVE",
+) {
+  const { data, error } = await supabase
+    .from("win_place_model_bets")
+    .select("*")
+    .eq("rule_version", ruleVersion)
+    .gte("date", dateFrom)
+    .lte("date", dateTo)
+    .eq("signal_phase", signalPhase)
+    .order("date", { ascending: true })
+    .order("planned_start_time", { ascending: true });
+
+  if (error) {
+    throw new Error(
+      `Kunde inte läsa modellens spel: ${error.message}`,
+    );
+  }
+
+  return ((data ?? []) as DbWinPlaceBetRow[]).map(parseRow);
+}

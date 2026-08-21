@@ -50,7 +50,11 @@ import type {
 } from "./placeModel/types";
 import { WinPlaceJournalPanel } from "./winPlaceModel/WinPlaceJournalPanel";
 import { DailyResultPeek } from "./winPlaceModel/DailyResultPeek";
-import { loadWinPlaceBetsByDate } from "./winPlaceModel/repository";
+import {
+  loadWinPlaceBetsByDate,
+  loadWinPlaceBetsByRuleVersionRange,
+} from "./winPlaceModel/repository";
+import { computeWinPlaceStats } from "./winPlaceModel/journal";
 import { ResearchHistoryHub } from "./researchHistory/ResearchHistoryHub";
 import { GallopTodayPanel } from "./gallop/GallopTodayPanel";
 import { loadLiveLockStrength } from "./liveLockRepository";
@@ -267,6 +271,9 @@ const JUPITER_RULE_VERSION =
 
 const FEGISEN_RULE_VERSION =
   "FEGISEN_V1.0";
+
+const FEGISEN_TEST_START_DATE =
+  "2026-08-21";
 
 const GRODAN_RULE_VERSION =
   "GRODAN_V1.0";
@@ -2057,6 +2064,24 @@ function parseRace(data: unknown, requestedRaceNumber: number): Race | null {
   };
 }
 
+function formatFegisenTestNet(
+  netOren: number,
+) {
+  const sek = Math.round(netOren / 100);
+  const sign = sek > 0 ? "+" : "";
+
+  return `${sign}${sek.toLocaleString("sv-SE")} kr`;
+}
+
+function formatFegisenTestRoi(
+  roiPct: number,
+) {
+  const rounded = Math.round(roiPct);
+  const sign = rounded > 0 ? "+" : "";
+
+  return `${sign}${rounded} %`;
+}
+
 function lockedRunnerKey(
   raceDate: string,
   trackName: string,
@@ -2416,6 +2441,15 @@ export default function App() {
     Record<string, LockedStrategyMarker[]>
   >({});
 
+  const [
+    fegisenTestStats,
+    setFegisenTestStats,
+  ] = useState({
+    economicBets: 0,
+    totalNetOren: 0,
+    roiPct: 0,
+  });
+
   const [autoStatus, setAutoStatus] = useState("Helkvällsautomaten väntar på en bana.");
   const [pendingTvillingOddsInputs, setPendingTvillingOddsInputs] = useState<Record<string, string>>({});
   const [tvillingMarkets, setTvillingMarkets] = useState<Record<string, TvillingRaceMarket>>({});
@@ -2451,6 +2485,49 @@ export default function App() {
 
   const smallkaramellPollBucket = Math.floor(nowMs / 30_000);
   const researchLockPollBucket = Math.floor(nowMs / 60_000);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void loadWinPlaceBetsByRuleVersionRange(
+      FEGISEN_RULE_VERSION,
+      FEGISEN_TEST_START_DATE,
+      date,
+      "LIVE",
+    )
+      .then((bets) => {
+        if (cancelled) return;
+
+        const stats =
+          computeWinPlaceStats(
+            bets,
+            "PLACE",
+          );
+
+        setFegisenTestStats({
+          economicBets:
+            stats.economicBets,
+
+          totalNetOren:
+            stats.totalNetOren,
+
+          roiPct:
+            stats.roiPct,
+        });
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+
+        console.warn(
+          "Kunde inte läsa Fegisens testresultat",
+          loadError,
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [date, smallkaramellPollBucket]);
 
   useEffect(() => {
     let cancelled = false;
@@ -7425,6 +7502,32 @@ export default function App() {
                                                 marker,
                                               ).market
                                             }
+                                          </span>
+                                        ) : null}
+
+                                        {marker.ruleVersion ===
+                                        FEGISEN_RULE_VERSION ? (
+                                          <span
+                                            className={`fegisen-test-score ${
+                                              fegisenTestStats.totalNetOren > 0
+                                                ? "is-positive"
+                                                : fegisenTestStats.totalNetOren < 0
+                                                  ? "is-negative"
+                                                  : "is-neutral"
+                                            }`}
+                                            title="Prospektivt test från 21 augusti. Endast ekonomiskt klara Fegisen-spel räknas."
+                                          >
+                                            TEST{" "}
+                                            {formatFegisenTestNet(
+                                              fegisenTestStats.totalNetOren,
+                                            )}
+                                            {" · ROI "}
+                                            {formatFegisenTestRoi(
+                                              fegisenTestStats.roiPct,
+                                            )}
+                                            {" · "}
+                                            {fegisenTestStats.economicBets}
+                                            {" spel"}
                                           </span>
                                         ) : null}
                                       </span>
