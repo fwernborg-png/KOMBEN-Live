@@ -160,15 +160,16 @@ function buildBlavalenLaunchDayHistoryFilters():
       BLAVALEN_PROSPECTIVE_START_DATE,
 
     /*
-     * Hämta hela startfältet.
+     * Hämta endast den redan beräknade S1.
      *
-     * Vi får INTE skicka Blåvalens
-     * sänknings- eller oddsfilter till RPC:n,
-     * eftersom filtreringen där sker innan
-     * MOST_SHORTENED väljs och då kan S2
-     * felaktigt befordras till S1.
+     * Inga Blåvalen-filter skickas till RPC:n:
+     * varken ≥60 % eller maxodds 6,00.
+     * Därför kan ingen S2 befordras till S1.
+     *
+     * Blåvalens regelkontroller görs fortsatt
+     * lokalt efter att riktig S1 har hämtats.
      */
-    selection: "ALL_RUNNERS",
+    selection: "MOST_SHORTENED",
 
     countryCode: "SE",
 
