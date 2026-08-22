@@ -5,6 +5,7 @@ import {
 } from "vitest";
 
 import {
+  shouldEvaluateTravStrategy,
   shouldIncludeResearchTrack,
   shouldIncludeStrategyTrack,
 } from "./researchTrackScope";
@@ -13,41 +14,65 @@ describe(
   "research track scope",
   () => {
     it(
-      "keeps strategies Swedish trot only",
+      "keeps the live strategy track scope Sweden-only",
       () => {
         expect(
-          shouldIncludeStrategyTrack({
-            countryCode: "SE",
-            sport: "trot",
-          }),
+          shouldIncludeStrategyTrack(
+            "SE",
+          ),
         ).toBe(true);
 
         expect(
-          shouldIncludeStrategyTrack({
-            countryCode: "SE",
-            sport: "gallop",
-          }),
+          shouldIncludeStrategyTrack(
+            "NO",
+          ),
         ).toBe(false);
 
         expect(
-          shouldIncludeStrategyTrack({
-            countryCode: "NO",
-            sport: "trot",
-          }),
+          shouldIncludeStrategyTrack(
+            "ZA",
+          ),
         ).toBe(false);
 
         expect(
-          shouldIncludeStrategyTrack({
-            countryCode: "ZA",
-            sport: "gallop",
-          }),
+          shouldIncludeStrategyTrack(
+            null,
+          ),
+        ).toBe(false);
+      },
+    );
+
+    it(
+      "allows only trot for Travfest strategies",
+      () => {
+        expect(
+          shouldEvaluateTravStrategy(
+            "TROT",
+          ),
+        ).toBe(true);
+
+        expect(
+          shouldEvaluateTravStrategy(
+            "trot",
+          ),
+        ).toBe(true);
+
+        expect(
+          shouldEvaluateTravStrategy(
+            "GALLOP",
+          ),
         ).toBe(false);
 
         expect(
-          shouldIncludeStrategyTrack({
-            countryCode: null,
-            sport: "trot",
-          }),
+          shouldEvaluateTravStrategy(
+            "gallop",
+          ),
+        ).toBe(false);
+
+        expect(
+          shouldEvaluateTravStrategy(
+            null,
+          ),
         ).toBe(false);
       },
     );
