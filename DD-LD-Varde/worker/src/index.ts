@@ -678,9 +678,10 @@ function parseTrack(
     parseCountryCode(rec);
 
   if (
-    !shouldIncludeStrategyTrack(
+    !shouldIncludeStrategyTrack({
       countryCode,
-    )
+      sport: rec.sport,
+    })
   ) {
     return null;
   }
