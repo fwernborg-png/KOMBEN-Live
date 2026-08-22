@@ -78,6 +78,12 @@ const STRONG_STAR_RULE_VERSION =
 const STRONG_STAR_STAKE_OREN =
   10_000;
 
+const T90_SWEDEN_GALLOP_RULE_VERSION =
+  "T90_SWEDEN_25_40_V1.0";
+
+const GALLOP_S1_SHADOW_RULE_VERSION =
+  "GALLOP_S1_10_ODDS_5_12_5_V1.0";
+
 function buildStrongStarHistoryFilters(
   dateFrom: string,
   dateTo: string,
@@ -948,7 +954,11 @@ export function WinPlaceJournalPanel({
             bet.ruleVersion !==
               STRONG_STAR_RULE_VERSION &&
             bet.ruleVersion !==
-              GALLOP_T1_SHADOW_RULE_VERSION,
+              T90_SWEDEN_GALLOP_RULE_VERSION &&
+            bet.ruleVersion !==
+              GALLOP_T1_SHADOW_RULE_VERSION &&
+            bet.ruleVersion !==
+              GALLOP_S1_SHADOW_RULE_VERSION,
         ),
       [bets],
     );
