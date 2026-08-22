@@ -125,6 +125,7 @@ import {
 
 import {
   normalizeCalendarSport,
+  shouldEvaluateTravStrategy,
   shouldIncludeResearchTrack,
   shouldIncludeStrategyTrack,
 } from "./researchTrackScope";
@@ -678,10 +679,9 @@ function parseTrack(
     parseCountryCode(rec);
 
   if (
-    !shouldIncludeStrategyTrack({
+    !shouldIncludeStrategyTrack(
       countryCode,
-      sport: rec.sport,
-    })
+    )
   ) {
     return null;
   }
@@ -3362,6 +3362,11 @@ async function runCron(
         continue;
       }
 
+      const isTravStrategyRace =
+        shouldEvaluateTravStrategy(
+          race.sport,
+        );
+
       const winPlaceRaceKey = raceRuleKey(
         race.id,
         WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
@@ -3417,6 +3422,7 @@ async function runCron(
       );
 
       const needsWinPlaceEvaluation =
+        isTravStrategyRace &&
         isInWinPlaceFinalSignalWindow(
           plannedStartTime,
           startMs,
@@ -3425,6 +3431,7 @@ async function runCron(
         !existingWinPlaceEvalKeys.has(winPlaceRaceKey);
 
       const needsSmallkaramellEvaluation =
+        isTravStrategyRace &&
         isInWinPlaceFinalSignalWindow(
           plannedStartTime,
           startMs,
@@ -3433,6 +3440,7 @@ async function runCron(
         !existingWinPlaceEvalKeys.has(smallkaramellRaceKey);
 
       const needsSnigelEvaluation =
+        isTravStrategyRace &&
         isInSnigelKommerSignalWindow(
           plannedStartTime,
           startMs,
@@ -3442,6 +3450,7 @@ async function runCron(
         );
 
       const needsJupiterEvaluation =
+        isTravStrategyRace &&
         isInJupiterSignalWindow(
           plannedStartTime,
           startMs,
@@ -3451,6 +3460,7 @@ async function runCron(
         );
 
       const needsFegisenEvaluation =
+        isTravStrategyRace &&
         raceDate >=
           FEGISEN_PROSPECTIVE_START_DATE &&
         isInFegisenSignalWindow(
@@ -3462,6 +3472,7 @@ async function runCron(
         );
 
       const needsGrodanEvaluation =
+        isTravStrategyRace &&
         isGrodanProspectiveDate(
           raceDate,
         ) &&
@@ -3474,6 +3485,7 @@ async function runCron(
         );
 
       const needsEnsamvargenEvaluation =
+        isTravStrategyRace &&
         isEnsamvargenProspectiveDate(
           raceDate,
         ) &&
@@ -3486,6 +3498,7 @@ async function runCron(
         );
 
       const needsBigBMonsterEvaluation =
+        isTravStrategyRace &&
         raceDate >=
           BIG_B_MONSTER_PROSPECTIVE_START_DATE &&
         isInWinPlaceFinalSignalWindow(
@@ -3498,6 +3511,7 @@ async function runCron(
         );
 
       const needsDiamantenEvaluation =
+        isTravStrategyRace &&
         isDiamantenProspectiveDate(
           raceDate,
         ) &&
@@ -3510,6 +3524,7 @@ async function runCron(
         );
 
       const needsStrongStarEvaluation =
+        isTravStrategyRace &&
         isInWinPlaceFinalSignalWindow(
           plannedStartTime,
           startMs,

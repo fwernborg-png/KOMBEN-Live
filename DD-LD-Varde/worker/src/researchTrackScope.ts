@@ -32,32 +32,35 @@ export function isAllowedGallopCountry(
 }
 
 export function shouldIncludeStrategyTrack(
-  args: {
-    countryCode: string | null;
-    sport: unknown;
-  },
+  countryCode: string | null,
 ): boolean {
-  const {
-    countryCode,
-    sport,
-  } = args;
-
   if (!countryCode) {
     return false;
   }
 
   /*
-   * Travfestens strategier:
-   * - endast Sverige
-   * - endast TRAV
-   *
-   * Galopp har en separat pipeline och ska
-   * aldrig kunna skapa travstrategispel.
+   * Livepipen behöver fortsatt alla svenska
+   * racingbanor eftersom dedikerade
+   * galoppmodeller som T90 använder den.
    */
   return (
     countryCode
       .trim()
-      .toUpperCase() === "SE" &&
+      .toUpperCase() === "SE"
+  );
+}
+
+export function shouldEvaluateTravStrategy(
+  sport: unknown,
+): boolean {
+  /*
+   * Travfestens strategier får endast
+   * utvärdera travlopp.
+   *
+   * Galopp kan fortfarande finnas i livepipen
+   * för dedikerade galoppmodeller.
+   */
+  return (
     normalizeCalendarSport(
       sport,
     ) === "trot"
