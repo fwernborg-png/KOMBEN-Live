@@ -1,5 +1,5 @@
 name = "dd-ld-varde-place-live-worker"
-main = "worker/src/index.ts"
+main = "worker/src/indexWithGallopS1Shadow.ts"
 compatibility_date = "2026-07-26"
 compatibility_flags = ["nodejs_compat"]
 
