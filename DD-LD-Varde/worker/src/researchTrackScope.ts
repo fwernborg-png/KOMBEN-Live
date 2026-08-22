@@ -32,13 +32,36 @@ export function isAllowedGallopCountry(
 }
 
 export function shouldIncludeStrategyTrack(
-  countryCode: string | null,
+  args: {
+    countryCode: string | null;
+    sport: unknown;
+  },
 ): boolean {
+  const {
+    countryCode,
+    sport,
+  } = args;
+
+  if (!countryCode) {
+    return false;
+  }
+
   /*
-   * Bevarar exakt nuvarande strategi-scope:
-   * endast svenska banor.
+   * Travfestens strategier:
+   * - endast Sverige
+   * - endast TRAV
+   *
+   * Galopp har en separat pipeline och ska
+   * aldrig kunna skapa travstrategispel.
    */
-  return countryCode === "SE";
+  return (
+    countryCode
+      .trim()
+      .toUpperCase() === "SE" &&
+    normalizeCalendarSport(
+      sport,
+    ) === "trot"
+  );
 }
 
 export function shouldIncludeResearchTrack(

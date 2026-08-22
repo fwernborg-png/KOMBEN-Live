@@ -13,24 +13,41 @@ describe(
   "research track scope",
   () => {
     it(
-      "keeps strategies Sweden-only",
+      "keeps strategies Swedish trot only",
       () => {
         expect(
-          shouldIncludeStrategyTrack(
-            "SE",
-          ),
+          shouldIncludeStrategyTrack({
+            countryCode: "SE",
+            sport: "trot",
+          }),
         ).toBe(true);
 
         expect(
-          shouldIncludeStrategyTrack(
-            "NO",
-          ),
+          shouldIncludeStrategyTrack({
+            countryCode: "SE",
+            sport: "gallop",
+          }),
         ).toBe(false);
 
         expect(
-          shouldIncludeStrategyTrack(
-            "ZA",
-          ),
+          shouldIncludeStrategyTrack({
+            countryCode: "NO",
+            sport: "trot",
+          }),
+        ).toBe(false);
+
+        expect(
+          shouldIncludeStrategyTrack({
+            countryCode: "ZA",
+            sport: "gallop",
+          }),
+        ).toBe(false);
+
+        expect(
+          shouldIncludeStrategyTrack({
+            countryCode: null,
+            sport: "trot",
+          }),
         ).toBe(false);
       },
     );
