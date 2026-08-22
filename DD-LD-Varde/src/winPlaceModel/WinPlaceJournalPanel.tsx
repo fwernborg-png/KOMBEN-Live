@@ -1359,7 +1359,12 @@ export function WinPlaceJournalPanel({
         const liveKeys =
           new Set(
             liveRecords.map(
-              blavalenBetIdentityKey,
+              (bet) =>
+                [
+                  bet.raceId,
+                  bet.horseNumber,
+                  bet.market,
+                ].join(":"),
             ),
           );
 
@@ -1369,9 +1374,11 @@ export function WinPlaceJournalPanel({
           ).filter(
             (bet) =>
               !liveKeys.has(
-                blavalenBetIdentityKey(
-                  bet,
-                ),
+                [
+                  bet.raceId,
+                  bet.horseNumber,
+                  bet.market,
+                ].join(":"),
               ),
           );
 
@@ -1414,12 +1421,7 @@ export function WinPlaceJournalPanel({
         const liveKeys =
           new Set(
             liveRecords.map(
-              (bet) =>
-                [
-                  bet.raceId,
-                  bet.horseNumber,
-                  bet.market,
-                ].join(":"),
+              blavalenBetIdentityKey,
             ),
           );
 
@@ -1429,11 +1431,9 @@ export function WinPlaceJournalPanel({
           ).filter(
             (bet) =>
               !liveKeys.has(
-                [
-                  bet.raceId,
-                  bet.horseNumber,
-                  bet.market,
-                ].join(":"),
+                blavalenBetIdentityKey(
+                  bet,
+                ),
               ),
           );
 
