@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BLAVALEN_RULE_CONFIG_V1,
   SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
   isInWinPlaceFinalSignalWindow,
@@ -231,6 +232,105 @@ describe("WIN_PLACE_V1.0", () => {
         START_MS - 59_000,
       ),
     ).toBe(false);
+  });
+});
+
+
+describe("BLAVALEN_V1.0", () => {
+  function evaluateBlavalen(
+    runners: WinPlaceRunnerInput[],
+  ) {
+    return evaluateWinPlaceModelAtLock({
+      race: makeRace(),
+      runners,
+      nowMs: LOCK_MS,
+      config:
+        BLAVALEN_RULE_CONFIG_V1,
+    });
+  }
+
+  it("godkänner exakt 60 procents sänkning och odds 6,00", () => {
+    const result =
+      evaluateBlavalen([
+        runner({
+          number: 1,
+          values: [
+            15,
+            12,
+            10,
+            8,
+            7,
+            6,
+          ],
+        }),
+      ]);
+
+    expect(result.decision)
+      .toBe("PLAY");
+
+    expect(
+      result.selectedCandidate
+        ?.oddsDropPercent,
+    ).toBeCloseTo(60, 5);
+
+    expect(
+      result.selectedCandidate
+        ?.currentWinOdds,
+    ).toBe(6);
+  });
+
+  it("underkänner 59,9 procents sänkning", () => {
+    const lockOdds = 5.9;
+    const startOdds =
+      lockOdds / (1 - 0.599);
+
+    const result =
+      evaluateBlavalen([
+        runner({
+          number: 1,
+          values: [
+            startOdds,
+            12,
+            10,
+            8,
+            7,
+            lockOdds,
+          ],
+        }),
+      ]);
+
+    expect(
+      result.selectedCandidate
+        ?.oddsDropPercent,
+    ).toBeCloseTo(59.9, 5);
+
+    expect(result.decision)
+      .toBe("NO_PLAY");
+  });
+
+  it("underkänner låsodds 6,01 även vid minst 60 procents sänkning", () => {
+    const result =
+      evaluateBlavalen([
+        runner({
+          number: 1,
+          values: [
+            16,
+            14,
+            12,
+            10,
+            8,
+            6.01,
+          ],
+        }),
+      ]);
+
+    expect(
+      result.selectedCandidate
+        ?.oddsDropPercent,
+    ).toBeGreaterThan(60);
+
+    expect(result.decision)
+      .toBe("NO_PLAY");
   });
 });
 
