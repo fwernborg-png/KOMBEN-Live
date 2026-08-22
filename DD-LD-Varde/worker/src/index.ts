@@ -95,9 +95,12 @@ import type {
 import {
   BIG_B_MONSTER_PROSPECTIVE_START_DATE,
   BIG_B_MONSTER_RULE_CONFIG_V1,
+  BLAVALEN_PROSPECTIVE_START_DATE,
+  BLAVALEN_RULE_CONFIG_V1,
   MODEL_MIN_WIN_ODDS_INCLUSIVE,
   SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
+  WIN_PLACE_V1_RETIRED,
   getWinPlacePlannedLockTimeMs,
   isInWinPlaceFinalSignalWindow,
 } from "../../src/winPlaceModel/config";
@@ -3325,6 +3328,7 @@ async function runCron(
       .select("race_id,rule_version")
       .in("rule_version", [
         WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
+        BLAVALEN_RULE_CONFIG_V1.ruleVersion,
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
         SNIGEL_KOMMER_RULE_VERSION,
         JUPITER_RULE_VERSION,
@@ -3371,6 +3375,12 @@ async function runCron(
         race.id,
         WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
       );
+
+      const blavalenRaceKey = raceRuleKey(
+        race.id,
+        BLAVALEN_RULE_CONFIG_V1.ruleVersion,
+      );
+
       const smallkaramellRaceKey = raceRuleKey(
         race.id,
         SMALLKARAMELL_RULE_CONFIG_V1.ruleVersion,
@@ -3422,6 +3432,7 @@ async function runCron(
       );
 
       const needsWinPlaceEvaluation =
+        !WIN_PLACE_V1_RETIRED &&
         isTravStrategyRace &&
         isInWinPlaceFinalSignalWindow(
           plannedStartTime,
@@ -3429,6 +3440,19 @@ async function runCron(
           WIN_PLACE_RULE_CONFIG_V1,
         ) &&
         !existingWinPlaceEvalKeys.has(winPlaceRaceKey);
+
+      const needsBlavalenEvaluation =
+        isTravStrategyRace &&
+        raceDate >=
+          BLAVALEN_PROSPECTIVE_START_DATE &&
+        isInWinPlaceFinalSignalWindow(
+          plannedStartTime,
+          startMs,
+          BLAVALEN_RULE_CONFIG_V1,
+        ) &&
+        !existingWinPlaceEvalKeys.has(
+          blavalenRaceKey,
+        );
 
       const needsSmallkaramellEvaluation =
         isTravStrategyRace &&
@@ -3565,6 +3589,7 @@ async function runCron(
 
       if (
         !needsWinPlaceEvaluation &&
+        !needsBlavalenEvaluation &&
         !needsSmallkaramellEvaluation &&
         !needsSnigelEvaluation &&
         !needsJupiterEvaluation &&
@@ -5015,6 +5040,17 @@ async function runCron(
           config: WIN_PLACE_RULE_CONFIG_V1,
           raceKey: winPlaceRaceKey,
           counter: "WIN_PLACE",
+        });
+      }
+
+      if (needsBlavalenEvaluation) {
+        await evaluateAndPersist({
+          config:
+            BLAVALEN_RULE_CONFIG_V1,
+          raceKey:
+            blavalenRaceKey,
+          counter:
+            "WIN_PLACE",
         });
       }
 

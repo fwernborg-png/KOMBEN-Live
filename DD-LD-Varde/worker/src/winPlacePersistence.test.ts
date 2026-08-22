@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { SMALLKARAMELL_RULE_CONFIG_V1, WIN_PLACE_RULE_CONFIG_V1 } from "../../src/winPlaceModel/config";
+import {
+  BLAVALEN_RULE_CONFIG_V1,
+  SMALLKARAMELL_RULE_CONFIG_V1,
+  WIN_PLACE_RULE_CONFIG_V1,
+} from "../../src/winPlaceModel/config";
 import type { WinPlaceEvaluation } from "../../src/winPlaceModel/types";
 import { buildWinPlaceBetRows } from "./winPlacePersistence";
 
@@ -73,6 +77,63 @@ describe("win-place persistence", () => {
     ]);
     expect(rows[0].bet_id).not.toBe(rows[1].bet_id);
   });
+
+  it("Blåvalen skapar WIN och PLATS även när låsoddset är under 3,50", () => {
+    const evaluation =
+      makeEvaluation("PLAY");
+
+    const candidate =
+      evaluation.mostShortened;
+
+    if (!candidate) {
+      throw new Error(
+        "Testkandidat saknas",
+      );
+    }
+
+    const rows =
+      buildWinPlaceBetRows({
+        evaluation: {
+          ...evaluation,
+
+          ruleVersion:
+            BLAVALEN_RULE_CONFIG_V1
+              .ruleVersion,
+
+          configSnapshot:
+            BLAVALEN_RULE_CONFIG_V1,
+
+          mostShortened: {
+            ...candidate,
+            currentWinOdds: 2.27,
+            oddsDropPercent: 88,
+          },
+        },
+
+        nowIso:
+          "2026-08-22T11:51:47.000Z",
+      });
+
+    expect(rows).toHaveLength(2);
+
+    expect(
+      rows.map(
+        (row) => row.market,
+      ),
+    ).toEqual([
+      "WIN",
+      "PLACE",
+    ]);
+
+    expect(
+      rows.every(
+        (row) =>
+          row.rule_version ===
+          "BLAVALEN_V1.0",
+      ),
+    ).toBe(true);
+  });
+
 
   it("skapar bara plats när vinnaroddset är under 3,50", () => {
     const evaluation = makeEvaluation("PLAY");

@@ -1,5 +1,10 @@
 export const MODEL_MIN_WIN_ODDS_INCLUSIVE = 3.5;
 
+export const WIN_PLACE_V1_RETIRED = true;
+
+export const BLAVALEN_PROSPECTIVE_START_DATE =
+  "2026-08-22";
+
 export type WinPlaceRuleConfig = {
   ruleVersion: string;
   strategyCode: string;
@@ -39,6 +44,38 @@ export const WIN_PLACE_RULE_CONFIG_V1: WinPlaceRuleConfig = {
   excludeMonte: true,
   defaultWinStakeSEK: 100,
   defaultPlaceStakeSEK: 100,
+  placeHitMaxOfficialFinishPosition: 3,
+};
+
+export const BLAVALEN_RULE_CONFIG_V1: WinPlaceRuleConfig = {
+  ruleVersion: "BLAVALEN_V1.0",
+  strategyCode: "BLAVALEN",
+  strategyLabel:
+    "Blåvalen – S1 minst 60 procent",
+
+  selectionRank: 1,
+
+  collectionStartMinutesBeforeRace: 60,
+
+  lockTargetSecondsBeforeRace: 90,
+  lockWindowOpensSecondsBeforeRace: 120,
+  lockWindowClosesSecondsBeforeRace: 60,
+
+  minOddsDropPercentInclusive: 60,
+
+  // Blåvalen testar själva 60 %-signalen.
+  // Inget nedre WIN-odds används.
+  minWinBetOddsInclusive: 0,
+
+  maxCurrentWinOddsInclusive: 6,
+
+  minValidOddsPoints: 5,
+
+  excludeMonte: true,
+
+  defaultWinStakeSEK: 100,
+  defaultPlaceStakeSEK: 100,
+
   placeHitMaxOfficialFinishPosition: 3,
 };
 

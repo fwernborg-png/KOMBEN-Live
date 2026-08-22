@@ -7,6 +7,8 @@ import {
 
 import {
   BIG_B_MONSTER_RULE_CONFIG_V1,
+  BLAVALEN_PROSPECTIVE_START_DATE,
+  BLAVALEN_RULE_CONFIG_V1,
   MODEL_MIN_WIN_ODDS_INCLUSIVE,
   SMALLKARAMELL_RULE_CONFIG_V1,
   WIN_PLACE_RULE_CONFIG_V1,
@@ -147,6 +149,79 @@ function buildStrongStarHistoryFilters(
     limit: 5000,
   };
 }
+
+function buildBlavalenLaunchDayHistoryFilters():
+  ResearchHistoryFilters {
+  return {
+    dateFrom:
+      BLAVALEN_PROSPECTIVE_START_DATE,
+
+    dateTo:
+      BLAVALEN_PROSPECTIVE_START_DATE,
+
+    /*
+     * Hämta hela startfältet.
+     *
+     * Vi får INTE skicka Blåvalens
+     * sänknings- eller oddsfilter till RPC:n,
+     * eftersom filtreringen där sker innan
+     * MOST_SHORTENED väljs och då kan S2
+     * felaktigt befordras till S1.
+     */
+    selection: "ALL_RUNNERS",
+
+    countryCode: "SE",
+
+    startMethod: "",
+    distanceMeters: null,
+
+    trackName: "",
+    driverName: "",
+
+    startLane: null,
+    laneGroup: "ALL",
+
+    raceCategory: "",
+    raceClassCode: "",
+
+    earningsMin: null,
+    earningsMax: null,
+
+    minStarters: null,
+    maxStarters: null,
+
+    minStrength: null,
+    maxStrength: null,
+
+    krTopFour: null,
+    stTopFour: null,
+    driverTopFour: null,
+    spTopFour: null,
+    gallopTopFour: null,
+    oddsIndicatorTopFour: null,
+
+    minDropPercent: null,
+    maxDropPercent: null,
+
+    minStartOdds: null,
+    maxStartOdds: null,
+
+    minLockOdds: null,
+    maxLockOdds: null,
+
+    /*
+     * Gasolina Jet har komplett metric och
+     * 56 giltiga oddspunkter, men de äldre
+     * snapshot-flaggorna är inte båda true.
+     * Vi gör därför Blåvalens egna
+     * validitetskontroller lokalt.
+     */
+    completeOnly: false,
+
+    limit: 5000,
+  };
+}
+
 
 function buildStrongStarBetRecords(
   rows: ResearchHistoryRow[],
@@ -309,6 +384,354 @@ function buildStrongStarBetRecords(
   return result;
 }
 
+function blavalenBetIdentityKey(
+  bet: WinPlaceBetRecord,
+) {
+  return [
+    bet.date,
+    bet.trackName
+      .trim()
+      .toLowerCase(),
+    bet.raceNumber,
+    bet.horseNumber,
+    bet.market,
+  ].join(":");
+}
+
+
+function isValidBlavalenHistoryOdds(
+  value: number | null,
+) {
+  if (
+    value === null ||
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
+    return false;
+  }
+
+  return (
+    Math.abs(value - 99.99) >=
+    0.001
+  );
+}
+
+
+function buildBlavalenBetRecords(
+  rows: ResearchHistoryRow[],
+): WinPlaceBetRecord[] {
+  const result: WinPlaceBetRecord[] = [];
+
+  const validCandidatesByRace =
+    new Map<
+      string,
+      ResearchHistoryRow[]
+    >();
+
+  /*
+   * Samma grundprincip som live-motorn:
+   * först byggs mängden giltiga kandidater,
+   * därefter väljs S1.
+   *
+   * Vi filtrerar alltså INTE på ≥60 %
+   * eller maxodds 6,00 förrän S1 är vald.
+   */
+  for (const row of rows) {
+    if (
+      row.oddsDropToLockPercent === null ||
+      !Number.isFinite(
+        row.oddsDropToLockPercent,
+      ) ||
+      row.validOddsPoints <
+        BLAVALEN_RULE_CONFIG_V1
+          .minValidOddsPoints ||
+      !isValidBlavalenHistoryOdds(
+        row.startOdds,
+      ) ||
+      !isValidBlavalenHistoryOdds(
+        row.lockOdds,
+      )
+    ) {
+      continue;
+    }
+
+    const current =
+      validCandidatesByRace.get(
+        row.raceKey,
+      ) ?? [];
+
+    current.push(row);
+
+    validCandidatesByRace.set(
+      row.raceKey,
+      current,
+    );
+  }
+
+  for (
+    const candidates of
+    validCandidatesByRace.values()
+  ) {
+    const candidate =
+      [...candidates].sort(
+        (a, b) =>
+          (
+            b.oddsDropToLockPercent ??
+            -Infinity
+          ) -
+            (
+              a.oddsDropToLockPercent ??
+              -Infinity
+            ) ||
+          (
+            a.lockOdds ??
+            Infinity
+          ) -
+            (
+              b.lockOdds ??
+              Infinity
+            ) ||
+          a.runnerNumber -
+            b.runnerNumber,
+      )[0] ?? null;
+
+    if (
+      !candidate ||
+      candidate.lockOdds === null ||
+      candidate.oddsDropToLockPercent ===
+        null
+    ) {
+      continue;
+    }
+
+    /*
+     * Ingen fallback till S2.
+     * Om vald S1 inte klarar Blåvalens
+     * regel blir loppet inget spel.
+     */
+    if (
+      candidate.metricQualityStatus !==
+        "COMPLETE" ||
+      candidate.oddsDropToLockPercent +
+          Number.EPSILON <
+        (
+          BLAVALEN_RULE_CONFIG_V1
+            .minOddsDropPercentInclusive ??
+          0
+        ) ||
+      candidate.lockOdds >
+        BLAVALEN_RULE_CONFIG_V1
+          .maxCurrentWinOddsInclusive +
+          Number.EPSILON
+    ) {
+      continue;
+    }
+
+    const markets: WinPlaceMarket[] = [
+      "WIN",
+      "PLACE",
+    ];
+
+    for (const market of markets) {
+      const hit =
+        market === "WIN"
+          ? candidate.winnerOfficial
+          : candidate.placedOfficial ===
+            true;
+
+      const payoutOdds =
+        market === "WIN"
+          ? candidate
+              .officialWinOddsDecimal
+          : candidate
+              .officialPlaceOddsDecimal;
+
+      const stakeOren =
+        (
+          market === "WIN"
+            ? BLAVALEN_RULE_CONFIG_V1
+                .defaultWinStakeSEK
+            : BLAVALEN_RULE_CONFIG_V1
+                .defaultPlaceStakeSEK
+        ) * 100;
+
+      const resultOutcome:
+        WinPlaceResultOutcome =
+        candidate.betVoid
+          ? "VOID"
+          : hit
+            ? "HIT"
+            : "MISS";
+
+      const resultStatus:
+        WinPlaceResultStatus =
+        candidate.betVoid
+          ? "VOID"
+          : hit &&
+              payoutOdds === null
+            ? "SAKNAR_ODDS"
+            : "RESULT_READY";
+
+      const returnOren =
+        candidate.betVoid
+          ? 0
+          : hit
+            ? payoutOdds === null
+              ? null
+              : Math.round(
+                  stakeOren *
+                    payoutOdds,
+                )
+            : 0;
+
+      const netOren =
+        returnOren === null
+          ? null
+          : candidate.betVoid
+            ? 0
+            : returnOren -
+              stakeOren;
+
+      const timestamp =
+        candidate.plannedStartTime ??
+        `${candidate.raceDate}T00:00:00`;
+
+      result.push({
+        id:
+          `blavalen-history:` +
+          `${candidate.raceKey}:` +
+          `${candidate.runnerNumber}:` +
+          `${market}`,
+
+        betId:
+          `blavalen-history:` +
+          `${candidate.raceKey}:` +
+          `${candidate.runnerNumber}:` +
+          `${market}`,
+
+        raceId:
+          candidate.raceKey,
+
+        ruleVersion:
+          BLAVALEN_RULE_CONFIG_V1
+            .ruleVersion,
+
+        market,
+        signalPhase: "BACKTEST",
+
+        date:
+          candidate.raceDate,
+
+        trackId: 0,
+
+        trackName:
+          candidate.trackName,
+
+        raceNumber:
+          candidate.raceNumber,
+
+        plannedStartTime:
+          timestamp,
+
+        lockTime:
+          timestamp,
+
+        secondsBeforeStart: 90,
+
+        horseNumber:
+          candidate.runnerNumber,
+
+        horseName:
+          candidate.horseName,
+
+        horseId: null,
+
+        startLane:
+          candidate.startLane,
+
+        startMethod:
+          candidate.startMethod,
+
+        distanceMeters:
+          candidate.distanceMeters,
+
+        starters:
+          candidate.starters,
+
+        startOdds:
+          candidate.startOdds ?? 0,
+
+        lockedWinOdds:
+          candidate.lockOdds,
+
+        oddsDropPercent:
+          candidate
+            .oddsDropToLockPercent,
+
+        cvRaw:
+          candidate.cvPercent,
+
+        cvDisplay:
+          candidate.cvPercent,
+
+        strength:
+          candidate.strengthTotal ?? 0,
+
+        indicatorsGreen: [],
+
+        validOddsPoints:
+          candidate.validOddsPoints,
+
+        stakeOren,
+
+        resultOutcome,
+        resultStatus,
+
+        finishPositionOfficial:
+          candidate
+            .finishPositionOfficial,
+
+        officialWinOddsDecimal:
+          candidate
+            .officialWinOddsDecimal,
+
+        placeOddsDecimal:
+          candidate
+            .officialPlaceOddsDecimal,
+
+        returnOren,
+        netOren,
+
+        roiPct:
+          netOren === null ||
+          candidate.betVoid
+            ? null
+            : (
+                netOren /
+                stakeOren
+              ) * 100,
+
+        automaticModelBet: false,
+        userActuallyPlayed: false,
+
+        resultSource:
+          "RESEARCH_ARCHIVE",
+
+        resultUpdatedAt: null,
+
+        createdAt:
+          timestamp,
+
+        updatedAt:
+          timestamp,
+      });
+    }
+  }
+
+  return result;
+}
+
+
 function kronor(oren: number) {
   return new Intl.NumberFormat("sv-SE", {
     maximumFractionDigits: 0,
@@ -447,6 +870,18 @@ function strategyInformation(
       description:
         "2140 m auto · 7–10 startande · styrka exakt 3/6 · låsodds 6,00–25,00 · T−90 · WIN",
       className: "is-diamanten",
+    };
+  }
+
+  if (
+    ruleVersion ===
+    BLAVALEN_RULE_CONFIG_V1.ruleVersion
+  ) {
+    return {
+      title: "🐋 Blåvalen",
+      description:
+        "TEST · S1 · sänkning ≥60 % · låsodds ≤6,00 · T−90 · WIN + PLATS",
+      className: "is-most-shortened",
     };
   }
 
@@ -621,6 +1056,11 @@ export function WinPlaceJournalPanel({
   ] = useState<ResearchHistoryRow[]>([]);
 
   const [
+    blavalenRows,
+    setBlavalenRows,
+  ] = useState<ResearchHistoryRow[]>([]);
+
+  const [
     collectionRange,
     setCollectionRange,
   ] = useState<{
@@ -723,6 +1163,7 @@ export function WinPlaceJournalPanel({
         const [
           rows,
           loadedStrongStarRows,
+          loadedBlavalenRows,
         ] = await Promise.all([
           loadWinPlaceBetsByRange(
             dateRange.from,
@@ -740,6 +1181,18 @@ export function WinPlaceJournalPanel({
             : Promise.resolve(
                 [] as ResearchHistoryRow[],
               ),
+
+          mode === "stats" &&
+          dateRange.from <=
+            BLAVALEN_PROSPECTIVE_START_DATE &&
+          dateRange.to >=
+            BLAVALEN_PROSPECTIVE_START_DATE
+            ? loadResearchHistoryRows(
+                buildBlavalenLaunchDayHistoryFilters(),
+              )
+            : Promise.resolve(
+                [] as ResearchHistoryRow[],
+              ),
         ]);
 
         setBets(
@@ -747,7 +1200,11 @@ export function WinPlaceJournalPanel({
             ? rows.filter(
                 (row) =>
                   row.market !== "WIN" ||
-                  row.lockedWinOdds + Number.EPSILON >=
+                  row.ruleVersion ===
+                    BLAVALEN_RULE_CONFIG_V1
+                      .ruleVersion ||
+                  row.lockedWinOdds +
+                    Number.EPSILON >=
                     MODEL_MIN_WIN_ODDS_INCLUSIVE,
               )
             : rows,
@@ -756,6 +1213,11 @@ export function WinPlaceJournalPanel({
         setStrongStarRows(
           loadedStrongStarRows,
         );
+
+        setBlavalenRows(
+          loadedBlavalenRows,
+        );
+
         setError("");
         setLastUpdatedAt(new Date());
       } catch (loadError) {
@@ -852,6 +1314,16 @@ export function WinPlaceJournalPanel({
       },
       {
         ruleVersion:
+          BLAVALEN_RULE_CONFIG_V1.ruleVersion,
+        title: "🐋 Blåvalen",
+        description:
+          "TEST från 22/8 · S1 · sänkning ≥60 % · låsodds ≤6,00 · T−90 · WIN + PLATS",
+        className: "is-most-shortened",
+        winOnly: false,
+        placeOnly: false,
+      },
+      {
+        ruleVersion:
           BIG_B_MONSTER_RULE_CONFIG_V1.ruleVersion,
         title: "👹 Big B Monster",
         description:
@@ -867,16 +1339,6 @@ export function WinPlaceJournalPanel({
         description:
           "Näst mest sänkt, inget minimikrav · låsodds 3,50–7,00 · T−90 · WIN + PLATS",
         className: "is-smallkaramell",
-        winOnly: false,
-        placeOnly: false,
-      },
-      {
-        ruleVersion:
-          WIN_PLACE_RULE_CONFIG_V1.ruleVersion,
-        title: "Mest sänkta",
-        description:
-          "Mest sänkt · sänkning ≥30 % · låsodds 3,50–6,00 · T−90 · WIN + PLATS",
-        className: "is-most-shortened",
         winOnly: false,
         placeOnly: false,
       },
@@ -897,12 +1359,7 @@ export function WinPlaceJournalPanel({
         const liveKeys =
           new Set(
             liveRecords.map(
-              (bet) =>
-                [
-                  bet.raceId,
-                  bet.horseNumber,
-                  bet.market,
-                ].join(":"),
+              blavalenBetIdentityKey,
             ),
           );
 
@@ -912,11 +1369,9 @@ export function WinPlaceJournalPanel({
           ).filter(
             (bet) =>
               !liveKeys.has(
-                [
-                  bet.raceId,
-                  bet.horseNumber,
-                  bet.market,
-                ].join(":"),
+                blavalenBetIdentityKey(
+                  bet,
+                ),
               ),
           );
 
@@ -941,6 +1396,60 @@ export function WinPlaceJournalPanel({
       ],
     );
 
+  const blavalenBets =
+    useMemo(
+      () => {
+        const liveRecords =
+          bets.filter(
+            (bet) =>
+              bet.ruleVersion ===
+              BLAVALEN_RULE_CONFIG_V1
+                .ruleVersion,
+          );
+
+        if (mode !== "stats") {
+          return liveRecords;
+        }
+
+        const liveKeys =
+          new Set(
+            liveRecords.map(
+              (bet) =>
+                [
+                  bet.raceId,
+                  bet.horseNumber,
+                  bet.market,
+                ].join(":"),
+            ),
+          );
+
+        const historicalRecords =
+          buildBlavalenBetRecords(
+            blavalenRows,
+          ).filter(
+            (bet) =>
+              !liveKeys.has(
+                [
+                  bet.raceId,
+                  bet.horseNumber,
+                  bet.market,
+                ].join(":"),
+              ),
+          );
+
+        return [
+          ...liveRecords,
+          ...historicalRecords,
+        ];
+      },
+      [
+        bets,
+        blavalenRows,
+        mode,
+      ],
+    );
+
+
   /*
    * Skuggmodellen får inte påverka
    * ordinarie antal signaler, insats,
@@ -963,17 +1472,37 @@ export function WinPlaceJournalPanel({
       [bets],
     );
 
+  const statsRegularBets =
+    useMemo(
+      () =>
+        regularBets.filter(
+          (bet) =>
+            bet.ruleVersion !==
+              WIN_PLACE_RULE_CONFIG_V1
+                .ruleVersion &&
+            bet.ruleVersion !==
+              BLAVALEN_RULE_CONFIG_V1
+                .ruleVersion,
+        ),
+      [regularBets],
+    );
+
+
   const strategyGroups = useMemo(
     () => {
       const regularGroups =
         strategyDefinitions.map(
           (definition) => {
             const strategyBets =
-              regularBets.filter(
-                (bet) =>
-                  bet.ruleVersion ===
-                  definition.ruleVersion,
-              );
+              definition.ruleVersion ===
+              BLAVALEN_RULE_CONFIG_V1
+                .ruleVersion
+                ? blavalenBets
+                : statsRegularBets.filter(
+                    (bet) =>
+                      bet.ruleVersion ===
+                      definition.ruleVersion,
+                  );
 
             return {
               ...definition,
@@ -1040,7 +1569,8 @@ export function WinPlaceJournalPanel({
       ];
     },
     [
-      bets,
+      blavalenBets,
+      statsRegularBets,
       strongStarBets,
       strategyDefinitions,
     ],
@@ -1051,14 +1581,17 @@ export function WinPlaceJournalPanel({
       computeWinPlaceStats(
         mode === "stats"
           ? [
-              ...regularBets,
+              ...statsRegularBets,
+              ...blavalenBets,
               ...strongStarBets,
             ]
           : regularBets,
       ),
     [
-      bets,
+      blavalenBets,
       mode,
+      regularBets,
+      statsRegularBets,
       strongStarBets,
     ],
   );
@@ -1140,9 +1673,40 @@ export function WinPlaceJournalPanel({
       [strongStarBets],
     );
 
+  const statsRegularSignalCount =
+    useMemo(
+      () =>
+        new Set(
+          statsRegularBets.map(
+            (bet) =>
+              [
+                bet.raceId,
+                bet.ruleVersion,
+              ].join(":"),
+          ),
+        ).size,
+      [statsRegularBets],
+    );
+
+  const blavalenSignalCount =
+    useMemo(
+      () =>
+        new Set(
+          blavalenBets.map(
+            (bet) =>
+              [
+                bet.raceId,
+                bet.horseNumber,
+              ].join(":"),
+          ),
+        ).size,
+      [blavalenBets],
+    );
+
   const overallSignalCount =
     mode === "stats"
-      ? raceGroups.length +
+      ? statsRegularSignalCount +
+        blavalenSignalCount +
         strongStarSignalCount
       : raceGroups.length;
 
@@ -1334,8 +1898,13 @@ export function WinPlaceJournalPanel({
       <div className="test-period-note">
         <strong>Testperiod 3–16 augusti:</strong>
         <span>
-          Kräfta i buren och den ordinarie
-          mest-sänkta-regeln redovisas separat.
+          Den gamla Mest sänkta-regeln är
+          pensionerad. Historiken ligger kvar i
+          speljournalen men ingår inte längre i
+          Strategistatistikens totalsiffror.
+          Blåvalen räknas från 22 augusti,
+          inklusive dagens redan avslutade lopp
+          från researcharkivets T−90-data.
           Snigel kommer och Jupiter följs
           framåt från 10 augusti.
           Diamanten följs framåt från
